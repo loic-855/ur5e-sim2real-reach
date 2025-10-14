@@ -64,3 +64,50 @@ To setup the IDE, please follow these instructions:
 If everything executes correctly, it should create a file .python.env in the `.vscode` directory.
 The file contains the python paths to all the extensions provided by Isaac Sim and Omniverse.
 This helps in indexing all the python modules for intelligent suggestions while writing code.
+
+## Import the Assets
+
+### Import Table
+
+- Put Assambly_Table.usd into the folder
+
+    ```bash
+    source\Woodworking_Simulation\Woodworking_Simulation\tasks\manager_based\woodworking_simulation\asset\
+    ```
+
+### Import ONrobot 2fg7 Gripper
+
+- Clone repository
+
+    ```bash
+    git clone https://github.com/juandpenan/onrobot_2FG7_gripper_description
+    ```
+- Creat main xacro file in urdf folder name it onrobot_2fg7_main.xacro and copy the follwoing into the empty file:
+
+    ```bash
+    <?xml version="1.0"?>
+    <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="onrobot_2fg7">
+        <!-- Add required properties -->
+        <xacro:property name="control_bool" value="true"/>
+        <xacro:property name="config" value="outwards"/>
+        
+        <!-- Include the gripper macro -->
+        <xacro:include filename="onrobot_2fg7.xacro"/>
+        
+        <!-- Instantiate the gripper with correct parameter -->
+        <xacro:onrobot_2fg7_gripper prefix="" finger_configuration="${config}"/>
+    </robot>
+    ```
+
+- Install xacro (do so in your isaac_lan env)
+
+    ```bash
+    pip install git+https://github.com/ros/xacro.git@ros2
+    ```
+
+- Convert xacro to urdf
+
+    ```bash
+    xacro onrobot_2fg7_main.xacro -o onrobot_2fg7_expanded.urdf
+    ```
+- Then start up isaac-sim and click file import and import the .urdf file this will creat a new subfolder in the urdf folder. The content of this subfolder has to be copied into the asset folder in isaac_lab

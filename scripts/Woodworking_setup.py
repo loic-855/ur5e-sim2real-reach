@@ -38,9 +38,9 @@ UR5E_CONFIG = ArticulationCfg(
 )
 
 #----------------------------------Import Gripper---------------------------------#
-# GRIPPER_CONFIG = ArticulationCfg(
-#     spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/Grippers/Robotiq_2F_85.usd"),
-# ) 
+GRIPPER_CONFIG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(usd_path=f"{IDEALAB_ASSET_DIR}/onrobot_2fg7_expanded.usd")
+) 
 
 #------------------------------Import Woodworking Table---------------------------#
 from pathlib import Path
@@ -104,9 +104,9 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     ur5e2 = Articulation(cfg=ur5e2_cfg)
 
     #------------------------------Gripper for Robot2-----------------------------#
-    # gripper_cfg = GRIPPER_CONFIG.replace(prim_path="/World/Origin2/Robot2/Gripper")
-    # gripper_cfg.actuators = {"gripper_action": ImplicitActuatorCfg(joint_names_expr=["finger_joint.*"],damping=None,stiffness=None)}
-    # gripper = Articulation(cfg=gripper_cfg)
+    gripper_cfg = GRIPPER_CONFIG.replace(prim_path="/World/Origin2/Robot2/Gripper")
+    gripper_cfg.actuators = {"gripper_action": ImplicitActuatorCfg(joint_names_expr=["finger_joint.*"],damping=None,stiffness=None)}
+    gripper = Articulation(cfg=gripper_cfg)
 
     # ur5e2.get_rigid_body("/wrist_3_link").attach_articulation(
     # gripper,

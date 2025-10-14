@@ -83,8 +83,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 
 
-<section id="template-for-isaac-lab-projects" class="level1">
-<h1>Template for Isaac Lab Projects</h1>
+<section id="template-for-isaac-lab-project-woodworking" class="level1">
+<h1>Template for Isaac Lab Project Woodworking</h1>
 <section id="overview" class="level2">
 <h2 class="anchored" data-anchor-id="overview">Overview</h2>
 <p>This is an external Isaac Lab project for the IDEALB Woodworking setup at ETHZ.<img src="Main_setup.png" class="img-fluid" alt="alt text"></p>
@@ -125,6 +125,41 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <li>Run VSCode Tasks, by pressing <code>Ctrl+Shift+P</code>, selecting <code>Tasks: Run Task</code> and running the <code>setup_python_env</code> in the drop down menu. When running this task, you will be prompted to add the absolute path to your Isaac Sim installation.</li>
 </ul>
 <p>If everything executes correctly, it should create a file .python.env in the <code>.vscode</code> directory. The file contains the python paths to all the extensions provided by Isaac Sim and Omniverse. This helps in indexing all the python modules for intelligent suggestions while writing code.</p>
+</section>
+</section>
+<section id="import-the-assets" class="level2">
+<h2 class="anchored" data-anchor-id="import-the-assets">Import the Assets</h2>
+<section id="import-table" class="level3">
+<h3 class="anchored" data-anchor-id="import-table">Import Table</h3>
+<ul>
+<li><p>Put Assambly_Table.usd into the folder</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">source</span><span class="dt">\W</span>oodworking_Simulation<span class="dt">\W</span>oodworking_Simulation<span class="dt">\t</span>asks<span class="dt">\m</span>anager_based<span class="dt">\w</span>oodworking_simulation<span class="dt">\a</span>sset<span class="dt">\</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div></li>
+</ul>
+</section>
+<section id="import-onrobot-2fg7-gripper" class="level3">
+<h3 class="anchored" data-anchor-id="import-onrobot-2fg7-gripper">Import ONrobot 2fg7 Gripper</h3>
+<ul>
+<li><p>Clone repository</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> clone https://github.com/juandpenan/onrobot_2FG7_gripper_description</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div></li>
+<li><p>Creat main xacro file in urdf folder name it onrobot_2fg7_main.xacro and copy the follwoing into the empty file:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="op">&lt;</span><span class="ex">?xml</span> version=<span class="st">"1.0"</span><span class="pp">?</span><span class="op">&gt;</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="op">&lt;</span>robot <span class="ex">xmlns:xacro=</span><span class="st">"http://www.ros.org/wiki/xacro"</span> name=<span class="st">"onrobot_2fg7"</span><span class="op">&gt;</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    <span class="op">&lt;</span>!-- <span class="ex">Add</span> required properties <span class="at">--</span><span class="op">&gt;</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>    <span class="op">&lt;</span>xacro:property <span class="va">name</span><span class="op">=</span><span class="st">"control_bool"</span> <span class="va">value</span><span class="op">=</span><span class="st">"true"</span>/<span class="op">&gt;</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>    <span class="op">&lt;</span>xacro:property <span class="va">name</span><span class="op">=</span><span class="st">"config"</span> <span class="va">value</span><span class="op">=</span><span class="st">"outwards"</span>/<span class="op">&gt;</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>    <span class="op">&lt;</span>!-- <span class="ex">Include</span> the gripper macro <span class="at">--</span><span class="op">&gt;</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>    <span class="op">&lt;</span>xacro:include <span class="va">filename</span><span class="op">=</span><span class="st">"onrobot_2fg7.xacro"</span>/<span class="op">&gt;</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>    <span class="op">&lt;</span>!-- <span class="ex">Instantiate</span> the gripper with correct parameter <span class="at">--</span><span class="op">&gt;</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>    <span class="op">&lt;</span>xacro:onrobot_2fg7_gripper <span class="va">prefix</span><span class="op">=</span><span class="st">""</span> <span class="va">finger_configuration</span><span class="op">=</span><span class="st">"</span><span class="va">${config}</span><span class="st">"</span>/<span class="op">&gt;</span></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a><span class="op">&lt;</span>/robot<span class="op">&gt;</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div></li>
+<li><p>Install xacro (do so in your isaac_lan env)</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="ex">pip</span> install git+https://github.com/ros/xacro.git@ros2</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div></li>
+<li><p>Convert xacro to urdf</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="ex">xacro</span> onrobot_2fg7_main.xacro <span class="at">-o</span> onrobot_2fg7_expanded.urdf</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div></li>
+<li><p>Then start up isaac-sim and click file import and import the .urdf file this will creat a new subfolder in the urdf folder. The content of this subfolder has to be copied into the asset folder in isaac_lab</p></li>
+</ul>
 </section>
 </section>
 </section>
