@@ -27,20 +27,13 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
+from pxr import Usd, UsdPhysics, UsdGeom, Sdf
+import omni.usd
+import math
+
 
 #----------------------------Set Render to Performance----------------------------#
 render_cfg = sim_utils.RenderCfg(rendering_mode="performance")
-
-#--------------------------------Import UR5e Robot--------------------------------#
-UR5E_CONFIG = ArticulationCfg(
-    spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/UniversalRobots/ur5e/ur5e.usd"),
-    actuators={"arm_action": ImplicitActuatorCfg(joint_names_expr=[".*"], damping=None, stiffness=None)},
-)
-
-#----------------------------------Import Gripper---------------------------------#
-GRIPPER_CONFIG = ArticulationCfg(
-    spawn=sim_utils.UsdFileCfg(usd_path=f"{IDEALAB_ASSET_DIR}/onrobot_2fg7_expanded.usd")
-) 
 
 #------------------------------Import Woodworking Table---------------------------#
 from pathlib import Path
@@ -52,6 +45,16 @@ IDEALAB_ASSET_DIR = PROJECT_ROOT_DIR / "Woodworking_Simulation" / "source" / "Wo
 # Table Depth = 0.8m
 # Table Height = 0.842m
 
+#--------------------------------Import UR5e Robot--------------------------------#
+UR5E_CONFIG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/UniversalRobots/ur5e/ur5e.usd"),
+    actuators={"arm_action": ImplicitActuatorCfg(joint_names_expr=[".*"], damping=None, stiffness=None)},
+)
+
+#----------------------------------Import Gripper---------------------------------#
+GRIPPER_CONFIG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(usd_path=f"{IDEALAB_ASSET_DIR}/onrobot_2fg7_expanded.usd"),
+) 
 
 #-----------------------------Creat Orgins for Robots-----------------------------#
 def define_origins(num_origins: int, spacing: float) -> list[list[float]]:
@@ -104,16 +107,72 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     ur5e2 = Articulation(cfg=ur5e2_cfg)
 
     #------------------------------Gripper for Robot2-----------------------------#
-    gripper_cfg = GRIPPER_CONFIG.replace(prim_path="/World/Origin2/Robot2/Gripper")
-    gripper_cfg.actuators = {"gripper_action": ImplicitActuatorCfg(joint_names_expr=["finger_joint.*"],damping=None,stiffness=None)}
+    stage = omni.usd.get_context().get_stage()
+
+    # flange prim path on the robot (adjust if your UR5e USD uses a different flange prim name)
+    flange_path = Sdf.Path("/World/Origin2/Robot2/wrist_3_link")
+    flange_prim = stage.GetPrimAtPath(flange_path)
+    if not flange_prim.IsValid():
+        raise RuntimeError(f"Flange prim not found at {flange_path}")
+
+    # read flange world transform
+    xform_cache = UsdGeom.XformCache()
+    flange_xform = xform_cache.GetLocalToWorldTransform(flange_prim)  # Gf.Matrix4d
+    flange_pos = flange_xform.ExtractTranslation()
+    flange_rot = flange_xform.ExtractRotation()  # Gf.Rotation (axis+angle)
+    axis = flange_rot.GetAxis()
+    angle = flange_rot.GetAngle()
+    s = math.sin(angle * 0.5)
+    flange_orient = (float(axis[0] * s), float(axis[1] * s), float(axis[2] * s), float(math.cos(angle * 0.5)))
+
+    # spawn gripper as sibling articulation root (avoid putting it under Robot2)
+    gripper_root_path = "/World/Origin2/Robot2_Gripper"
+    gripper_cfg = GRIPPER_CONFIG.replace(prim_path=gripper_root_path)
+    gripper_cfg.actuators = {
+        "gripper_action": ImplicitActuatorCfg(
+            joint_names_expr=["left_finger_joint.*", "right_finger_joint.*"], damping=None, stiffness=None
+        )
+    }
+    gripper_cfg.init_state.pos = (float(flange_pos[0]), float(flange_pos[1]), float(flange_pos[2]))
+    gripper_cfg.init_state.orient = flange_orient
     gripper = Articulation(cfg=gripper_cfg)
 
-    # ur5e2.get_rigid_body("/wrist_3_link").attach_articulation(
-    # gripper,
-    # parent_frame="/wrist_3_link",
-    # child_frame="/gripper_base",
-    # joint_type="fixed"
-    # )
+    # helper: find first prim under root that has a UsdPhysics.RigidBody schema
+    def find_rigid_body_prim(root_path: str) -> Sdf.Path | None:
+        root = stage.GetPrimAtPath(Sdf.Path(root_path))
+        if not root.IsValid():
+            return None
+        for p in root.GetAllChildren():  # direct children first
+            if UsdPhysics.RigidBodyAPI.Get(stage, p.GetPath()):
+                return p.GetPath()
+        # recursive fallback
+        def recurse(prim):
+            for child in prim.GetChildren():
+                if UsdPhysics.RigidBodyAPI.Get(stage, child.GetPath()):
+                    return child.GetPath()
+                res = recurse(child)
+                if res:
+                    return res
+            return None
+        return recurse(root)
+
+    # find flange rigid body prim (body0) and gripper rigid body prim (body1)
+    body0 = find_rigid_body_prim(str(flange_path)) or flange_path
+    body1 = find_rigid_body_prim(gripper_root_path)
+    if body1 is None:
+        # If we cannot find a rigid-body under the gripper root, print tree to debug
+        print("[WARN] could not find gripper rigid-body prim under", gripper_root_path)
+        print("Prims under gripper root:")
+        root = stage.GetPrimAtPath(Sdf.Path(gripper_root_path))
+        for p in root.Traverse():
+            print(" -", p.GetPath(), p.GetTypeName())
+        raise RuntimeError("Failed to locate gripper rigid-body prim; update body1 path accordingly.")
+
+    # create fixed joint between flange rigid body and gripper rigid body
+    joint_path = Sdf.Path("/World/Origin2/Robot2_wrist3_gripper_fixed_joint")
+    fixed = UsdPhysics.FixedJoint.Define(stage, joint_path)
+    fixed.CreateBody0Rel().SetTargets([Sdf.Path(body0)])
+    fixed.CreateBody1Rel().SetTargets([Sdf.Path(body1)])
 
     # return the scene information
     scene_entities = {

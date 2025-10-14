@@ -99,6 +99,23 @@ This helps in indexing all the python modules for intelligent suggestions while 
     </robot>
     ```
 
+- Replace the top part of onrobot_2fg7.xacro
+
+    ```bash
+    <?xml version="1.0" ?>
+    <robot name="2fg7_outwards" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <xacro:include filename="$(find onrobot_2fg7_description)/urdf/materials.xacro" />
+    <xacro:include filename="$(find onrobot_2fg7_description)/urdf/onrobot_2fg7.trans.xacro" />
+    <xacro:include filename="$(find onrobot_2fg7_description)/urdf/onrobot_2fg7.gazebo" />
+    <xacro:gripper_transmission/>
+    <xacro:gazebo_control is_control_on="false" />
+                                                    
+
+    <xacro:macro name="onrobot_2fg7_gripper" params="prefix finger_configuration=outwards">
+    ```
+    and replace all 2fg7 with 2FG7 as xacro is case sensitive
+
 - Install xacro (do so in your isaac_lan env)
 
     ```bash
