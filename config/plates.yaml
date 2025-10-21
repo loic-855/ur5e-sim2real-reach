@@ -1,0 +1,22 @@
+# Configuration file for woodblock sizes
+unit: "mm" # options: mm, cm, m
+orientation: "vertical" # options: horizontal, vertical
+
+plates:
+  - name: "Holzplatte_1"
+    width: 500 
+    depth: 300
+    thickness: 10
+    position: [0, 0, 0] #konvertierung fehlt noch mm->m
+
+  - name: "Holzplatte_2"
+    width: 200
+    depth: 200
+    thickness: 5
+    position: [50, 0, 0] #konvertierung fehlt noch mm->m
+
+  - name: "Holzplatte_3"
+    width: 600
+    depth: 100
+    thickness: 5 
+    position: [50, 0, 0] #konvertierung fehlt noch mm->m
