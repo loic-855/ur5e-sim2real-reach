@@ -40,7 +40,7 @@ from pathlib import Path
 # Resolve to the root of project
 PROJECT_ROOT_DIR = Path(__file__).resolve().parents[2]
 # Path to asset folder
-IDEALAB_ASSET_DIR = PROJECT_ROOT_DIR / "Woodworking_Simulation" / "source" / "Woodworking_Simulation" / "Woodworking_Simulation" / "tasks" / "manager_based" / "Woodworking_Simulation" / "asset"
+IDEALAB_ASSET_DIR = PROJECT_ROOT_DIR / "Woodworking_Simulation" / "source" / "Woodworking_Simulation" / "Woodworking_Simulation" / "tasks" / "manager_based" / "woodworking_simulation" / "asset"
 # Table Width = 1.2m
 # Table Depth = 0.8m
 # Table Height = 0.842m
