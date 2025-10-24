@@ -128,3 +128,12 @@ This helps in indexing all the python modules for intelligent suggestions while 
     xacro onrobot_2fg7_main.xacro -o onrobot_2fg7_expanded.urdf
     ```
 - Then start up isaac-sim and click file import and import the .urdf file this will creat a new subfolder in the urdf folder. The content of this subfolder has to be copied into the asset folder in isaac_lab
+
+### Import OnRobot Screwdriver
+
+- Clone repository
+
+    ```bash
+    git clone https://github.com/Daniella1/robot_urdfs
+    ```
+
