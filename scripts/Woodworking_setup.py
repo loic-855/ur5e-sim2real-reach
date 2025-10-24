@@ -53,12 +53,12 @@ UR5E_CONFIG = ArticulationCfg(
 
 #----------------------------------Import Gripper---------------------------------#
 GRIPPER_CONFIG = ArticulationCfg(
-    spawn=sim_utils.UsdFileCfg(usd_path=f"{IDEALAB_ASSET_DIR}/gripper/onrobot_2fg7_expanded.usd"),
+    spawn=sim_utils.UsdFileCfg(usd_path=f"{IDEALAB_ASSET_DIR}/gripper_color/onrobot_2fg7_expanded.usd"),
 )
 
 #----------------------------------Import Screwdriver---------------------------------#
 SCREWDRIVER_CONFIG = ArticulationCfg(
-    spawn=sim_utils.UsdFileCfg(usd_path=f"{IDEALAB_ASSET_DIR}/onrobot_screwdriver/onrobot_screwdriver.usd"),
+    spawn=sim_utils.UsdFileCfg(usd_path=f"{IDEALAB_ASSET_DIR}/onrobot_screwdriver_color/onrobot_screwdriver.usd"),
 ) 
 
 #-----------------------------Creat Orgins for Robots-----------------------------#

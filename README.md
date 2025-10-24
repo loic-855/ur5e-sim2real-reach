@@ -69,11 +69,7 @@ This helps in indexing all the python modules for intelligent suggestions while 
 
 ### Import Table
 
-- Put Assambly_Table.usd into the folder
-
-    ```bash
-    source\Woodworking_Simulation\Woodworking_Simulation\tasks\manager_based\woodworking_simulation\asset\
-    ```
+- Assambly_Table.usd has been created in SolidWorks has been added to onshape and then imported via the onshape import button in Isaac Sim
 
 ### Import ONrobot 2fg7 Gripper
 
@@ -133,7 +129,76 @@ This helps in indexing all the python modules for intelligent suggestions while 
 
 - Clone repository
 
+    We downloaded the screwdriver from this repo and had to change it up to get it working in Isaac Sim
+
     ```bash
     git clone https://github.com/Daniella1/robot_urdfs
     ```
+
+    I rewrote the .urdf file
+
+    ```bash
+    <?xml version="1.0" ?>
+    <robot name="onrobot_screwdriver_working">
+    <!-- <material name="silver">
+        <color rgba="0.700 0.700 0.700 1.000"/>
+    </material> -->
+    <gazebo reference="link0">
+        <material>Gazebo/Grey</material>
+        <implicitSpringDamper>1</implicitSpringDamper>
+        <mu1>0.2</mu1>
+        <mu2>0.2</mu2>
+        <kp>100000000.0</kp>
+        <kd>1.0</kd>
+        <selfCollide>true</selfCollide>
+        <gravity>true</gravity>
+    </gazebo>
+    <link name="link0">
+        <inertial>
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <mass value="4.0"/>
+        <inertia ixx="0.00443333156" ixy="0.0" ixz="0.0" iyy="0.00443333156" iyz="0.0" izz="0.0072"/>
+        </inertial>
+        <visual>
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <geometry>
+            <mesh filename="C:/Users/pasca/SynologyDrive/04_ETH/91_Bachlor_Thesis/60_Onrobot_screwdriver/screwdriver/visual/body.dae"/>
+        </geometry>
+        <!-- <material name="silver"/> -->
+        </visual>
+        <collision>
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <geometry>
+            <mesh filename="C:/Users/pasca/SynologyDrive/04_ETH/91_Bachlor_Thesis/60_Onrobot_screwdriver/screwdriver/collision/body.stl"/>
+        </geometry>
+        </collision>
+    </link>
+    <joint name="joint0" type="prismatic">
+        <parent link="link0"/>
+        <child link="link1"/>
+        <origin rpy="0.0 0.0 0.0" xyz="0.0 -0.0 0.0"/>
+        <axis xyz="0 0 -1"/>
+        <limit effort="150.0" lower="0.0" upper="0.055" velocity="1.5"/>
+    </joint>
+    <link name="link1">
+        <visual>
+        <!-- <origin xyz="0.0 -0.0915 -0.13" rpy="0.0 0.0 0.0"/> -->
+        <origin xyz="0.0 -0.09685 -0.13" rpy="0.0 0.0 0.0"/>
+        <geometry>
+            <mesh filename="C:/Users/pasca/SynologyDrive/04_ETH/91_Bachlor_Thesis/60_Onrobot_screwdriver/screwdriver/visual/shank_bit.dae"/>
+        </geometry>
+        <material name="silver"/>
+        </visual>
+        <collision>
+        <origin xyz="0.0 -0.0915 -0.13" rpy="0.0 0.0 0.0"/>
+        <geometry>
+            <mesh filename="C:/Users/pasca/SynologyDrive/04_ETH/91_Bachlor_Thesis/60_Onrobot_screwdriver/screwdriver/collision/shank_bit.stl"/>
+        </geometry>
+        </collision>
+    </link>
+    </robot>
+    ```
+
+    I imported the .stl files provided from OnRobot into Onshape were I created a assambly with the quickconnecter.
+    Then I hade to export it to .step reimport into Onshape with create one file to finaly export to .dae .
 
