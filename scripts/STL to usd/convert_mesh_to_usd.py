@@ -82,4 +82,4 @@ def mesh_converter(
     print(f"✅ USD file generated at: {mesh_converter.usd_path}")
 
 
-    simulation_app.close()
+#   simulation_app.close()
