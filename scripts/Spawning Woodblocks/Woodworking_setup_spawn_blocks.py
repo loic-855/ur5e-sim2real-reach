@@ -27,7 +27,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from pxr import Usd, UsdPhysics, UsdGeom, Sdf
+from pxr import Usd, UsdPhysics, UsdGeom, Sdf, Gf
 import omni.usd
 import math
 
@@ -41,12 +41,13 @@ render_cfg = sim_utils.RenderCfg(rendering_mode="performance")
 #------------------------------Import Woodworking Table---------------------------#
 from pathlib import Path
 # Resolve to the root of project
-PROJECT_ROOT_DIR = Path(__file__).resolve().parents[3]
+PROJECT_ROOT_DIR = Path(__file__).resolve().parents[2]
 # Path to asset folder
-IDEALAB_ASSET_DIR = PROJECT_ROOT_DIR / "Woodworking_Simulation" / "source" / "Woodworking_Simulation" / "Woodworking_Simulation" / "tasks" / "manager_based" / "woodworking_simulation" / "asset"
+IDEALAB_ASSET_DIR = PROJECT_ROOT_DIR / "source" / "Woodworking_Simulation" / "Woodworking_Simulation" / "tasks" / "manager_based" / "woodworking_simulation" / "asset"
 # Table Width = 1.2m
 # Table Depth = 0.8m
 # Table Height = 0.842m
+
 #--------------------------------Import UR5e Robot--------------------------------#
 UR5E_CONFIG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/UniversalRobots/ur5e/ur5e.usd"),
@@ -55,10 +56,15 @@ UR5E_CONFIG = ArticulationCfg(
 
 #----------------------------------Import Gripper---------------------------------#
 GRIPPER_CONFIG = ArticulationCfg(
-    spawn=sim_utils.UsdFileCfg(usd_path=f"{IDEALAB_ASSET_DIR}/onrobot_2fg7_expanded.usd"),
+    spawn=sim_utils.UsdFileCfg(usd_path=f"{IDEALAB_ASSET_DIR}/gripper_color/onrobot_2fg7_expanded.usd"),
+)
+
+#----------------------------------Import Screwdriver---------------------------------#
+SCREWDRIVER_CONFIG = ArticulationCfg(
+    spawn=sim_utils.UsdFileCfg(usd_path=f"{IDEALAB_ASSET_DIR}/onrobot_screwdriver_color/onrobot_screwdriver.usd"),
 ) 
 
-#-----------------------------Create Orgins for Robots-----------------------------#
+#-----------------------------Creat Orgins for Robots-----------------------------#
 def define_origins(num_origins: int, spacing: float) -> list[list[float]]:
     """Defines the origins of the the scene."""
     # create tensor based on number of environments
@@ -92,20 +98,20 @@ def design_scene() -> tuple[dict, list[list[float]]]:
 
     #-----------------------------------Table-------------------------------------#
     cfg = sim_utils.UsdFileCfg(
-        usd_path=f"{IDEALAB_ASSET_DIR}/Assambly_Table.usd", scale=(0.001, 0.001, 0.001)
+        usd_path=f"{IDEALAB_ASSET_DIR}/assambly_table/Assambly_Table_Physics.usd", scale=(1, 1, 1)
     )
-    cfg.func("/World/Origin1/Table", cfg, translation=(0.0, 0.0, 0.0))
+    cfg.func("/World/Origin1/Table", cfg, translation=(0.0, -1.2, 0.0))
 
     #-------------------------------Robot1 in front-------------------------------#
     ur5e1_cfg = UR5E_CONFIG.replace(prim_path="/World/Origin1/Robot1")
     ur5e1_cfg.init_state.pos = (0.720, -0.08, 0.842)
-    ur5e1_cfg.init_state.joint_pos = {"shoulder_pan_joint":1.57, "shoulder_lift_joint":-1.57,  "elbow_joint":-1.57, "wrist_1_joint":-1.57, "wrist_2_joint":1.57, "wrist_2_joint":1.57}
+    ur5e1_cfg.init_state.joint_pos = {"shoulder_pan_joint":1.57, "shoulder_lift_joint":-1.57,  "elbow_joint":-1.57, "wrist_1_joint":0, "wrist_2_joint":1.57, "wrist_3_joint":0}
     ur5e1 = Articulation(cfg=ur5e1_cfg)
 
     #-----------------------------Robot2 in the back------------------------------#
     ur5e2_cfg = UR5E_CONFIG.replace(prim_path="/World/Origin2/Robot2")
     ur5e2_cfg.init_state.pos = (0.08, 0, 0.842)
-    ur5e2_cfg.init_state.joint_pos = {"shoulder_pan_joint":-1.57, "shoulder_lift_joint":-1.57,  "elbow_joint":-1.57, "wrist_1_joint":-1.57, "wrist_2_joint":1.57, "wrist_2_joint":1.57}
+    ur5e2_cfg.init_state.joint_pos = {"shoulder_pan_joint":-1.57, "shoulder_lift_joint":-1.57,  "elbow_joint":-1.57, "wrist_1_joint":-1.57, "wrist_2_joint":1.57, "wrist_3_joint":0}
     ur5e2 = Articulation(cfg=ur5e2_cfg)
 
     #------------------------------Gripper for Robot2-----------------------------#
@@ -176,28 +182,99 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     fixed.CreateBody0Rel().SetTargets([Sdf.Path(body0)])
     fixed.CreateBody1Rel().SetTargets([Sdf.Path(body1)])
 
+    #------------------------------Screwdriver for Robot1-----------------------------#
+    stage = omni.usd.get_context().get_stage()
+
+    # flange prim path on the robot (adjust if your UR5e USD uses a different flange prim name)
+    flange_path = Sdf.Path("/World/Origin1/Robot1/wrist_3_link")
+    flange_prim = stage.GetPrimAtPath(flange_path)
+    if not flange_prim.IsValid():
+        raise RuntimeError(f"Flange prim not found at {flange_path}")
+
+    # read flange world transform 
+    xform_cache = UsdGeom.XformCache() 
+    flange_xform = xform_cache.GetLocalToWorldTransform(flange_prim) 
+    # Gf.Matrix4d 
+    flange_pos = flange_xform.ExtractTranslation() 
+    flange_rot = flange_xform.ExtractRotation() 
+    # Gf.Rotation (axis+angle) 
+    axis = flange_rot.GetAxis() 
+    angle = flange_rot.GetAngle() 
+    s = math.sin(angle * 0.5) 
+    flange_orient = (float(axis[0] * s), float(axis[1] * s), float(axis[2] * s), float(math.cos(angle * 0.5)))
+
+    # spawn screwdriver as sibling articulation root (avoid putting it under Robot2)
+    screwdriver_root_path = "/World/Origin1/Robot1_Screwdriver"
+    screwdriver_cfg = SCREWDRIVER_CONFIG.replace(prim_path= screwdriver_root_path)
+    screwdriver_cfg.actuators = {
+        "screwdriver_action": ImplicitActuatorCfg(
+            joint_names_expr=["joint0.*"], damping=None, stiffness=None
+        )
+    }
+    screwdriver_cfg.init_state.pos = (float(flange_pos[0]), float(flange_pos[1]), float(flange_pos[2]))
+    screwdriver_cfg.init_state.orient = flange_orient
+    screwdriver = Articulation(cfg=screwdriver_cfg)
+
+    # helper: find first prim under root that has a UsdPhysics.RigidBody schema
+    def find_rigid_body_prim(root_path: str) -> Sdf.Path | None:
+        root = stage.GetPrimAtPath(Sdf.Path(root_path))
+        if not root.IsValid():
+            return None
+        for p in root.GetAllChildren():  # direct children first
+            if UsdPhysics.RigidBodyAPI.Get(stage, p.GetPath()):
+                return p.GetPath()
+        # recursive fallback
+        def recurse(prim):
+            for child in prim.GetChildren():
+                if UsdPhysics.RigidBodyAPI.Get(stage, child.GetPath()):
+                    return child.GetPath()
+                res = recurse(child)
+                if res:
+                    return res
+            return None
+        return recurse(root)
+
+    # find flange rigid body prim (body0) and screwdriver rigid body prim (body1)
+    body0 = find_rigid_body_prim(str(flange_path)) or flange_path
+    body1 = find_rigid_body_prim(screwdriver_root_path)
+    if body1 is None:
+        print("[WARN] could not find screwdriver rigid-body prim under", screwdriver_root_path)
+        print("Prims under screwdriver root:")
+        root = stage.GetPrimAtPath(Sdf.Path(screwdriver_root_path))
+        for p in Usd.PrimRange(root):
+            print(" -", p.GetPath(), p.GetTypeName())
+
+        # Minimal fallback: use the screwdriver root prim as the joint target so joint creation proceeds.
+        # Also try applying UsdPhysics.RigidBodyAPI to make it a proper rigid body for physics.
+        body1 = Sdf.Path(screwdriver_root_path)
+        print("[INFO] falling back to using screwdriver root prim as joint target:", body1)
+        try:
+            UsdPhysics.RigidBodyAPI.Apply(stage.GetPrimAtPath(body1))
+            print("[INFO] Applied UsdPhysics.RigidBodyAPI to", body1)
+        except Exception as e:
+            print("[WARN] could not apply RigidBodyAPI:", e)
+
+    # create fixed joint between flange rigid body and screwdriver rigid body (or root)
+    joint_path = Sdf.Path("/World/Origin1/Robot1_screwdriver_fixed_joint")
+    fixed = UsdPhysics.FixedJoint.Define(stage, joint_path)
+    fixed.CreateBody0Rel().SetTargets([Sdf.Path(body0)])
+    fixed.CreateBody1Rel().SetTargets([Sdf.Path(body1)])
+
+    # Set the offset for Body0 (the flange) to identity (zero pos, identity rotation)
+    fixed.CreateLocalPos0Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    fixed.CreateLocalRot0Attr().Set(Gf.Quatf(1.0, 0.0, 0.0, 0.0)) # (w, x, y, z) identity
+    
+    # Set the offset for Body1 (the screwdriver link) to identity (zero pos, identity rotation)
+    fixed.CreateLocalPos1Attr().Set(Gf.Vec3f(0.0, 0.0, 0.0))
+    fixed.CreateLocalRot1Attr().Set(Gf.Quatf(1.0, 0.0, 90.0, -90.0)) # (w, x, y, z) identity
+
     # return the scene information
     scene_entities = {
         "ur5e1": ur5e1,
         "ur5e2": ur5e2,
     }
-    #---------------------- origin for second table with woodblocks ------------------------------#
-    prim_utils.create_prim("/World/Origin_table_wb", "Xform", translation=(0.0, -0.7, 0.0))
-    #-----------------------------------second table with woodblocks-------------------------------------#
-    cfg = sim_utils.UsdFileCfg(
-        usd_path=f"{IDEALAB_ASSET_DIR}/Assambly_Table.usd", scale=(0.001, 0.001, 0.001),
-        #no rigid body properties in usd file for table!
-        #ToDo: add physical properties
-
-        #rigid_props=sim_utils.RigidBodyPropertiesCfg(),
-        #mass_props=sim_utils.MassPropertiesCfg(mass=0.5),60
-        #collision_props=sim_utils.CollisionPropertiesCfg(),
-
-    )
-    cfg.func("/World/Origin_table_wb/Table_wb", cfg, translation=(0.0, 0.0, 0.0))
     # origin for woodblocks
     prim_utils.create_prim("/World/Origin_table_wb/Woodblocks_origin", "Xform", translation=(0.65, -0.5, 0.842))
-    #--------------------------------Spawn woodblocks on table--------------------------------#
     # spawn woodblocks from yaml file
     for plate in plates:
         name = plate["name"]
@@ -286,3 +363,9 @@ if __name__ == "__main__":
     main()
     # close sim app
     simulation_app.close()
+
+
+
+
+#/home/ernstg/Woodworking_Simulation/source/Woodworking_Simulation/Woodworking_Simulation/tasks/manager_based/woodworking_simulation/asset/assambly_table/Assambly_Table_Physics.usd
+#/home/ernstg/Woodworking_Simulation/source/Woodworking_Simulation/Woodworking_Simulation/tasks/manager_based/woodworking_simulation/asset/assambly_table/Assambly_Table_Physics.usd'
