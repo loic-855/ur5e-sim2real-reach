@@ -1,9 +1,13 @@
+#Gian Maria Ernst
+
 """This script calls a utility function to convert an STL mesh file
 into USD format using specified parameters.
 """
-import os
+import numpy as np
+from stl import mesh
 from pathlib import Path
 from convert_mesh_to_usd import mesh_converter
+
 
 """Possible inputs for collision_approximation: 
 
@@ -16,12 +20,11 @@ from convert_mesh_to_usd import mesh_converter
     "boundingSphere"        (dynamic and low precision) - uses bounding sphere for collision approximation
     "none" 
 """
-base_dir = Path(__file__).resolve().parent
 
-root_dir = base_dir.parents[1]
+script_dir = Path(__file__).resolve().parent.parent #project root directory
 
-input_folder = root_dir / "STL_files" #input folder path
-output_folder = root_dir / "USD_files" #output folder path
+input_folder = script_dir.parent / "STL_files" #input folder path
+output_folder = script_dir.parent / "USD_files" #output folder path
 
 mass = 1.0 #add mass to make it a rigid body, else None
 collision_approximation = "convexDecomposition" #collision approximation method
@@ -38,6 +41,11 @@ for stl_path in stl_files:
     usd_path = output_folder / f"{base_name}.usd"
 
     print(f"➡️ Convert {stl_path.name} → {usd_path.name}")
+
+    volume = mesh.Mesh.from_file(stl_path).get_mass_properties()[0]
+    density = 470 # density of dry spruce in kg/m^3
+    mass = density * volume
+    #print(f"   - Volume: {volume:.4f} m^3, Mass: {mass:.4f} kg")
 
     try:
         mesh_converter(

@@ -1,7 +1,10 @@
-"""This script converts a mesh file (e.g., STL, OBJ) into USD format and adds optional
+#Gian Maria Ernst
+
+"""This script converts an STL-File into USD format, adds optional
 rigid body and collision properties based on user-defined parameters."""
 
 """Launch Isaac Sim Simulator first."""
+
 import argparse
 
 from isaaclab.app import AppLauncher
