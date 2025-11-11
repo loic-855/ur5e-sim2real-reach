@@ -202,3 +202,52 @@ This helps in indexing all the python modules for intelligent suggestions while 
     I imported the .stl files provided from OnRobot into Onshape were I created a assambly with the quickconnecter.
     Then I hade to export it to .step reimport into Onshape with create one file to finaly export to .dae .
 
+
+## Building Blocks
+
+The robot builds an assembly from given parts (building blocks) in USD format.
+
+
+Store the parts in USD format in this folder:
+
+```bash
+ "USD_files"
+```
+
+### STL to USD
+If no USD format is available the built in STL to USD converter can be used.\
+Store the parts in STL format in this folder:
+
+```bash
+"STL_files"
+```
+
+This script creates USD files for you:
+
+```bash
+"scripts/STL to usd/run_converter.py"
+```
+
+The converted files are stored in this folder:
+```bash
+"USD_files"
+```
+
+The material assumed is dry spruce with density $\rho  = 470 \frac{kg}{m³}$ .
+
+### by Dimensions
+
+This option works only for rectangular cuboidic geometries (blocks, plates, bars etc.).
+
+The dimensions can be set in this file:
+```bash
+"config/plates.yaml"
+
+plates:
+  - name: "Holzplatte_1"
+    width: 500 
+    depth: 300
+    thickness: 10
+    position: [0, 0, 0]
+```
+
