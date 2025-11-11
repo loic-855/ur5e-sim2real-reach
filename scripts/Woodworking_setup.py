@@ -3,6 +3,21 @@ import argparse
 
 from isaaclab.app import AppLauncher
 
+import omni.ext
+import omni.kit.app
+import os
+
+# --- Configure ROS 2 environment ---
+# $env:ROS_DISTRO = "humble"
+os.environ["ROS_DISTRO"] = "humble"
+# $env:RMW_IMPLEMENTATION = "rmw_fastrtps_cpp" 
+os.environ["RMW_IMPLEMENTATION"] = "rmw_fastrtps_cpp"
+# $env:PATH = "$env:PATH;C:\Users\pasca\miniforge3\envs\env_isaaclab\Lib\site-packages\isaacsim\exts\isaacsim.ros2.bridge\humble\lib"
+isaac_bridge_lib = r"C:\Users\pasca\miniforge3\envs\env_isaaclab\Lib\site-packages\isaacsim\exts\isaacsim.ros2.bridge\humble\lib"
+os.environ["PATH"] += ";" + isaac_bridge_lib
+#  $env:ROS_DOMAIN_ID = "0"
+os.environ["ROS_DOMAIN_ID"] = "0"
+
 # add argparse arguments
 parser = argparse.ArgumentParser(description="This script shows the basic setup of two UR5e robots on a table.")
 # append AppLauncher cli args
@@ -13,6 +28,10 @@ args_cli = parser.parse_args()
 # launch omniverse app
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
+
+# start ros2 bridge extension
+ext_manager = omni.kit.app.get_app().get_extension_manager()
+ext_manager.set_extension_enabled_immediate("isaacsim.ros2.bridge", True)
 
 """Rest everything follows."""
 
