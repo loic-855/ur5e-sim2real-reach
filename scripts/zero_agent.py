@@ -56,8 +56,9 @@ def main():
     while simulation_app.is_running():
         # run everything in inference mode
         with torch.inference_mode():
-            # compute zero actions
-            actions = torch.zeros(env.action_space.shape, device=env.unwrapped.device)
+            # compute parked position actions
+            parked_positions = torch.tensor([0.0, -1.57, 1.57, -1.57, 1.57, 0.0, 0.0, -1.57, 1.57, -1.57, 1.57, 0.0, 0.0, 0.0, 0.0], device=env.unwrapped.device)
+            actions = parked_positions.unsqueeze(0).repeat(env.unwrapped.num_envs, 1)
             # apply actions
             env.step(actions)
 
