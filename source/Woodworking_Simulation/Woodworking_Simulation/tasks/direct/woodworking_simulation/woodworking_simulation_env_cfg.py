@@ -66,7 +66,7 @@ class WoodworkingSimulationEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
 
     # robot(s)
-    robot_cfg: ArticulationCfg = _make_robot_cfg(USD_FILES_DIR / "ur5e_gripper.usd", "UR5eGripper", (0.08, 0.08, 0.842), (1.0, 0.0, 0.0, 0.0))
+    gripper_robot_cfg: ArticulationCfg = _make_robot_cfg(USD_FILES_DIR / "ur5e_gripper.usd", "UR5eGripper", (0.08, 0.08, 0.842), (1.0, 0.0, 0.0, 0.0))
     screwdriver_robot_cfg: ArticulationCfg = _make_robot_cfg(USD_FILES_DIR / "ur5e_screwdriver.usd", "UR5eScrewdriver", (0.72, 1.12, 0.842), (0.0, 0.0, 0.0, 1.0))
 
     # scene

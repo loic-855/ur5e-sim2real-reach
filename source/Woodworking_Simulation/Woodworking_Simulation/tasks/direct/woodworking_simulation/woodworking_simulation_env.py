@@ -33,6 +33,10 @@ class WoodworkingSimulationEnv(DirectRLEnv):
         self.num_screwdriver_dofs = self.screwdriver_robot.data.joint_pos.shape[-1]
         self.num_actions = self.num_gripper_dofs + self.num_screwdriver_dofs
 
+        # Print the number of DOFs for each robot to numerically see them
+        print(f"Gripper robot has {self.num_gripper_dofs} joints (DOFs).")
+        print(f"Screwdriver robot has {self.num_screwdriver_dofs} joints (DOFs).")
+
         self.cfg.action_space = self.num_actions
         self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(self.num_actions,), dtype=np.float32)
 
@@ -45,8 +49,8 @@ class WoodworkingSimulationEnv(DirectRLEnv):
         self.actions = torch.zeros((self.num_envs, self.num_actions), device=self.device)
 
     def _setup_scene(self):
-        self.robot = Articulation(self.cfg.robot_cfg)
-        screwdriver_robot = Articulation(self.cfg.screwdriver_robot_cfg)
+        self.gripper_robot = Articulation(self.cfg.gripper_robot_cfg)
+        self.screwdriver_robot = Articulation(self.cfg.screwdriver_robot_cfg)
 
         table_cfg = sim_utils.UsdFileCfg(usd_path=self.cfg.table_usd_path)
         table_cfg.func(
@@ -64,8 +68,8 @@ class WoodworkingSimulationEnv(DirectRLEnv):
         if self.device == "cpu":
             self.scene.filter_collisions(global_prim_paths=[])
 
-        self.scene.articulations["gripper_robot"] = self.robot
-        self.scene.articulations["screwdriver_robot"] = screwdriver_robot
+        self.scene.articulations["gripper_robot"] = self.gripper_robot
+        self.scene.articulations["screwdriver_robot"] = self.screwdriver_robot
 
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
