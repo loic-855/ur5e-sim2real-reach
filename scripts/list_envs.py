@@ -24,6 +24,7 @@ simulation_app = app_launcher.app
 
 """Rest everything follows."""
 
+import os
 import gymnasium as gym
 from prettytable import PrettyTable
 
@@ -51,6 +52,11 @@ def main():
             index += 1
 
     print(table)
+
+    # Write to file
+    file_path = os.path.join(os.path.dirname(__file__), 'list_envs.txt')
+    with open(file_path, 'w') as f:
+        f.write(str(table))
 
 
 if __name__ == "__main__":
