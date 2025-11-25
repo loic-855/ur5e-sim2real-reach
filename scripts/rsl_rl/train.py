@@ -9,6 +9,7 @@
 
 import argparse
 import sys
+import pickle
 
 from isaaclab.app import AppLauncher
 
@@ -88,7 +89,7 @@ from isaaclab.envs import (
     multi_agent_to_single_agent,
 )
 from isaaclab.utils.dict import print_dict
-from isaaclab.utils.io import dump_pickle, dump_yaml
+# from isaaclab.utils.io import dump_pickle, dump_yaml
 
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 
@@ -97,11 +98,26 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import Woodworking_Simulation.tasks  # noqa: F401
+import yaml
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
+
+
+def dump_pickle(filename, data):
+    """Dump data to a pickle file."""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, "wb") as f:
+        pickle.dump(data, f)
+
+
+def dump_yaml(filename, data, sort_keys=False):
+    """Dump data to a yaml file."""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, "w") as f:
+        yaml.dump(data, f, sort_keys=sort_keys)
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)

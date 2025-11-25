@@ -110,9 +110,26 @@ def overwrite_python_analysis_extra_paths(isaaclab_settings: str) -> str:
             "\n\tWe are working on a fix for this issue with the Isaac Sim team."
         )
 
-    # add the path names that are in the Isaac Lab extensions directory
-    isaaclab_extensions = os.listdir(os.path.join(PROJECT_DIR, "source"))
-    path_names.extend(['"${workspaceFolder}/source/' + ext + '"' for ext in isaaclab_extensions])
+    def _collect_source_extra_paths(base_dir: str) -> list[str]:
+        extra_paths: list[str] = []
+        source_dir = os.path.join(base_dir, "source")
+        if not os.path.isdir(source_dir):
+            return extra_paths
+        for entry in sorted(os.listdir(source_dir)):
+            full_path = os.path.join(source_dir, entry)
+            if not os.path.isdir(full_path):
+                continue
+            rel_entry = os.path.relpath(full_path, PROJECT_DIR).replace("\\", "/")
+            extra_paths.append(f'"${{workspaceFolder}}/{rel_entry}"')
+        return extra_paths
+
+    # add the path names that are in the current project's source directory
+    path_names.extend(_collect_source_extra_paths(os.fspath(PROJECT_DIR)))
+
+    # also add the path names from the Isaac Lab repository if the workspace is an extension project
+    isaaclab_repo_dir = os.path.dirname(ISAACSIM_DIR)
+    if os.path.abspath(isaaclab_repo_dir) != os.path.abspath(PROJECT_DIR):
+        path_names.extend(_collect_source_extra_paths(isaaclab_repo_dir))
 
     # combine them into a single string
     path_names = ",\n\t\t".expandtabs(4).join(path_names)
@@ -159,7 +176,7 @@ def overwrite_default_python_interpreter(isaaclab_settings: str) -> str:
     # python interpreter in the Isaac Lab directory
     isaaclab_settings = re.sub(
         r"\"python.defaultInterpreterPath\": \".*?\"",
-        f'"python.defaultInterpreterPath": "{python_exe}"',
+        lambda _: f'"python.defaultInterpreterPath": "{python_exe}"',
         isaaclab_settings,
         flags=re.DOTALL,
     )

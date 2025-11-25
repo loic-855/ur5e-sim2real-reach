@@ -75,3 +75,4 @@ source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/woodworking_si
 source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/woodworking_simulation/agents/rsl_rl_ppo_cfg_old.py
 scripts/list_envs.txt
 .vscode/tools/setup_vscode.py
+Woodworking_Simulation.code-workspace
