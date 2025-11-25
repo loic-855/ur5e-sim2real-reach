@@ -73,6 +73,12 @@ class WoodworkingDualRobot(DirectRLEnvCfg):
     ee2_pos_relative_to_ee1 (3)
     ee2_quat_relative_to_ee1 (4)
 
+    # Goals
+    goal_gripper_pos (3)
+    goal_gripper_quat (4)
+    goal_screwdriver_pos (3)
+    goal_screwdriver_quat (4)
+
     # Contacts  
     contact_robot1 (1)
     contact_robot2 (1)
@@ -80,8 +86,8 @@ class WoodworkingDualRobot(DirectRLEnvCfg):
     # Last action
     last_action_robot1 (8)
     last_action_robot2 (7) ]
-    total 80 dim with contacts"""
-    observation_space = 78
+    total 92 dim with contacts"""
+    observation_space = 92
     state_space = 0
 
     # simulation
@@ -430,6 +436,11 @@ class WoodworkingDualRobotV0(DirectRLEnv):
             # Relational information
             ee_screw_pos_local - ee_grip_pos_local,
             quat_mul(quat_conjugate(ee_grip_tcp_quat_w), ee_screw_tcp_quat_w),
+            # Goals
+            self.goal_gripper_pos,
+            self.goal_gripper_quat,
+            self.goal_screwdriver_pos,
+            self.goal_screwdriver_quat,
             # Contacts
             #is_colliding_grip.float(),
             #is_colliding_screw.float(),
@@ -470,36 +481,24 @@ class WoodworkingDualRobotV0(DirectRLEnv):
         # -- Rewards Calculation
         rewards = torch.zeros(self._num_envs, device=self.device)
 
-        # 1. Position Tracking (Linear Penalty)
-        rewards += self.cfg.ee_position_tracking * (d_grip + d_screw)
+        # 1. Position Tracking (L2 Norm Error)
+        rew_pos = - (d_grip + d_screw)
+        rewards += self.cfg.ee_position_tracking * rew_pos
 
-        # 2. Orientation Tracking (Linear Penalty)
-        rewards += self.cfg.ee_orientation_tracking * (angle_grip + angle_screw)
+        # 2. Orientation Tracking (L2-like Error)
+        rew_rot = - (angle_grip + angle_screw)
+        rewards += self.cfg.ee_orientation_tracking * rew_rot
 
-        # 3. Fine-tuning Tanh Bonus (when close < 10cm)
-        tanh_scale = 0.1
-        fine_tune_weight = 2.0
-        rewards += fine_tune_weight * (1.0 - torch.tanh(d_grip / tanh_scale))
-        rewards += fine_tune_weight * (1.0 - torch.tanh(d_screw / tanh_scale))
+        # 3. Action Penalty (Regularization)
+        # Encourages smooth motion and prevents unnecessary jitter
+        rewards += self.cfg.action_penalty * torch.sum(self.actions ** 2, dim=-1)
 
         # 4. Proximity / Collision with other robot
-        d_robots = torch.norm(ee_grip_tcp_pos_w - ee_screw_tcp_pos_w, dim=-1)
-        # Penalty for being too close (Proximity)
-        rewards -= 0.5 * torch.exp(-d_robots / 0.2)
+        # DISABLED: The previous implementation penalized proximity regardless of context,
+        # causing robots to maximize distance (run away) instead of solving the task.
+        # d_robots = torch.norm(ee_grip_tcp_pos_w - ee_screw_tcp_pos_w, dim=-1)
+        # rewards -= 0.5 * torch.exp(-d_robots / 0.2)
 
-        # Collision penalty (Any contact)
-        """
-        contact_forces_grip = self._robot_grip.data.net_contact_forces
-        contact_forces_screw = self._robot_screw.data.net_contact_forces
-        is_colliding = torch.any(torch.norm(contact_forces_grip, dim=-1) > 1.0, dim=1) | \
-                       torch.any(torch.norm(contact_forces_screw, dim=-1) > 1.0, dim=1)
-        
-        rewards += self.cfg.collision_penalty * is_colliding.float()
-        rewards += self.cfg.collision_penalty * is_colliding.float()
-
-        # 5. Action Penalty
-        rewards += self.cfg.action_penalty * torch.sum(self.actions ** 2, dim=-1)
-        """
         return rewards
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
