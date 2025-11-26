@@ -18,7 +18,7 @@ from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
-from isaaclab.utils.math import sample_uniform, quat_conjugate, quat_mul
+from isaaclab.utils.math import sample_uniform, quat_conjugate, quat_mul, quat_apply
 
 #path constants
 REPO_ROOT = Path(__file__).resolve().parents[6]
@@ -148,7 +148,7 @@ class WoodworkingDualRobot(DirectRLEnvCfg):
         prim_path="/World/envs/env_.*/ur5e_screwdriver_tcp",
         spawn = sim_utils.UsdFileCfg(
             usd_path=str(USD_FILES_DIR / "ur5e_screwdriver_tcp.usd"),
-            activate_contact_sensors=False,
+            activate_contact_sensors=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
@@ -163,7 +163,7 @@ class WoodworkingDualRobot(DirectRLEnvCfg):
                 "shoulder_lift_joint": -1.57,
                 "elbow_joint": 1.57,
                 "wrist_1_joint": -1.57,
-                "wrist_2_joint": -1.57,
+                "wrist_2_joint": 1.57,
                 "wrist_3_joint": 0.0,
                 "joint0": 0.0,
             },
@@ -245,8 +245,8 @@ class WoodworkingDualRobot(DirectRLEnvCfg):
     dof_velocity_scale = 0.1
 
     #reward scale
-    ee_position_tracking = -0.2
-    ee_orientation_tracking = -0.1
+    ee_position_tracking = 1.0
+    ee_orientation_tracking = 0.5
     action_penalty = -0.0001
     collision_penalty = -50.0
 
@@ -276,6 +276,10 @@ class WoodworkingDualRobotV0(DirectRLEnv):
         print("Available body names:", self._robot_grip.body_names)
         self._ee_index_grip = self._robot_grip.body_names.index("base_link_0")
         self._ee_index_screw = self._robot_screw.body_names.index("link0")
+
+        # Define TCP offsets
+        self.gripper_tcp_offset = torch.tensor(self.cfg.GRIPPER_TCP_OFFSET, device=self.device)
+        self.screwdriver_tcp_offset = torch.tensor(self.cfg.SCREWDRIVER_TCP_OFFSET, device=self.device)
 
         #get some infos about joints
         self.robot_grip_dof_lower_limits = self._robot_grip.data.soft_joint_pos_limits[0, :, 0].to(device=self.device)
@@ -391,8 +395,11 @@ class WoodworkingDualRobotV0(DirectRLEnv):
         joint_vel_grip = self._robot_grip.data.joint_vel
         
         # Get TCP pose from transformer
-        ee_grip_tcp_pos_w = self._robot_grip.data.body_pos_w[:, self._ee_index_grip, :]
+        ee_grip_link_pos_w = self._robot_grip.data.body_pos_w[:, self._ee_index_grip, :]
         ee_grip_tcp_quat_w = self._robot_grip.data.body_quat_w[:, self._ee_index_grip, :]
+        
+        # Apply TCP offset
+        ee_grip_tcp_pos_w = ee_grip_link_pos_w + quat_apply(ee_grip_tcp_quat_w, self.gripper_tcp_offset.repeat(self._num_envs, 1))
         
         ee_grip_pos_local = ee_grip_tcp_pos_w - (self.robot_grip_base + self.env_origins)
 
@@ -403,8 +410,11 @@ class WoodworkingDualRobotV0(DirectRLEnv):
         joint_vel_screw = self._robot_screw.data.joint_vel
         
         # Get TCP pose from transformer
-        ee_screw_tcp_pos_w = self._robot_screw.data.body_pos_w[:, self._ee_index_screw, :]
+        ee_screw_link_pos_w = self._robot_screw.data.body_pos_w[:, self._ee_index_screw, :]
         ee_screw_tcp_quat_w = self._robot_screw.data.body_quat_w[:, self._ee_index_screw, :]
+        
+        # Apply TCP offset
+        ee_screw_tcp_pos_w = ee_screw_link_pos_w + quat_apply(ee_screw_tcp_quat_w, self.screwdriver_tcp_offset.repeat(self._num_envs, 1))
         
         ee_screw_pos_local = ee_screw_tcp_pos_w - (self.robot_screw_base + self.env_origins)
 
@@ -455,14 +465,22 @@ class WoodworkingDualRobotV0(DirectRLEnv):
     def _get_rewards(self) -> torch.Tensor:
         # -- Get current state
         # Gripper
-        ee_grip_tcp_pos_w = self._robot_grip.data.body_pos_w[:, self._ee_index_grip, :]
+        ee_grip_link_pos_w = self._robot_grip.data.body_pos_w[:, self._ee_index_grip, :]
         ee_grip_tcp_quat_w = self._robot_grip.data.body_quat_w[:, self._ee_index_grip, :]
+        
+        # Apply TCP offset
+        ee_grip_tcp_pos_w = ee_grip_link_pos_w + quat_apply(ee_grip_tcp_quat_w, self.gripper_tcp_offset.repeat(self._num_envs, 1))
+        
         # Relative to env origin
         ee_grip_tcp_pos = ee_grip_tcp_pos_w - self.env_origins
         
         # Screwdriver
-        ee_screw_tcp_pos_w = self._robot_screw.data.body_pos_w[:, self._ee_index_screw, :]
+        ee_screw_link_pos_w = self._robot_screw.data.body_pos_w[:, self._ee_index_screw, :]
         ee_screw_tcp_quat_w = self._robot_screw.data.body_quat_w[:, self._ee_index_screw, :]
+        
+        # Apply TCP offset
+        ee_screw_tcp_pos_w = ee_screw_link_pos_w + quat_apply(ee_screw_tcp_quat_w, self.screwdriver_tcp_offset.repeat(self._num_envs, 1))
+        
         # Relative to env origin
         ee_screw_tcp_pos = ee_screw_tcp_pos_w - self.env_origins
 
@@ -567,8 +585,8 @@ class WoodworkingDualRobotV0(DirectRLEnv):
         # --- Sample Goal for Gripper Robot ---
         offsets_grip = torch.empty((num, 3), device=self.device)
         # Adjust ranges based on workspace limits relative to robot base
-        offsets_grip[:, 0].uniform_(-0.08, 0.72)
-        offsets_grip[:, 1].uniform_(-0.08, 1.12)
+        offsets_grip[:, 0].uniform_(-0.08, 0.72/2)
+        offsets_grip[:, 1].uniform_(-0.08, 1.12/2)
         offsets_grip[:, 2].uniform_(0.0, 1.0)
 
         self.goal_gripper_pos[env_ids] = self.robot_grip_base + offsets_grip
@@ -580,8 +598,8 @@ class WoodworkingDualRobotV0(DirectRLEnv):
         # --- Sample Goal for Screwdriver Robot ---
         offsets_screw = torch.empty((num, 3), device=self.device)
         # Adjust ranges based on workspace limits relative to robot base
-        offsets_screw[:, 0].uniform_(-0.72, 0.08)
-        offsets_screw[:, 1].uniform_(-1.12, 0.08,)
+        offsets_screw[:, 0].uniform_(-0.72/2, 0.08)
+        offsets_screw[:, 1].uniform_(-1.12/2, 0.08)
         offsets_screw[:, 2].uniform_(0.0, 1.0)
 
         self.goal_screwdriver_pos[env_ids] = self.robot_screw_base + offsets_screw
