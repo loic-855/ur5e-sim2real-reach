@@ -267,7 +267,7 @@ python scripts/rsl_rl/play.py --task=Template-Pose-Orientation-Two-Robots-Direct
 
 ## Training the policies
 
-![Training Animation Placeholder]()
+![Training Animation](pose_orientation_tworobot.gif)
 
 This project includes several reinforcement learning environments for robotic manipulation tasks in the woodworking setup:
 
