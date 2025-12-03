@@ -1,0 +1,28 @@
+"""
+This script prints the path of the current usd loaded file in Isaaclag stage. To use, run isaaclab graphical interface, 
+go under windows, script editor, and input the python script below.
+"""
+from pxr import Usd
+import omni.usd
+import os
+
+# Get the current stage
+stage = omni.usd.get_context().get_stage()
+
+# Recursive function to write prim paths
+def write_prim_paths(prim, file, indent=0):
+    file.write("    " * indent + prim.GetPath().pathString + "\n")
+    for child in prim.GetChildren():
+        write_prim_paths(child, file, indent + 1)
+
+# Path to save the txt file
+downloads_folder = os.path.expanduser("~/Downloads")
+txt_file_path = os.path.join(downloads_folder, "prim_path.txt")
+
+# Open the file and write hierarchy
+with open(txt_file_path, "w") as f:
+    root_prim_path = "/World"  # or "/World/onrobot_2fg7_tcp" to limit to robot
+    root_prim = stage.GetPrimAtPath(root_prim_path)
+    write_prim_paths(root_prim, f)
+
+print(f"Prim paths written to: {txt_file_path}")

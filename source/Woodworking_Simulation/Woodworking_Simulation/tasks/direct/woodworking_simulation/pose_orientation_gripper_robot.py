@@ -21,27 +21,21 @@ from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import sample_uniform
 
 #path constants
 REPO_ROOT = Path(__file__).resolve().parents[6]
 USD_FILES_DIR = REPO_ROOT / "USD_files"
-TABLE_ASSET_PATH = (
-    REPO_ROOT
-    / "source"
-    / "Woodworking_Simulation"
-    / "Woodworking_Simulation"
-    / "tasks"
-    / "manager_based"
-    / "woodworking_simulation"
-    / "asset"
-    / "assambly_table"
-    / "Assambly_Table_Physics.usd"
-)
+
+"""
+The script implemented a pose and orientation control task with the gripper arm.
+The architecture is a centralized policy controlling the arm.
+The controller uses the joint space to command the arm.
+"""
 
 @configclass
-class WoodworkingGripper(DirectRLEnvCfg):
+class PoseOrientationGripperRobot(DirectRLEnvCfg):
     # env§
     episode_length_s = 8.3333
     decimation = 2
@@ -55,14 +49,14 @@ class WoodworkingGripper(DirectRLEnvCfg):
 
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
-        num_envs=512, env_spacing=3.0, replicate_physics=True
+        num_envs=4092, env_spacing=3.0, replicate_physics=True
     )
 
     # robot
     gripper_robot = ArticulationCfg(
-        prim_path="/World/envs/env_.*/UR5eGripper",
+        prim_path="/World/envs/env_.*/ur5e_gripper_tcp",
         spawn = sim_utils.UsdFileCfg(
-            usd_path=str(USD_FILES_DIR / "ur5e_gripper.usd"),
+            usd_path=str(USD_FILES_DIR / "ur5e_gripper_tcp.usd"),
             activate_contact_sensors=False,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
@@ -106,7 +100,7 @@ class WoodworkingGripper(DirectRLEnvCfg):
     )
     # Table asset placement: Width = 1.2m, Depth = 0.8m, Height = 0.842m
     table = sim_utils.UsdFileCfg(
-        usd_path=str(TABLE_ASSET_PATH)
+        usd_path=str(USD_FILES_DIR / "woodworking_table.usd")
     )
 
     # ground plane
@@ -134,10 +128,10 @@ class WoodworkingGripper(DirectRLEnvCfg):
     action_penalty = -0.0001
 
 
-class WoodworkingGripperV0(DirectRLEnv):
-    cfg: WoodworkingGripper
+class PoseOrientationGripperRobotV0(DirectRLEnv):
+    cfg: PoseOrientationGripperRobot
 
-    def __init__(self, cfg: WoodworkingGripper, render_mode: str | None = None, **kwargs):
+    def __init__(self, cfg: PoseOrientationGripperRobot, render_mode: str | None = None, **kwargs):
         self.goal_marker = VisualizationMarkers(cfg.goal_marker)
 
         super().__init__(cfg, render_mode, **kwargs)
@@ -158,13 +152,13 @@ class WoodworkingGripperV0(DirectRLEnv):
 
         robot_base_pos_orient = self._get_env_local_pose(
             self.env_origins[0],
-            UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/UR5eGripper/ur5e/base_link")),
-            self.device)
+            UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/ur5e_gripper_tcp/ur5e/base_link")),
+            self.device) # type: ignore
         self.robot_base_pos = robot_base_pos_orient[:3].to(device=self.device)
         self.goal_pos_local = torch.zeros((self._num_envs, 3), device=self.device, dtype=torch.float32)
         self.goal_quat = torch.zeros((self._num_envs, 4), device=self.device, dtype=torch.float32)
 
-        self.actions = torch.zeros((self._num_envs, self.cfg.action_space), device=self.device, dtype=torch.float32)
+        self.actions = torch.zeros((self._num_envs, self.cfg.action_space), device=self.device, dtype=torch.float32) # type: ignore
         
         self._sample_goal()
 
@@ -218,7 +212,7 @@ class WoodworkingGripperV0(DirectRLEnv):
     def _apply_action(self):
         self._robot.set_joint_position_target(self.robot_dof_targets)
 
-    def _get_observations(self):
+    def _get_observations(self): # type: ignore
         ee_pos_w = self._robot.data.body_pos_w[:, self.ee_link_idx]
         ee_quat = self._robot.data.body_quat_w[:, self.ee_link_idx]
         ee_lin_vel = self._robot.data.body_lin_vel_w[:, self.ee_link_idx]
@@ -264,8 +258,8 @@ class WoodworkingGripperV0(DirectRLEnv):
         truncated = self.episode_length_buf >= self.max_episode_length - 1
         return terminated, truncated
 
-    def _reset_idx(self, env_ids: torch.Tensor):
-        super()._reset_idx(env_ids)
+    def _reset_idx(self, env_ids: torch.Tensor): # type: ignore
+        super()._reset_idx(env_ids) # type: ignore
         env_ids = env_ids.to(self.device, dtype=torch.long)
          # robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids] + sample_uniform(

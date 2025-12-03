@@ -11,40 +11,28 @@ from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sensors import FrameTransformerCfg, FrameTransformer
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.sim import SimulationCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import sample_uniform, quat_conjugate, quat_mul, quat_apply
 
 #path constants
 REPO_ROOT = Path(__file__).resolve().parents[6]
 USD_FILES_DIR = REPO_ROOT / "USD_files"
-TABLE_ASSET_PATH = (
-    REPO_ROOT
-    / "source"
-    / "Woodworking_Simulation"
-    / "Woodworking_Simulation"
-    / "tasks"
-    / "manager_based"
-    / "woodworking_simulation"
-    / "asset"
-    / "assambly_table"
-    / "Assambly_Table_Physics.usd"
-)
+
 
 """
 The script implemented a pose and orientation control task with the gripper and screwdriver arms.
-The architecture is a centralized policiy controlling both arms simultaneously.
+The architecture is a centralized policy controlling both arms simultaneously.
 The controller uses the joint space to command the two arms.
 """
 
 
 @configclass
-class WoodworkingDualRobot(DirectRLEnvCfg):
+class PoseOrientationTwoRobotsCfg(DirectRLEnvCfg):
     # env
     episode_length_s = 8.3333
     decimation = 2
@@ -188,33 +176,6 @@ class WoodworkingDualRobot(DirectRLEnvCfg):
                 damping=20, stiffness=100),
         }
     )
-     
-    """
-    # sensor for frame transformations
-    frame_transformer = FrameTransformerCfg(
-        prim_path="{ENV_REGEX_NS}/ur5e_gripper_tcp/ur5e_base_link",  # base path for replicated envs
-        target_frames=[
-            # use the tcp prim paths you mentioned
-            FrameTransformerCfg.FrameCfg(
-                prim_path="/World/envs/env_.*/ur5e_gripper_tcp/onrobot_2fg7_tcp/onrobot_2fg7_expanded/tcp",
-                name="gripper_tcp",
-            ),
-
-        ],
-    )
-
-        # sensor for frame transformations
-    frame_transformer = FrameTransformerCfg(
-        prim_path="{ENV_REGEX_NS}/ur5e_screwdriver_tcp/ur5e_base_link",  # base path for replicated envs
-        target_frames=[
-            # use the tcp prim paths you mentioned
-            FrameTransformerCfg.FrameCfg(
-                prim_path="/World/envs/env_.*/ur5e_screwdriver_tcp/onrobot_screwdriver_tcp/onrobot_screwdriver/casing_tcp",
-                name="screwdriver_tcp",
-            ),
-        ],
-    )
-    """
 
     GRIPPER_TCP_OFFSET = (0.0, 0.0, 0.136)
     SCREWDRIVER_TCP_OFFSET = (0.0, -0.09685, -0.1665)
@@ -222,7 +183,7 @@ class WoodworkingDualRobot(DirectRLEnvCfg):
 
     # Table asset placement: Width = 1.2m, Depth = 0.8m, Height = 0.842m
     table = sim_utils.UsdFileCfg(
-        usd_path=str(TABLE_ASSET_PATH)
+        usd_path=str(REPO_ROOT / "USD_files" / "woodworking_table.usd")
     )
 
     # ground plane
@@ -250,10 +211,10 @@ class WoodworkingDualRobot(DirectRLEnvCfg):
     action_penalty = -0.0001
     collision_penalty = -50.0
 
-class WoodworkingDualRobotV0(DirectRLEnv):
-    cfg: WoodworkingDualRobot
+class PoseOrientationTwoRobotsV0(DirectRLEnv):
+    cfg: PoseOrientationTwoRobotsCfg
 
-    def __init__(self, cfg: WoodworkingDualRobot, render_mode: str | None = None, **kwargs):
+    def __init__(self, cfg: PoseOrientationTwoRobotsCfg, render_mode: str | None = None, **kwargs):
         self.goal_marker = VisualizationMarkers(cfg.goal_marker)
 
         super().__init__(cfg, render_mode, **kwargs)
@@ -266,8 +227,8 @@ class WoodworkingDualRobotV0(DirectRLEnv):
         #get robots base position
         robot_grip_base = self._get_env_local_pose(
             self.env_origins[0],
-            UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/ur5e_gripper_tcp/ur5e/base_link")),
-            self.device,
+            UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/ur5e_gripper_tcp/ur5e/base_link")), # type: ignore
+            self.device, # type: ignore
         )
         self.robot_grip_base = robot_grip_base[:3].to(self.device)
         self.robot_screw_base = robot_grip_base[:3].to(self.device) + torch.tensor(self.cfg.ROBOT_BASE_OFFSET, device=self.device)
@@ -298,7 +259,7 @@ class WoodworkingDualRobotV0(DirectRLEnv):
         self.goal_screwdriver_pos = torch.zeros((self._num_envs, 3), device=self.device)
         self.goal_screwdriver_quat = torch.zeros((self._num_envs, 4), device=self.device)
         
-        self.actions = torch.zeros((self._num_envs, self.cfg.action_space), device=self.device, dtype=torch.float32)
+        self.actions = torch.zeros((self._num_envs, self.cfg.action_space), device=self.device, dtype=torch.float32) # type: ignore
         self._sample_goal()
         stage = get_current_stage
 
@@ -387,7 +348,7 @@ class WoodworkingDualRobotV0(DirectRLEnv):
         self._robot_grip.set_joint_position_target(self.robot_grip_dof_targets)
         self._robot_screw.set_joint_position_target(self.robot_screw_dof_targets)
 
-    def _get_observations(self):
+    def _get_observations(self): # type: ignore
         # Robot 1 (gripper) state
         ee_grip_lin_vel = self._robot_grip.data.body_lin_vel_w[:, self._ee_index_grip, :]
         ee_grip_ang_vel = self._robot_grip.data.body_ang_vel_w[:, self._ee_index_grip, :]
@@ -418,15 +379,6 @@ class WoodworkingDualRobotV0(DirectRLEnv):
         
         ee_screw_pos_local = ee_screw_tcp_pos_w - (self.robot_screw_base + self.env_origins)
 
-        """
-        # net_contact_forces shape: (num_envs, num_bodies, 3)
-        # If any link has a contact force > 1.0 N, we consider it a collision
-        # Note: use the correct ArticulationData attribute name (no trailing "_w")
-        contact_forces_grip = self._robot_grip.data.net_contact_forces
-        contact_forces_screw = self._robot_screw.data.net_contact_forcesrces_grip, dim=-1) > 1.0, dim=1, keepdim=True)
-        is_colliding_grip = torch.any(torch.norm(contact_forces_grip, dim=-1) > 1.0, dim=1, keepdim=True)
-        is_colliding_screw = torch.any(torch.norm(contact_forces_screw, dim=-1) > 1.0, dim=1, keepdim=True)
-        """
         obs = torch.cat(
             [
             # Robot 1 state
@@ -529,8 +481,8 @@ class WoodworkingDualRobotV0(DirectRLEnv):
 
         return died, time_out
 
-    def _reset_idx(self, env_ids: torch.Tensor):
-        super() ._reset_idx(env_ids)
+    def _reset_idx(self, env_ids: torch.Tensor): # type: ignore
+        super() ._reset_idx(env_ids) # type: ignore
         env_ids = env_ids.to(self.device, dtype=torch.long)
         # robot state initialization with some noise for gripper
         joint_pos_grip = self._robot_grip.data.default_joint_pos[env_ids] + sample_uniform(
@@ -609,7 +561,7 @@ class WoodworkingDualRobotV0(DirectRLEnv):
         self.goal_screwdriver_quat[env_ids] = delta_quat_screw
 
     @staticmethod
-    def _get_env_local_pose(env_pos: torch.Tensor, xformable: UsdGeom.Xformable, device: torch.device):
+    def _get_env_local_pose(env_pos: torch.Tensor, xformable: UsdGeom.Xformable, device: torch.device): # type: ignore
         """Compute pose in env-local coordinates"""
         world_transform = xformable.ComputeLocalToWorldTransform(0)
         world_pos = world_transform.ExtractTranslation()

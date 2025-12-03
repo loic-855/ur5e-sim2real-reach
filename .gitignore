@@ -67,6 +67,9 @@ _build
 # Tests
 tests/
 
+# Old/Backup files
+.old/
+
 # Docker history
 .isaac-lab-docker-history
 source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/woodworking_simulation/woodworking_simulation_env_nocrashnorlworking.py

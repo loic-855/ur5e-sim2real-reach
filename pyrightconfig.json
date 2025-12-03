@@ -1,0 +1,6 @@
+{
+    "typeCheckingMode": "standard",
+    "pythonVersion": "3.11",
+    "typeshedPath": "typings",
+    "reportAttributeAccessIssue": "none"
+}

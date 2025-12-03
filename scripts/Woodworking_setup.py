@@ -7,6 +7,7 @@ import omni.ext
 import omni.kit.app
 import os
 
+
 # --- Configure ROS 2 environment ---
 # $env:ROS_DISTRO = "humble"
 os.environ["ROS_DISTRO"] = "humble"
@@ -49,6 +50,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from pxr import Usd, UsdPhysics, UsdGeom, Sdf, Gf
 import omni.usd
 import math
+import isaacsim.core.utils.stage as stage_utils
 
 
 #----------------------------Set Render to Performance----------------------------#
@@ -113,10 +115,16 @@ def design_scene() -> tuple[dict, list[list[float]]]:
     prim_utils.create_prim("/World/Origin1", "Xform", translation=origins[0])
 
     #-----------------------------------Table-------------------------------------#
-    cfg = sim_utils.UsdFileCfg(
+    table = sim_utils.UsdFileCfg(
         usd_path=f"{IDEALAB_ASSET_DIR}/assambly_table/Assambly_Table_Physics.usd", scale=(1, 1, 1)
     )
-    cfg.func("/World/Origin1/Table", cfg, translation=(0.0, -1.2, 0.0))
+    table.func("/World/Origin1/Table", table, translation=(0.0, -1.2, 0.0))
+
+    stage = stage_utils.get_current_stage()
+    table_prim = stage.GetPrimAtPath("/World/Origin1/Table")
+    print("[DEBUG] Table prim valid:", table_prim.IsValid())
+    print("[DEBUG] RigidBody present:", bool(UsdPhysics.RigidBodyAPI.Get(stage, table_prim.GetPath())))
+    print("[DEBUG] Collision API present:", bool(UsdPhysics.CollisionAPI.Get(stage, table_prim.GetPath())))
 
     #-------------------------------Robot1 in front-------------------------------#
     ur5e1_cfg = UR5E_CONFIG.replace(prim_path="/World/Origin1/Robot1")
