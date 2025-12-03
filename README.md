@@ -263,11 +263,11 @@ python scripts/rsl_rl/play.py --task=Template-Pose-Orientation-Gripper-Robot-Dir
 python scripts/rsl_rl/play.py --task=Template-Pose-Orientation-Two-Robots-Direct-v0 --num_envs=10 --checkpoint=pretrained_models/model_pose_orientation_two_robots.pt
 ```
 
-**⚠️ Attention:** These pre-trained policies are functional examples but have not been tuned for optimal performance. They serve as starting points for further training and experimentation.
+**⚠️ Attention:** These pre-trained policies are functional examples but have not been tuned for optimal performance. They serve as starting points for further training and experimentation. Below is an example.
+
+![Pretrained network Animation](pose_orientation_tworobot.gif)
 
 ## Training the policies
-
-![Training Animation](pose_orientation_tworobot.gif)
 
 This project includes several reinforcement learning environments for robotic manipulation tasks in the woodworking setup:
 
