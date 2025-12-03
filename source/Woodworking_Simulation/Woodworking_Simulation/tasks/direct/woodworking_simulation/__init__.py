@@ -6,7 +6,6 @@
 import gymnasium as gym
 
 from . import agents
-from .pose_orientation_gripper_robot import PoseOrientationGripperRobot, PoseOrientationGripperRobotV0
 
 ##
 # Register Gym environments.
