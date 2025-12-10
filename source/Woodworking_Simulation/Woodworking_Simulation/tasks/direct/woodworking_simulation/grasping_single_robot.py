@@ -24,8 +24,6 @@ from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import sample_uniform, quat_from_euler_xyz, euler_xyz_from_quat
-from torch.nn.functional import softsign
-
     
  #path constants
 REPO_ROOT = Path(__file__).resolve().parents[6]
@@ -53,7 +51,7 @@ class GraspingSingleRobotCfg(DirectRLEnvCfg):
 
     # Action space is 7D: 6 joints for the arm + 1 prismatic actuator for the left finger (right finger is mimicked in USD)
     action_space = 7
-    # Observation space is 20D: 7 scaled joint positions + 7 joint velocities + 3 to_target vector + 3 block position (xyz)
+    # Observation space is 27D: 7 scaled joint positions + 7 joint velocities + 3 to_target vector + 3 block position (xyz) + last actions.
     observation_space = 27
     state_space = 0  # Not used in this task
 
@@ -421,10 +419,7 @@ class GraspingSingleRobotV0(DirectRLEnv):
     def _apply_action(self):
         self._g_robot.set_joint_position_target(self.g_robot_dof_targets)
         #self.print_tensor_values(env_num=0, interval_s=1, **{f"action_{i}": self.actions[:, i] for i in range(7)})
-
-        
-
-    # post-physics step calls
+     # post-physics step calls
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         # Success termination: block lifted above 0.25m + table height
@@ -433,8 +428,7 @@ class GraspingSingleRobotV0(DirectRLEnv):
         # Failure termination: block below table with margin (z < 0.835)
         below_table = self._w_block.data.root_pos_w[:, 2] < TABLE_HEIGHT - 0.007
 
-        #Failure termination: block outside XY bounds
-        # Compute local positions for the block in each env
+        #Failure termination: block outside XY bounds, compute local positions for the block in each env
         block_pos_local = self._w_block.data.root_pos_w[:, :3] - self.env_origins[:, :3]
         
         # Check if block is outside XY bounds in local env coordinates
@@ -442,15 +436,10 @@ class GraspingSingleRobotV0(DirectRLEnv):
             (block_pos_local[:, 0] < 0) | (block_pos_local[:, 0] > TABLE_DEPTH) |
             (block_pos_local[:, 1] < 0) | (block_pos_local[:, 1] > TABLE_WIDTH)
         )
-        
-        #Failure termination: block orientation too tilted (not upright)
-        """ if self.common_step_counter < 3000:
-            tilted = False
-        else: """
+
         roll, pitch, yaw = euler_xyz_from_quat(self.w_block_grasp_rot)
         tilted = (torch.abs(roll) > torch.pi / 4) | (torch.abs(pitch) > torch.pi / 4)
             
-
         terminated = success | below_table | tilted | out_of_bounds
         truncated = self.episode_length_buf >= self.max_episode_length - 1
         return terminated, truncated
@@ -537,8 +526,6 @@ class GraspingSingleRobotV0(DirectRLEnv):
         )
         # Vector from robot grasp point to block grasp point in
         to_target = self.w_block_grasp_pos - self.w_robot_grasp_pos
-
-
 
         obs = torch.cat(
             (
@@ -644,9 +631,7 @@ class GraspingSingleRobotV0(DirectRLEnv):
         # Reward the agent for reaching the object using tanh-kernel
         d = torch.norm(block_grasp_pos - robot_grasp_pos, p=2, dim=-1)
         std = 0.02
-
         dist_reward = dist_reward_scale * (1.0 - torch.tanh(d / std)) - dist_penalty_scale * d
-
 
         # Reward the agent for aligning the gripper with the object along z and y axes. Reward for matching the y and opposed z alignement.
         axis1 = tf_vector(robot_grasp_rot, gripper_plane_axis)
