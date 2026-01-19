@@ -10,7 +10,7 @@ import torch
 from pathlib import Path
 from isaacsim.core.utils.stage import get_current_stage
 from isaacsim.core.utils.torch.transformations import tf_combine, tf_inverse, tf_vector
-from pxr import UsdGeom
+from pxr import UsdGeom, PhysxSchema, Gf, Sdf
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
@@ -25,7 +25,7 @@ from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import sample_uniform, quat_from_euler_xyz, euler_xyz_from_quat
     
- #path constants
+#path constants
 REPO_ROOT = Path(__file__).resolve().parents[6]
 USD_FILES_DIR = REPO_ROOT / "USD_files"
 TABLE_ASSET_PATH = (REPO_ROOT/"USD_files"/"woodworking_table.usd")
@@ -46,12 +46,12 @@ The controller uses the task space to command the two arms.
 @configclass
 class GraspingSingleRobotCfg(DirectRLEnvCfg):
     # env
-    episode_length_s = 8.333  # 10 seconds
+    episode_length_s = 8.33 # 8.33 seconds
     decimation = 2
 
     # Action space is 7D: 6 joints for the arm + 1 prismatic actuator for the left finger (right finger is mimicked in USD)
     action_space = 7
-    # Observation space is 27D: 7 scaled joint positions + 7 joint velocities + 3 to_target vector + 3 block position (xyz) + last actions.
+    # Observation space is 27D: 7 scaled joint positions + 7 joint velocities + 3 to_target vector + 3 block position (xyz) why ? + last actions.
     observation_space = 27
     state_space = 0  # Not used in this task
 
@@ -103,9 +103,11 @@ class GraspingSingleRobotCfg(DirectRLEnvCfg):
                     damping=35, stiffness=350),  # UR5e wrist: lighter joints
             "gripper_action": ImplicitActuatorCfg(
                 joint_names_expr = [
-                    "left_finger_joint",
+                    "left_finger_joint", "right_finger_joint",
                     ],
-                damping=35, stiffness=200),  # Realistic for OnRobot 2FG7 (140N grip)
+                #damping=35, stiffness=200),  # Realistic for OnRobot 2FG7 (140N grip)
+                damping=5, stiffness=1200),  # alternative: stiffer for faster response
+            
         }
     )
     
@@ -132,10 +134,10 @@ class GraspingSingleRobotCfg(DirectRLEnvCfg):
     wooden_block = RigidObjectCfg(
         prim_path="/World/envs/env_.*/wooden_block",
         spawn=sim_utils.CuboidCfg(
-            size=(0.02, 0.06, 0.03),           
+            size=(0.025, 0.1, 0.05),           
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 rigid_body_enabled=True, 
-                disable_gravity=False,
+                disable_gravity=True,
                 solver_position_iteration_count=12,
                 solver_velocity_iteration_count=1
             ),
@@ -188,22 +190,46 @@ class GraspingSingleRobotCfg(DirectRLEnvCfg):
         },
     )
 
-    action_scale = 4.0
-    dof_velocity_scale = 0.2
+    action_scale = 3.0
+    dof_velocity_scale = 0.3
 
     # visualization
     enable_debug_markers = True
     num_debug_markers = 15  # Number of envs to show markers for (starting from env_0)
 
     # reward scales
-    dist_reward_scale = 1.2    # Increased to encourage approaching the block
+    dist_reward_scale = 1.8    # Increased to encourage approaching the block
     dist_penalty_scale = 1  # New penalty for distance to encourage closeness
     orientation_reward_scale = 0.8       # Reward for matching y-axis and opposed z-axis alignement
     finger_distance_reward_scale = 2  # New reward for finger closing when near the block
-    lift_reward_scale = 5  
-    action_penalty_scale = [0.0001, 0.005] # Curriculum on
-    speed_penalty_scale = [0.0001, 0.005]
+    lift_reward_scale = 10
+    on_table_penalty_scale = 1  # Penalty for having the block on the table 
+    action_penalty_scale = [0.0002, 0.01] # Curriculum on
+    speed_penalty_scale = [0.0002, 0.01]
 
+    #python .\scripts\rsl_rl\train.py --task Template-Grasping-Single-Robot-Direct-v0 --max_iter 1500 --num_envs 4000 --headless --name "on_table_pen_05" --cfg-options "GraspingSingleRobotCfg.on_table_penalty_scale=0.5"
+
+class GraspingSingleRobotV1Cfg(GraspingSingleRobotCfg):
+    wooden_block = RigidObjectCfg(
+        prim_path="/World/envs/env_.*/wooden_block",
+        spawn=sim_utils.CuboidCfg(
+            #size=(0.025, 0.10, 0.05),           
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                rigid_body_enabled=True, 
+                disable_gravity=True,
+                solver_position_iteration_count=12,
+                solver_velocity_iteration_count=1
+            ),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+            mass_props=sim_utils.MassPropertiesCfg(density=500.0),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.55, 0.27, 0.07)),
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                static_friction=2.0,
+                dynamic_friction=1.0,
+                restitution=0.0,
+            ),
+        ),
+    )
 
 class GraspingSingleRobotV0(DirectRLEnv):
     # pre-physics step calls
@@ -240,6 +266,7 @@ class GraspingSingleRobotV0(DirectRLEnv):
             return torch.tensor([px, py, pz, qw, qx, qy, qz], device=device)
 
         self.dt = self.cfg.sim.dt * self.cfg.decimation
+        self.block_gravity_enabled: bool | None = None
         self.env_origins = self.scene.env_origins.to(device=self.device, dtype=torch.float32)
 
         # create auxiliary variables for computing applied action, observations and rewards
@@ -291,14 +318,14 @@ class GraspingSingleRobotV0(DirectRLEnv):
             lfinger_inv_rot, lfinger_inv_pos, lfinger_pose[3:7], lfinger_pose[0:3]
         )
         # Add offset if needed (default: [0, 0, 0])
-        lfinger_grasp_pose_pos += torch.tensor([0.015, 0.03, 0.03], device=self.device)
+        lfinger_grasp_pose_pos += torch.tensor([0.015, 0.03, 0.035], device=self.device)
         
         rfinger_inv_rot, rfinger_inv_pos = tf_inverse(rfinger_pose[3:7], rfinger_pose[0:3])
         rfinger_grasp_pose_rot, rfinger_grasp_pose_pos = tf_combine(
             rfinger_inv_rot, rfinger_inv_pos, rfinger_pose[3:7], rfinger_pose[0:3]
         )
         # Add offset if needed (default: [0, 0, 0])
-        rfinger_grasp_pose_pos += torch.tensor([0.015, 0.03, 0.03], device=self.device)
+        rfinger_grasp_pose_pos += torch.tensor([0.015, 0.03, 0.035], device=self.device)
         
         self.lfinger_local_grasp_rot = lfinger_grasp_pose_rot.repeat((self.num_envs, 1))
         self.lfinger_local_grasp_pos = lfinger_grasp_pose_pos.repeat((self.num_envs, 1))
@@ -315,7 +342,7 @@ class GraspingSingleRobotV0(DirectRLEnv):
             hand_pose_inv_rot, hand_pose_inv_pos, finger_pose[3:7], finger_pose[0:3]
         )
 
-        g_robot_local_pose_pos += torch.tensor([0.012, 0.03, 0.03], device=self.device)
+        g_robot_local_pose_pos += torch.tensor([0.012, 0.03, 0.035], device=self.device)
         self.g_robot_local_grasp_pos = g_robot_local_pose_pos.repeat((self.num_envs, 1))
         self.g_robot_local_grasp_rot = g_robot_local_grasp_pose_rot.repeat((self.num_envs, 1))
         
@@ -438,7 +465,7 @@ class GraspingSingleRobotV0(DirectRLEnv):
         )
 
         roll, pitch, yaw = euler_xyz_from_quat(self.w_block_grasp_rot)
-        tilted = (torch.abs(roll) > torch.pi / 4) | (torch.abs(pitch) > torch.pi / 4)
+        tilted = (torch.abs(roll) > torch.pi / 3) | (torch.abs(pitch) > torch.pi / 3)
             
         terminated = success | below_table | tilted | out_of_bounds
         truncated = self.episode_length_buf >= self.max_episode_length - 1
@@ -449,7 +476,7 @@ class GraspingSingleRobotV0(DirectRLEnv):
         # Refresh the intermediate values after the physics steps
         self._compute_intermediate_values()
         
-        if self.common_step_counter < 50000:
+        if self.common_step_counter < 15000:
             action_penalty_scale = self.cfg.action_penalty_scale[0]
             speed_penalty_scale = self.cfg.speed_penalty_scale[0]
         else:
@@ -472,6 +499,7 @@ class GraspingSingleRobotV0(DirectRLEnv):
             self.num_envs,
             self.cfg.dist_reward_scale,
             self.cfg.dist_penalty_scale,
+            self.cfg.on_table_penalty_scale,
             self.cfg.finger_distance_reward_scale,
             self.cfg.orientation_reward_scale,
             self.cfg.lift_reward_scale,
@@ -482,6 +510,9 @@ class GraspingSingleRobotV0(DirectRLEnv):
 
     def _reset_idx(self, env_ids: torch.Tensor | None): # type: ignore
         super()._reset_idx(env_ids) # type: ignore
+        gravity_enabled = self.common_step_counter >= 20000
+        if self.block_gravity_enabled != gravity_enabled:
+            self._set_block_gravity(gravity_enabled)
         # robot state
         joint_pos = self._g_robot.data.default_joint_pos[env_ids] + sample_uniform(
             -0.125,
@@ -495,29 +526,11 @@ class GraspingSingleRobotV0(DirectRLEnv):
         self._g_robot.set_joint_position_target(joint_pos, env_ids=env_ids) # type: ignore
         self._g_robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids) # type: ignore
 
-        # wooden block state, reset wooden block position with randomness root base pose = tensor([0.0800, 0.0800, 0.8420, 1.0000, 0.0000, 0.0000, 0.0000],
-        # Spawn wooden block in a geometric zone: 30-80cm from robot base, 90° sector
-        random_bonus = torch.where(torch.rand(len(env_ids), device=self.device) < 0.15, torch.rand(len(env_ids), device=self.device) * 0.01 + 0.01, 0.0) # pyright: ignore[reportArgumentType]
-        radius = torch.rand(len(env_ids), device=self.device) * 0.5 + 0.3  # type: ignore # 0.3-0.8m
-        angle = torch.rand(len(env_ids), device=self.device) * (torch.pi / 2)  # pyright: ignore[reportArgumentType] # 0-90°
-        pos = self.robot_base_pose[0:3].repeat(len(env_ids), 1) # type: ignore
-        pos[:, :2] += torch.stack([radius * torch.cos(angle), radius * torch.sin(angle)], dim=1)
-        pos[:, 2] += BLOCK_MARGIN + BLOCK_THICKNESS / 2.0 + random_bonus
-        pos += self.env_origins[env_ids]
-
-        random_yaw = (torch.rand(len(env_ids), device=self.device) * 20 - 10) * torch.pi / 180 # type: ignore
-        euler_angles = torch.zeros((len(env_ids), 3), device=self.device) # type: ignore
-        euler_angles[:, 2] = random_yaw  # Set yaw (Z-axis rotation)
-        ori = quat_from_euler_xyz(euler_angles[:, 0], euler_angles[:, 1], euler_angles[:, 2])
-        vel = torch.zeros((len(env_ids), 6), device=self.device) # type: ignore
-        self._w_block.write_root_velocity_to_sim(vel, env_ids=env_ids) # type: ignore
-        self._w_block.write_root_pose_to_sim(torch.cat([pos, ori], dim=1), env_ids=env_ids) #type: ignore
-
+        self._place_block(env_ids)
         # Need to refresh the intermediate values so that _get_observations() can use the latest values
         self._compute_intermediate_values(env_ids)
 
     def _get_observations(self) -> dict:
-        """Get observations for V1. Customize this method to modify observations."""
         dof_pos_scaled = (
             2.0
             * (self._g_robot.data.joint_pos - self.g_robot_dof_lower_limits)
@@ -615,6 +628,7 @@ class GraspingSingleRobotV0(DirectRLEnv):
         num_envs,
         dist_reward_scale,
         dist_penalty_scale,
+        on_table_penalty_scale,
         finger_distance_reward_scale,
         orientation_reward_scale,
         lift_reward_scale,
@@ -656,20 +670,22 @@ class GraspingSingleRobotV0(DirectRLEnv):
             1.0 / (finger_distance + 1e-6),  # Récompense fermeture
             torch.zeros_like(d)
         ) """
-        # Pénalité continue, pas par étapes
+        # Pénalité continue, pas par étapes, activée seulement si la distance < 15cm
+        
         block_on_table = w_block_pos[:, 2] < (TABLE_HEIGHT + BLOCK_THICKNESS + 0.05)
-        on_table_penalty = torch.where(block_on_table, 1.0, 0.0)  # Forte
+        #on_table_penalty = torch.where(block_on_table & (d < 0.018), 1.0, 0.0)
+        on_table_penalty = torch.where(block_on_table, 1.0, 0.0)  # pénalité continue si le bloc est sur la table
 
         # Reward the agent for lifting the block (positive when block goes UP)
         lift_height = torch.clamp(w_block_pos[:, 2] - (TABLE_HEIGHT + BLOCK_THICKNESS), min=0.0)
         lift_reward = torch.pow(lift_height, 2)
         
-        sucess_bonus = torch.where(self._w_block.data.root_pos_w[:, 2] > 0.25 + TABLE_HEIGHT + BLOCK_THICKNESS, 50.0, 0.0)
+        sucess_bonus = torch.where(self._w_block.data.root_pos_w[:, 2] > 0.2 + TABLE_HEIGHT + BLOCK_THICKNESS, 10.0, 0.0)
 
         rewards = (
             dist_reward
             + orientation_reward_scale * orientation_reward
-            - 0.4 * on_table_penalty
+            - on_table_penalty_scale * on_table_penalty
             + lift_reward_scale * lift_reward
             - action_penalty_scale * action_penalty
             - speed_penalty_scale * speed_penalty
@@ -691,13 +707,13 @@ class GraspingSingleRobotV0(DirectRLEnv):
             "lift_reward": (lift_reward_scale * lift_reward).mean(),
             "lift_height": lift_height.mean(),
             #"finger_close_reward": finger_close_reward.mean(),
-            "on_table_penalty": (-0.4 * on_table_penalty).mean(),
+            "on_table_penalty": (-on_table_penalty_scale * on_table_penalty).mean(),
             "action_penalty": (-action_penalty_scale * action_penalty).mean(),
             "speed_penalty": (-speed_penalty_scale * speed_penalty).mean(),       
-            "episode_length": self.episode_length_buf.float().mean(),
+            "episode_length": (self.episode_length_buf.float() * self.dt).mean(),
             "self.common_step_counter": self.common_step_counter,
-            "std": std,
-
+            "block_gravity_enabled": -1.0 if self.block_gravity_enabled is None else float(self.block_gravity_enabled),
+            "success_rate": torch.count_nonzero(sucess_bonus)
         })
 
         return rewards
@@ -735,7 +751,53 @@ class GraspingSingleRobotV0(DirectRLEnv):
         )
 
         return global_lfinger_rot, global_lfinger_pos, global_rfinger_rot, global_rfinger_pos, global_ur5e_rot, global_ur5e_pos, global_block_rot, global_block_pos
+
+    def _set_block_gravity(self, enable: bool, env_ids: torch.Tensor | None = None):
+        stage = get_current_stage()
+        ids = range(self.num_envs) if env_ids is None else env_ids.tolist()
+        for env_id in ids:
+            prim_path = f"/World/envs/env_{env_id}/wooden_block"
+            prim = stage.GetPrimAtPath(prim_path)
+            if not prim.IsValid():
+                continue
+            physx_api = PhysxSchema.PhysxRigidBodyAPI.Apply(prim)
+            disable_attr = physx_api.CreateDisableGravityAttr()
+            disable_attr.Set(not enable)
+        self.block_gravity_enabled = enable
     
+    def _set_block_size(self, env_ids: torch.Tensor):
+        """Randomize dimensions of CuboidCfg blocks."""
+        print(f"[DEBUG] _set_block_size executed for {env_ids.numel()} envs...")
+        rand_vals = torch.rand((env_ids.numel(), 3), device=self.device)
+        x_sizes = 0.015 + rand_vals[:, 0] * 0#.015
+        y_sizes = 0.015 + rand_vals[:, 1] * 0#.185
+        z_sizes = 0.015 + rand_vals[:, 2] * 0#.085
+
+        stage = get_current_stage()
+        with Sdf.ChangeBlock():
+            for i, env_id in enumerate(env_ids.tolist()):
+                prim_path = f"/World/envs/env_{env_id}/wooden_block"
+                prim = stage.GetPrimAtPath(prim_path)
+                if not prim.IsValid():
+                    if env_id == 0:
+                        print(f"[DEBUG] block prim not found: {prim_path}")
+                    continue
+
+                xformable = UsdGeom.Xformable(prim)
+                # Ensure a scale op exists
+                scale_op = None
+                for op in xformable.GetOrderedXformOps():
+                    if op.GetOpType() == UsdGeom.XformOp.TypeScale:
+                        scale_op = op
+                        break
+                if scale_op is None:
+                    scale_op = xformable.AddScaleOp()
+                scale_op.Set(Gf.Vec3f(x_sizes[i].item(), y_sizes[i].item(), z_sizes[i].item()))
+                print(f"[DEBUG] Env {env_id} block size = ({x_sizes[i]:.4f}, {y_sizes[i]:.4f}, {z_sizes[i]:.4f})")
+
+                   
+
+
     def _update_marker_visualization(self, marker, translations, orientations, n):
         """Helper to visualize marker poses."""
         marker_indices = torch.zeros(n, dtype=torch.int32, device=self.device)
@@ -751,6 +813,53 @@ class GraspingSingleRobotV0(DirectRLEnv):
             print(message)
         for var_name, tensor in kwargs.items():
             print(f"[DEBUG] {var_name} is of size {tensor.size()}")
+
+    def _place_block(self, env_ids: torch.Tensor):
+        """Place wooden block with randomness (used by _reset_idx)."""
+        device = self.device
+        n = env_ids.numel()
+
+        # Batch random generation: réduire les appels rand()
+        rand_vals = torch.rand((n, 3), device=device)
+        
+        # Random bonus (évite torch.where en favorisant masque * valeurs)
+        mask = rand_vals[:, 0] < 0.15
+        random_bonus = mask.to(torch.float32) * (rand_vals[:, 1] * 0.01 + 0.01)
+
+        # Radius / angle
+        radius = rand_vals[:, 2] * 0.5 + 0.3  # 0.3-0.8m
+        angle = torch.rand(n, device=device) * (torch.pi / 2)  # 0-90°
+        ca = torch.cos(angle)
+        sa = torch.sin(angle)
+
+        # Base position: utiliser expand() au lieu de repeat() (pas d'allocation)
+        base_pos = self.robot_base_pose[0:3].unsqueeze(0).expand((n, 3))  # (n,3)
+
+        # Compose positions in-place
+        pos = base_pos.clone()  # clone() obligatoire après expand()
+        pos[:, 0] += radius * ca
+        pos[:, 1] += radius * sa
+        pos[:, 2] += BLOCK_MARGIN + BLOCK_THICKNESS / 2.0 + random_bonus
+        pos += self.env_origins[env_ids, :3]
+
+        # Orientations: vectoriser sans allocations zéro
+        random_yaw = (torch.rand(n, device=device) * 180 - 90.0) * (torch.pi / 180.0)
+        ori = quat_from_euler_xyz(
+            torch.zeros(n, device=device),
+            torch.zeros(n, device=device),
+            random_yaw,
+        )  # (n,4)
+
+        # Velocities zeros
+        vel = torch.zeros((n, 6), device=device)
+
+        # Write to sim: évite concat intermédiaire en construisant pose complet
+        pose7 = torch.empty((n, 7), device=device)
+        pose7[:, :3] = pos
+        pose7[:, 3:] = ori
+
+        self._w_block.write_root_velocity_to_sim(vel, env_ids=env_ids)
+        self._w_block.write_root_pose_to_sim(pose7, env_ids=env_ids)
 
     def print_tensor_values(self, env_num=0, interval_s: float = 2.0, force: bool = False, **kwargs):
         """Print tensor values on one line, extracting only numeric values."""
@@ -768,3 +877,58 @@ class GraspingSingleRobotV0(DirectRLEnv):
         values_str = ", ".join([f"{name}={tensor[env_num].item():.4f}" for name, tensor in kwargs.items()])
         print(f"[DEBUG] env ({env_num}): {values_str}")
 
+class GraspingSingleRobotV1(GraspingSingleRobotV0):
+    cfg: GraspingSingleRobotV1Cfg
+
+    def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
+        # Success termination: block lifted above 0.25m + table height
+        success = self._w_block.data.root_pos_w[:, 2] > 0.25 + TABLE_HEIGHT + BLOCK_THICKNESS
+        
+        # Failure termination: block below table with margin (z < 0.835)
+        below_table = self._w_block.data.root_pos_w[:, 2] < TABLE_HEIGHT - 0.007
+
+        #Failure termination: block outside XY bounds, compute local positions for the block in each env
+        block_pos_local = self._w_block.data.root_pos_w[:, :3] - self.env_origins[:, :3]
+        
+        # Check if block is outside XY bounds in local env coordinates
+        out_of_bounds = (
+            (block_pos_local[:, 0] < 0) | (block_pos_local[:, 0] > TABLE_DEPTH) |
+            (block_pos_local[:, 1] < 0) | (block_pos_local[:, 1] > TABLE_WIDTH)
+        )
+
+        roll, pitch, yaw = euler_xyz_from_quat(self.w_block_grasp_rot)
+        tilted = (torch.abs(roll) > torch.pi / 3) | (torch.abs(pitch) > torch.pi / 3)
+            
+        terminated = success | below_table | tilted | out_of_bounds
+        truncated = self.episode_length_buf >= self.max_episode_length - 1
+        return terminated, truncated
+
+    def _reset_idx(self, env_ids: torch.Tensor | None): # type: ignore
+        super()._reset_idx(env_ids) # type: ignore
+
+        gravity_enabled = self.common_step_counter >= 20000
+        if self.block_gravity_enabled != gravity_enabled:
+            self._set_block_gravity(gravity_enabled)
+
+        # robot state
+        joint_pos = self._g_robot.data.default_joint_pos[env_ids] + sample_uniform(
+            -0.125,
+            0.125,
+            (len(env_ids), self._g_robot.num_joints), # type: ignore
+            self.device,
+        )
+        joint_pos = torch.clamp(joint_pos, self.g_robot_dof_lower_limits, self.g_robot_dof_upper_limits)
+        joint_vel = torch.zeros_like(joint_pos)
+        self.g_robot_dof_targets[env_ids] = joint_pos
+        self._g_robot.set_joint_position_target(joint_pos, env_ids=env_ids) # type: ignore
+        self._g_robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids) # type: ignore
+
+        
+        
+        # Place the wooden block using a dedicated helper
+        self._set_block_size(env_ids)
+        self._place_block(env_ids)
+        
+        
+        # Need to refresh the intermediate values so that _get_observations() can use the latest values
+        self._compute_intermediate_values(env_ids)

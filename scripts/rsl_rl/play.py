@@ -44,6 +44,14 @@ args_cli, hydra_args = parser.parse_known_args()
 if args_cli.video:
     args_cli.enable_cameras = True
 
+# add hydra override when using specific task
+# If the selected task is the template grasping direct task, ensure the wooden block
+# has gravity enabled by appending the appropriate Hydra override to `hydra_args`.
+if args_cli.task == "Template-Grasping-Single-Robot-Direct-v0" \
+    or args_cli.task == "Template-Grasping-Single-Robot-Direct-v1":
+    # append the override as a plain string so Hydra will pick it up from sys.argv
+    hydra_args.append("env.wooden_block.spawn.rigid_props.disable_gravity=false")
+
 # clear out sys.argv for Hydra
 sys.argv = [sys.argv[0]] + hydra_args
 
