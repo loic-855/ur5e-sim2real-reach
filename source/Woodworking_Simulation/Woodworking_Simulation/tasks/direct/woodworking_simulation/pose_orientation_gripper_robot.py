@@ -36,7 +36,7 @@ The controller uses the joint space to command the arm.
 
 @configclass
 class PoseOrientationGripperRobot(DirectRLEnvCfg):
-    # env§
+    # env
     episode_length_s = 8.3333
     decimation = 2
     # space definition

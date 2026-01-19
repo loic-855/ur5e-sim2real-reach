@@ -28,6 +28,22 @@ gym.register(
     },
 )
 
+gym.register(
+    id="Template-Pose-Orientation-Gripper-Robot-Direct-v1",
+    entry_point=f"{__name__}.pose_orientation_gripper_robot_v1:PoseOrientationGripperRobotV1",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.pose_orientation_gripper_robot_v1:PoseOrientationGripperRobotV1Cfg",
+        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_small_cfg:PPORunnerCfg",
+        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_amp_cfg.yaml",
+        "skrl_ippo_cfg_entry_point": f"{agents.__name__}:skrl_ippo_cfg.yaml",
+        "skrl_mappo_cfg_entry_point": f"{agents.__name__}:skrl_mappo_cfg.yaml",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
+        "sb3_cfg_entry_point": f"{agents.__name__}:sb3_ppo_cfg.yaml",
+    },
+)
+
 
 gym.register(
     id="Template-Pose-Orientation-Two-Robots-Direct-v0",
@@ -52,7 +68,7 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": f"{__name__}.grasping_single_robot:GraspingSingleRobotCfg",
         "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg_single_grasp:PPORunnerCfg",
         "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_amp_cfg.yaml",
         "skrl_ippo_cfg_entry_point": f"{agents.__name__}:skrl_ippo_cfg.yaml",
         "skrl_mappo_cfg_entry_point": f"{agents.__name__}:skrl_mappo_cfg.yaml",
@@ -60,6 +76,23 @@ gym.register(
         "sb3_cfg_entry_point": f"{agents.__name__}:sb3_ppo_cfg.yaml",
     },
 )
+
+gym.register(
+    id="Template-Grasping-Single-Robot-Direct-v1",
+    entry_point=f"{__name__}.grasping_single_robot:GraspingSingleRobotV1",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.grasping_single_robot:GraspingSingleRobotV1Cfg",
+        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg_single_grasp:PPORunnerCfg",
+        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_amp_cfg.yaml",
+        "skrl_ippo_cfg_entry_point": f"{agents.__name__}:skrl_ippo_cfg.yaml",
+        "skrl_mappo_cfg_entry_point": f"{agents.__name__}:skrl_mappo_cfg.yaml",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
+        "sb3_cfg_entry_point": f"{agents.__name__}:sb3_ppo_cfg.yaml",
+    },
+)
+
 
 gym.register(
     id="Template-Grasping-Dual-Robot-Direct-v0",
