@@ -8,14 +8,18 @@ on a dual-arm robot setup. Adapted for gripper robot with prefix "gripper_".
 Only controls the 6 arm joints (gripper stays open).
 """
 
+import sys
 from pathlib import Path
 from typing import Iterable, Optional
 
 import numpy as np
 
+# Add scripts directory to path to allow imports from sibling modules
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 from controllers.policy_controller import PolicyController
 from utils.config_loader import get_task_properties
-from utils.obs_logger import ObsLogger
+from obs_logger import ObsLogger
 
 # Gripper robot joint limits (rad) and gripper finger limits (m)
 # Note: right_finger_joint is mimicked from left_finger_joint in sim
