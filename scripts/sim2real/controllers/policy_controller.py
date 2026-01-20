@@ -111,6 +111,7 @@ class PolicyController:
         # DEBUG: Vérifier l'action
         print(f"[ACTION] Raw output: {action}")
         print(f"[ACTION] Min: {action.min():.4f}, Max: {action.max():.4f}")
+        #print(f"[ACTION] Clamped: {np.clip(action, -1.0, 1.0)}")
 
         return action
 

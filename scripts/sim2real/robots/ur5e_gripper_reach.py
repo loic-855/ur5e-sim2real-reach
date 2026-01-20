@@ -3,10 +3,9 @@
 ur5e_gripper_reach.py
 ----------------------
 
-Policy wrapper to run the pose-orientation reach policy (27 obs / 7 actions)
-trained in Isaac Lab on the UR5e + OnRobot gripper. It mirrors the sim-side
-observation and action preprocessing so the TorchScript policy can run on the
-real robot.
+Policy wrapper to run the pose-orientation reach policy trained in Isaac Lab
+on a dual-arm robot setup. Adapted for gripper robot with prefix "gripper_".
+Only controls the 6 arm joints (gripper stays open).
 """
 
 from pathlib import Path
@@ -16,27 +15,36 @@ import numpy as np
 
 from controllers.policy_controller import PolicyController
 from utils.config_loader import get_task_properties
+from utils.obs_logger import ObsLogger
 
-# UR5e hard joint limits (rad) and gripper stroke (m)
-# Note: right_finger_joint is mimicked from left_finger_joint in sim,
-# but we need it in observations to match the 29D policy input.
+# Gripper robot joint limits (rad) and gripper finger limits (m)
+# Note: right_finger_joint is mimicked from left_finger_joint in sim
 _JOINT_LIMITS = np.array(
     [
-        [-2.0 * np.pi, 2.0 * np.pi],  # shoulder_pan_joint
-        [-2.0 * np.pi, 2.0 * np.pi],  # shoulder_lift_joint
-        [-2.0 * np.pi, 2.0 * np.pi],  # elbow_joint
-        [-2.0 * np.pi, 2.0 * np.pi],  # wrist_1_joint
-        [-2.0 * np.pi, 2.0 * np.pi],  # wrist_2_joint
-        [-2.0 * np.pi, 2.0 * np.pi],  # wrist_3_joint
+        [-2.0 * np.pi, 2.0 * np.pi],  # gripper_shoulder_pan_joint
+        [-2.0 * np.pi, 2.0 * np.pi],  # gripper_shoulder_lift_joint
+        [-2.0 * np.pi, 2.0 * np.pi],  # gripper_elbow_joint
+        [-2.0 * np.pi, 2.0 * np.pi],  # gripper_wrist_1_joint
+        [-2.0 * np.pi, 2.0 * np.pi],  # gripper_wrist_2_joint
+        [-2.0 * np.pi, 2.0 * np.pi],  # gripper_wrist_3_joint
         [0.0, 0.04],  # left_finger_joint
         [0.0, 0.04],  # right_finger_joint (mimicked from left in sim)
     ],
     dtype=np.float64,
 )
 
+# Physics constants
+BLOCK_THICKNESS = 0.015
+BLOCK_MARGIN = 0.003
+TABLE_DEPTH = 0.8
+TABLE_WIDTH = 1.2 
+TABLE_HEIGHT = 0.842
 
 class UR5eGripperReachPolicy(PolicyController):
-    """UR5e reach policy wrapper (27D obs, 7D actions)."""
+    """Dual-arm gripper robot reach policy wrapper (29D obs, 7D actions).
+    
+    Controls only the 6 gripper arm joints. Gripper stays open.
+    """
 
     def __init__(
         self,
@@ -47,34 +55,39 @@ class UR5eGripperReachPolicy(PolicyController):
         super().__init__()
 
         # Joint ordering must match training (8 joints for observation)
-        # Note: right_finger_joint is mimicked in sim but included in observations
+        # Note: Observation order matches simulation without gripper_ prefix
         self.dof_names = [
-            "elbow_joint",
             "shoulder_pan_joint",
             "shoulder_lift_joint",
+            "elbow_joint",
             "wrist_1_joint",
             "wrist_2_joint",
             "wrist_3_joint",
             "left_finger_joint",
             "right_finger_joint",  # mimicked from left, but needed for obs
         ]
-        # Action indices exclude right_finger (only 7 actuated joints)
-        self.action_joint_indices = list(range(7))  # indices 0-6
+        # Real robot joint names with gripper_ prefix
+        self.robot_joint_names = [
+            "gripper_shoulder_pan_joint",
+            "gripper_shoulder_lift_joint",
+            "gripper_elbow_joint",
+            "gripper_wrist_1_joint",
+            "gripper_wrist_2_joint",
+            "gripper_wrist_3_joint",
+        ]
+        # Action indices for 6 arm joints (gripper stays open)
+        self.action_joint_indices = list(range(6))  # indices 0-5
 
         # Resolve default model/env paths if not provided
         repo_root = Path(__file__).resolve().parents[3]
         if run_root is None:
-            run_root = repo_root / "logs" / "rsl_rl" / "pose_orientation_reach_v1"
-        run_dir = None
-        if policy_path is None or env_path is None:
-            if run_root.exists():
-                candidates = sorted([p for p in run_root.iterdir() if p.is_dir()])
-                if candidates:
-                    run_dir = candidates[-1]
-        policy_path = policy_path or (run_dir / "model_300.pt" if run_dir else None)
-        env_path = env_path or (run_dir / "params" / "env.yaml" if run_dir else None)
-        if policy_path is None or env_path is None:
-            raise FileNotFoundError("Could not resolve default policy/env paths. Provide them explicitly.")
+            run_root = repo_root / "pretrained_models" / "pose_orientation_reach_v1" / "2026-01-16_14-25-14_final"
+        
+        policy_path = policy_path or (run_root / "exported" / "policy.pt")
+        env_path = env_path or (run_root / "params" / "env.yaml")
+        
+        if not policy_path.exists() or not env_path.exists():
+            raise FileNotFoundError(f"Policy or env file not found: {policy_path}, {env_path}")
 
         self.load_policy(policy_path, env_path)
 
@@ -86,7 +99,7 @@ class UR5eGripperReachPolicy(PolicyController):
         self.action_scale, self.dof_velocity_scale = get_task_properties(self.policy_env_params)
         # Note: policy_dt is now a property from the base class
 
-        # Joint limits + speed scales (fingers slowed like in sim)
+        # Joint limits + speed scales
         self.joint_lower = _JOINT_LIMITS[:, 0].copy()
         self.joint_upper = _JOINT_LIMITS[:, 1].copy()
         self.speed_scales = np.ones_like(self.joint_lower)
@@ -98,11 +111,30 @@ class UR5eGripperReachPolicy(PolicyController):
         self.current_joint_positions = np.array(self.default_pos, dtype=np.float64)
         self.current_joint_velocities = np.array(self.default_vel, dtype=np.float64)
 
-        # Actions are 7D (excludes mimicked right_finger_joint)
+        # Actions are 7D but we only actuate 6 arm joints (gripper stays open at default)
         self.num_actions = 7
         self.last_actions = np.zeros(self.num_actions, dtype=np.float64)
         self._policy_counter = 0
         self.has_joint_data = False
+
+        # Obs logger (records obs + action in a single binary file, non-blocking)
+        # Annotate as Optional for static checkers
+        self._obs_logger: Optional[ObsLogger] = None
+        try:
+            self._obs_logger = ObsLogger(out_dir=(repo_root / "logs" / "sim2real"), base_name="obs", queue_max_size=10000)
+        except Exception as e:
+            print(f"Warning: Failed to create ObsLogger: {e}")
+            self._obs_logger = None
+        
+        # Print joint mapping for debugging
+        print("\n=== JOINT MAPPING ===")
+        print("Policy expects (training order):")
+        for i, name in enumerate(self.dof_names):
+            print(f"  [{i}] {name}")
+        print("\nRobot publishes (ROS2 order):")
+        for i, name in enumerate(self.robot_joint_names):
+            print(f"  [{i}] {name}")
+        print("=====================\n")
 
     # ------------------------------------------------------------------
     # State updates
@@ -110,18 +142,19 @@ class UR5eGripperReachPolicy(PolicyController):
     def update_joint_state(self, positions: Iterable[float], velocities: Iterable[float]) -> None:
         """Update joint state from real robot.
         
-        The real robot may only report 7 joints (without mimicked right_finger).
-        We mirror left_finger_joint to right_finger_joint for observation.
+        Expects 6 joint values (arm only). Adds finger joints at default values
+        and mirrors left_finger to right_finger for observation.
         """
         pos_arr = np.array(list(positions), dtype=np.float64)
         vel_arr = np.array(list(velocities), dtype=np.float64)
 
-        # Real robot has 7 joints, we need 8 for observation
-        if len(pos_arr) == 7:
-            # Mirror left_finger (index 6) to right_finger (index 7)
-            pos_arr = np.append(pos_arr, pos_arr[6])
-        if len(vel_arr) == 7:
-            vel_arr = np.append(vel_arr, vel_arr[6])
+        # Real robot reports 6 arm joints, we need 8 for observation (6 arm + 2 fingers)
+        if len(pos_arr) == 6:
+            # Add finger joints at default (open position)
+            finger_pos = self.default_pos[6] if len(self.default_pos) > 6 else 0.0
+            pos_arr = np.append(pos_arr, [finger_pos, finger_pos])  # left and right fingers
+        if len(vel_arr) == 6:
+            vel_arr = np.append(vel_arr, [0.0, 0.0])  # finger velocities = 0
 
         n = min(len(self.dof_names), len(pos_arr))
         self.current_joint_positions[:n] = pos_arr[:n]
@@ -135,17 +168,12 @@ class UR5eGripperReachPolicy(PolicyController):
         if not self.has_joint_data:
             return None
 
-
-
+        # Scale joint positions to [-1, 1]
         dof_pos_scaled = 2.0 * (self.current_joint_positions - self.joint_lower) / (self.joint_upper - self.joint_lower) - 1.0
         joint_vel_scaled = self.current_joint_velocities * self.dof_velocity_scale
         to_target = goal_pos - grasp_pos
 
-                # DEBUG: Vérifier les entrées
-        print(f"[OBS] Joint positions: {self.current_joint_positions}")
-        print(f"[OBS] Joint velocities: {self.current_joint_velocities}")
-        print(f"[OBS] Goal: {goal_pos}")
-
+        # Observation: [8 joint_pos, 8 joint_vel, 3 to_target, 3 goal_pos, 7 last_actions] = 29D
         obs = np.concatenate(
             [
                 dof_pos_scaled,
@@ -155,29 +183,39 @@ class UR5eGripperReachPolicy(PolicyController):
                 self.last_actions,
             ]
         ).astype(np.float32)
-        print(f"[OBS] Shape: {obs.shape}, Values: {obs}[:5]...") 
+        
+        
         return obs
 
     def forward(self, dt: float, goal_pos: np.ndarray, grasp_pos: np.ndarray) -> Optional[np.ndarray]:
         """Compute next joint targets from policy.
         
-        Returns 7D targets (excluding mimicked right_finger_joint) for the controller.
+        Returns 6D targets (arm joints only, gripper stays open) for the controller.
         """
         if not self.has_joint_data:
             return None
 
+        # Compute observation once and reuse
+        obs = self._compute_observation(goal_pos, grasp_pos)
+        if obs is None:
+            return None
+
         if self._policy_counter % self._decimation == 0:
-            obs = self._compute_observation(goal_pos, grasp_pos)
-            if obs is None:
-                return None
             action = self._compute_action(obs)
             action = np.clip(action, -1.0, 1.0)
             self.last_actions = action.copy()
         else:
             action = self.last_actions
 
-        # Action is 7D, but we have 8 joint targets (with mimicked right_finger)
-        # Extend action to 8D by mirroring left_finger action to right_finger
+        # Log obs+action (non-blocking). Stored record = [29 obs, 7 action] = 36 float32.
+        if self._obs_logger is not None:
+            try:
+                self._obs_logger.push(obs, action)
+            except Exception as e:
+                print(f"ObsLogger push failed: {e}")
+
+        # Action is 7D (6 arm + 1 finger), but we only actuate the 6 arm joints
+        # Extend action to 8D for internal state tracking by mirroring finger
         action_8d = np.append(action, action[6])  # mirror finger action
 
         deltas = (
@@ -188,15 +226,32 @@ class UR5eGripperReachPolicy(PolicyController):
             * action_8d
         )
         new_targets = np.clip(self.joint_targets + deltas, self.joint_lower, self.joint_upper)
+        
+        # Debug: Log target computation
+        if self._policy_counter % 120 == 0:
+            print(f"Deltas (8D): {deltas[:6]}")
+            print(f"Old targets (6D): {self.joint_targets[:6]}")
+            print(f"New targets (6D): {new_targets[:6]}")
+            print("========================\n")
+        
         self.joint_targets = new_targets
         self._policy_counter += 1
         
-        # Return only 7 targets for the real robot controller (exclude mimicked right_finger)
-        return self.joint_targets[:7].copy()
+        # Return only 6 arm joint targets for the real robot (gripper stays open)
+        return self.joint_targets[:6].copy()
 
     # ------------------------------------------------------------------
     # Utility
     # ------------------------------------------------------------------
+
+    def close_logger(self) -> None:
+        """Close the ObsLogger if present (flush and write metadata)."""
+        if self._obs_logger is not None:
+            try:
+                self._obs_logger.close()
+            except Exception as e:
+                print(f"ObsLogger close failed: {e}")
+            self._obs_logger = None
 
     @staticmethod
     def sample_goal(base_pos) -> np.ndarray:
@@ -205,9 +260,8 @@ class UR5eGripperReachPolicy(PolicyController):
         Args:
             base_pos: Base position as tuple or array-like (x, y, z).
         """
-
         offsets = np.empty(3, dtype=np.float32)
-        offsets[0] = np.random.uniform(0.15, 1.2 - 0.23)
-        offsets[1] = np.random.uniform(0.15, 0.8 - 0.25)
+        offsets[0] = np.random.uniform(-TABLE_DEPTH/2, TABLE_DEPTH/2)
+        offsets[1] = np.random.uniform(-TABLE_WIDTH/2, TABLE_WIDTH/2)
         offsets[2] = np.random.uniform(0.05, 0.6)
         return np.array(base_pos, dtype=np.float32) + offsets
