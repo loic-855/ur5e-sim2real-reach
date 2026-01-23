@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import torch
-from isaacsim.core.utils.stage import get_current_stage
+from isaacsim.core.utils.stage import get_current_stage #type: ignore
 from pxr import UsdGeom
 
 

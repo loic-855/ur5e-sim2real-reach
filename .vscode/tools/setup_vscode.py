@@ -123,6 +123,12 @@ def overwrite_python_analysis_extra_paths(isaaclab_settings: str) -> str:
             extra_paths.append(f'"${{workspaceFolder}}/{rel_entry}"')
         return extra_paths
 
+    # add the python_packages directory for isaacsim modules
+    python_packages_path = os.path.join(ISAACSIM_DIR, "python_packages")
+    if os.path.isdir(python_packages_path):
+        rel_packages_path = os.path.relpath(python_packages_path, PROJECT_DIR).replace("\\", "/")
+        path_names.insert(0, f'"${{workspaceFolder}}/{rel_packages_path}"')
+
     # add the path names that are in the current project's source directory
     path_names.extend(_collect_source_extra_paths(os.fspath(PROJECT_DIR)))
 

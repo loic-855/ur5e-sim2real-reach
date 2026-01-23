@@ -78,7 +78,7 @@ import os
 import torch
 from datetime import datetime
 
-import omni
+import carb
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
 from isaaclab.envs import (
@@ -161,7 +161,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if isinstance(env_cfg, ManagerBasedRLEnvCfg):
         env_cfg.export_io_descriptors = args_cli.export_io_descriptors
     else:
-        omni.log.warn(
+        carb.log_warn(
             "IO descriptors are only supported for manager based RL environments. No IO descriptors will be exported."
         )
 

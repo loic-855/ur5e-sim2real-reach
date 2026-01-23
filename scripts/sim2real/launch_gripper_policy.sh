@@ -12,8 +12,8 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 
 # Default paths
-POLICY_PATH="$REPO_ROOT/pretrained_models/pose_orientation_reach_v1/2026-01-16_14-25-14_final/exported/policy.pt"
-ENV_PATH="$REPO_ROOT/pretrained_models/pose_orientation_reach_v1/2026-01-16_14-25-14_final/params/env.yaml"
+POLICY_PATH="$REPO_ROOT/pretrained_models/pose_orientation_reach_v1/2026-01-22_11-07-32/exported/policy.pt"
+ENV_PATH="$REPO_ROOT/pretrained_models/pose_orientation_reach_v1/2026-01-22_11-07-32/params/env.yaml"
 
 echo "================================================"
 echo "  Gripper Robot Reach Policy Launch Script"
