@@ -10,7 +10,7 @@
 #SBATCH --error=logs/train_%j.err
 
 # --- CONFIGURATION ---
-TASK_NAME="Ur5e-Torque-Reach-v0"
+TASK_NAME="Template-Pose-Orientation-No-Gripper-Robot-Direct-v0"
 # UPDATE THIS PATH to where you uploaded your .sif file
 SIF_PATH="/cluster/home/$USER/isaac_euler_salziegl.sif"
 
@@ -72,7 +72,7 @@ apptainer exec --nv \
 
         # 2. Run Training
         echo 'Starting Training...'
-        /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/skrl/train.py \
+        /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \
             --headless
     "
