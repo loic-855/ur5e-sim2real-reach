@@ -2,46 +2,39 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """Simple pose/orientation control for UR5e (6 joints, no gripper)."""
 
+
 from __future__ import annotations
 from pathlib import Path
 import torch
 
-import isaaclab.sim as sim_utils
-from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
-from isaaclab.assets import Articulation, ArticulationCfg
+from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
-from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.sim import SimulationCfg
-from isaaclab.terrains import TerrainImporterCfg
+from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
-from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.markers import VisualizationMarkers
 from isaaclab.utils.math import sample_uniform
 
-REPO_ROOT = Path(__file__).resolve().parents[6]
-USD_FILES_DIR = REPO_ROOT / "USD_files"
 
-# Table dimensions (origin at corner, we offset to center)
-TABLE_DEPTH = 0.8   # x
-TABLE_WIDTH = 1.2   # y
-TABLE_HEIGHT = 0.842  # z
-# Aluminium block on which the robot is mounted
-MOUNT_HEIGHT = 0.02
-
-# Normalization constants
-MAX_REACH = 0.85  # UR5e reach ~850mm
-MAX_JOINT_VEL = 3.14  # ~180°/s
-
-# Joint limits for real robot (elbow has cable constraint) - as floats
-JOINT_LIMITS = {
-    "shoulder_pan_joint": (-6.283185307179586, 6.283185307179586),  # -2π, 2π
-    "shoulder_lift_joint": (-6.283185307179586, 6.283185307179586),
-    "elbow_joint": (-3.141592653589793, 3.141592653589793),  # -π, π (cable constraint)
-    "wrist_1_joint": (-6.283185307179586, 6.283185307179586),
-    "wrist_2_joint": (-6.283185307179586, 6.283185307179586),
-    "wrist_3_joint": (-6.283185307179586, 6.283185307179586),
-}
+# Import shared configurations
+from Woodworking_Simulation.common.robot_configs import (
+    get_robot_cfg,
+    get_table_cfg,
+    get_terrain_cfg,
+    get_goal_marker_cfg,
+    get_origin_marker_cfg,
+    get_camera_pole_cfg,
+    setup_dome_light,
+    RobotType,
+    TABLE_DEPTH,
+    TABLE_WIDTH,
+    TABLE_HEIGHT,
+    MAX_REACH,
+    MAX_JOINT_VEL,
+    JOINT_LIMITS,
+    ENV_ORIGIN_OFFSET,
+)
 
 
 @configclass
@@ -52,63 +45,21 @@ class PoseOrientationNoGripper(DirectRLEnvCfg):
     observation_space = 19  # pos_error(3), quat_error(4), joint_pos(6), joint_vel(6)
     state_space = 0  # Not used in this task
 
+    # Local simulation and scene configurations
     sim: SimulationCfg = SimulationCfg(dt=1/120, render_interval=decimation)
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=3.0)
-
-    # UR5e robot position in local frame (table center = origin)
-    robot = ArticulationCfg(
-        prim_path="/World/envs/env_.*/ur5e",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/UniversalRobots/ur5e/ur5e.usd",        
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                disable_gravity=False,
-                max_depenetration_velocity=5.0,
-            ),
-            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=True, solver_position_iteration_count=12, solver_velocity_iteration_count=1
-            ),
-        ),
-        init_state=ArticulationCfg.InitialStateCfg(
-            joint_pos={"shoulder_lift_joint": -1.57, "wrist_1_joint": -1.57},
-            pos=(0.08, 0.08, TABLE_HEIGHT + MOUNT_HEIGHT),  # Robot base in local frame
-            rot=(0.7071, 0.0, 0.0, -0.7071),  # -90° around Z to match real setup
-        ),
-        actuators={
-            "shoulder": ImplicitActuatorCfg(
-                joint_names_expr=["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint"],
-                stiffness=800, damping=80
-            ),
-            "wrist": ImplicitActuatorCfg(
-                joint_names_expr=["wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
-                stiffness=500, damping=50
-            ),
-        },
-    )
-
-    table = sim_utils.UsdFileCfg(usd_path=str(USD_FILES_DIR / "woodworking_table.usd"))
-    terrain = TerrainImporterCfg(prim_path="/World/ground", terrain_type="plane")
-
-    goal_marker = VisualizationMarkersCfg(
-        prim_path="/Visuals/goal",
-        markers={"frame": sim_utils.UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
-            scale=(0.05, 0.05, 0.05),
-        )},
-    )
-
-    origin_marker = VisualizationMarkersCfg(
-        prim_path="/Visuals/origin",
-        markers={"frame": sim_utils.UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
-            scale=(0.05, 0.05, 0.05),
-        )},
-    )
-
-    camera_left_pole_spawn_cfg = sim_utils.CuboidCfg(
-        size=(0.07, 0.13, 0.7),
-        collision_props=sim_utils.CollisionPropertiesCfg(),
-        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),                                     
-    )
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=3.0, replicate_physics=True)
+    
+    # Robot configuration using shared factory function
+    robot = get_robot_cfg(RobotType.NO_GRIPPER, "/World/envs/env_.*/ur5e")
+    
+    # Scene assets using shared configurations
+    table = get_table_cfg()
+    terrain = get_terrain_cfg()
+    goal_marker = get_goal_marker_cfg()
+    origin_marker = get_origin_marker_cfg()
+    
+    # Camera pole configuration (generalized)
+    camera_pole_spawn_cfg = get_camera_pole_cfg()
 
     action_scale = 7.5
     dof_velocity_scale = 0.1
@@ -125,11 +76,8 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
         super().__init__(cfg, render_mode, **kwargs)
         self.dt = self.cfg.sim.dt * self.cfg.decimation  # 1/60s = 60Hz policy
         
-        # Cached constants on device
-        self.env_origin_offset = torch.tensor(
-            [TABLE_DEPTH / 2, TABLE_WIDTH / 2, TABLE_HEIGHT], device=self.device
-        )
-        self.env_origins = self.scene.env_origins + self.env_origin_offset
+        # Cached constants on device - use shared origin offset
+        self.env_origins = self.scene.env_origins + ENV_ORIGIN_OFFSET.to(device=self.device)
         
         self.ee_idx = self._robot.body_names.index("wrist_3_link")
 
@@ -144,7 +92,6 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
         self.dof_upper = torch.tensor(
             [JOINT_LIMITS[name][1] for name in self._robot.joint_names], device=self.device
         )
-        self.dof_mid = (self.dof_lower + self.dof_upper) / 2
         self.dof_targets = self._robot.data.joint_pos.clone()
         
         # Cached tensors for _sample_goal
@@ -156,19 +103,27 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
         self.goal_marker = VisualizationMarkers(cfg.goal_marker)
         self.origin_marker = VisualizationMarkers(cfg.origin_marker)
         self._sample_goal()
+        print("Init of V0 complete.")
+                
+
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
         self.cfg.table.func("/World/envs/env_0/Table", self.cfg.table)
 
-        self.camera_left_pole = self.cfg.camera_left_pole_spawn_cfg.func(
-            "/World/envs/env_0/CameraLeftPole", self.cfg.camera_left_pole_spawn_cfg,
+        # Camera poles: left and right positions
+        self.camera_left_pole = self.cfg.camera_pole_spawn_cfg.func(
+            "/World/envs/env_0/CameraLeftPole", self.cfg.camera_pole_spawn_cfg,
             translation=(TABLE_DEPTH/2 + 0.365, TABLE_WIDTH/2 - 0.535, TABLE_HEIGHT + 0.37),
+        )
+        self.camera_right_pole = self.cfg.camera_pole_spawn_cfg.func(
+            "/World/envs/env_0/CameraRightPole", self.cfg.camera_pole_spawn_cfg,
+            translation=(TABLE_DEPTH/2 - 0.365, TABLE_WIDTH/2 + 0.535, TABLE_HEIGHT + 0.37),
         )
         spawn_ground_plane(self.cfg.terrain.prim_path, GroundPlaneCfg())
         self.scene.clone_environments(copy_from_source=False)
-        sim_utils.DomeLightCfg(intensity=2000.0).func("/World/Light", sim_utils.DomeLightCfg(intensity=2000.0))
+        setup_dome_light(intensity=2000.0)
 
     def _pre_physics_step(self, actions: torch.Tensor):
         actions = actions.clamp(-1.0, 1.0)
@@ -265,3 +220,68 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
         self.goal_quat[env_ids] = q / q.norm(dim=1, keepdim=True)
 
 
+
+
+@configclass
+class PoseOrientationNoGripperV1Cfg(PoseOrientationNoGripper):
+
+    robot = get_robot_cfg(RobotType.GRIPPER_TCP_NO_ACTUATION, "/World/envs/env_.*/ur5e") # dans la config c'est le robot sans gripper
+    
+    # Gains for impedance control (per joint)
+    kp = [120.0, 160.0, 160.0, 60.0, 40.0, 20.0]  # Stiffness
+    kd = [22.0, 25.0, 25.0, 20.0, 18.0, 15.0]  # augmenté pour wrist
+
+class PoseOrientationNoGripperV1(PoseOrientationNoGripperV0):
+    cfg: PoseOrientationNoGripperV1Cfg
+
+    def __init__(self, cfg: PoseOrientationNoGripperV1Cfg, render_mode: str | None = None, **kwargs):
+        super().__init__(cfg, render_mode, **kwargs)
+        
+        # Pre-compute gain tensors (6 joints)
+        self.kp_tensor = torch.tensor(self.cfg.kp, device=self.device).unsqueeze(0).expand(self.num_envs, -1)
+        self.kd_tensor = torch.tensor(self.cfg.kd, device=self.device).unsqueeze(0).expand(self.num_envs, -1)
+        
+        # # Debug counter
+        # self.debug_step = 0
+        # print(f"[V1 Init] kp: {self.cfg.kp}")
+        # print(f"[V1 Init] kd: {self.cfg.kd}")
+        # print(f"[V1 Init] robot num_joints: {self._robot.num_joints}")
+        # print(f"[V1 Init] dof_targets shape: {self.dof_targets.shape}")
+
+    def _pre_physics_step(self, actions: torch.Tensor):
+        # Convert actions to desired joint position increments
+        actions = actions.clamp(-1.0, 1.0)
+        inc = self.dt * self.cfg.dof_velocity_scale * self.cfg.action_scale * actions
+        self.dof_targets = torch.clamp(self.dof_targets + inc, self.dof_lower, self.dof_upper)
+        
+        # Current joint states
+        current_pos = self._robot.data.joint_pos
+        current_vel = self._robot.data.joint_vel
+        
+        # Position error
+        pos_error = self.dof_targets - current_pos
+        
+        # Impedance control: τ = Kp * (q_des - q) - Kd * q_dot
+        self.joint_torques = self.kp_tensor * pos_error - self.kd_tensor * current_vel
+        
+        # Debug logging (every 60 steps ≈ 1 second)
+        # self.debug_step += 1
+        # if self.debug_step % 60 == 0:
+        #     env_idx = 0
+        #     print(f"\n[Step {self.debug_step}] === DEBUG V1 ===")
+        #     print(f"  actions[0]:       {actions[env_idx].cpu().numpy().round(3)}")
+        #     print(f"  dof_targets[0]:   {self.dof_targets[env_idx].cpu().numpy().round(3)}")
+        #     print(f"  current_pos[0]:   {current_pos[env_idx].cpu().numpy().round(3)}")
+        #     print(f"  current_vel[0]:   {current_vel[env_idx].cpu().numpy().round(3)}")
+        #     print(f"  pos_error[0]:     {pos_error[env_idx].cpu().numpy().round(3)}")
+        #     print(f"  joint_torques[0]: {self.joint_torques[env_idx].cpu().numpy().round(2)}")
+        #     print(f"  torque min/max:   {self.joint_torques.min().item():.2f} / {self.joint_torques.max().item():.2f}")
+        
+        # Update markers
+        marker_idx = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
+        self.goal_marker.visualize(self.goal_pos + self.env_origins, self.goal_quat, marker_indices=marker_idx)
+        self.origin_marker.visualize(self.env_origins, self.identity_quat.unsqueeze(0).expand(self.num_envs, -1), marker_indices=marker_idx)
+
+    def _apply_action(self):
+        # Apply computed torques
+        self._robot.set_joint_effort_target(self.joint_torques)
