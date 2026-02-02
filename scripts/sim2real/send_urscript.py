@@ -9,7 +9,7 @@ SECONDARY_PORT = 30002
 REALTIME_PORT = 30003
 
 # URScript single command example
-urscript_command = "movej([-0.0,-1.57,0.0,-1.57,0,0],a=1.4, v=1.05, t=0, r=0)"
+urscript_command = "movej([-0.0,-1.57,0.0,-1.57,0,0],a=0.4, v=0.5, t=0, r=0)"
 
 # URScript full program example (multi-line)
 urscript_program = """def my_program():

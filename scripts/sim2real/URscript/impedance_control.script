@@ -2,23 +2,21 @@ def impedance_control():
     # Read q_des from input registers 24-29 (RTDE reserved range)
     # Default values if not set
     q_des = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
-    
-    kp = [120.0, 160.0, 160.0, 60.0, 40.0, 20.0]
-    kd = [22.0, 25.0, 25.0, 20.0, 18.0, 15.0]
-    max_error = 0.25
-    duration = 30.0  # 30 seconds - script runs until stopped
-    timer = 0.0
-    
-    while timer < duration:
-        timer = timer + get_steptime()
-        
+    kp = [200.0, 200.0, 200.0, 80.0, 80.0, 80.0]
+    kd = [35.0, 35.0, 35.0, 15.0, 15.0, 15.0]     
+    max_error = 0.15 
+    execution = True
+
+    while True:
+
         # Update q_des from input float registers 24-29 (RTDE reserved)
-        q_des[0] = read_input_float_register(18)
-        q_des[1] = read_input_float_register(19)
-        q_des[2] = read_input_float_register(20)
-        q_des[3] = read_input_float_register(21)
-        q_des[4] = read_input_float_register(22)
-        q_des[5] = read_input_float_register(42)
+        q_des[0] = read_input_float_register(24)
+        q_des[1] = read_input_float_register(25)
+        q_des[2] = read_input_float_register(26)
+        q_des[3] = read_input_float_register(27)
+        q_des[4] = read_input_float_register(28)
+        q_des[5] = read_input_float_register(29)
+        execution = read_input_boolean_register(64)
         
         q = get_actual_joint_positions()
         q_dot = get_actual_joint_speeds()
@@ -38,6 +36,12 @@ def impedance_control():
         # Compute torque: τ = Kp * e - Kd * q_dot
         tau = kp * e - kd * q_dot
         direct_torque(tau)
+
+        if not execution:
+            textmsg("Back to home position...")
+            movej([-0.0,-1.57,0.0,-1.57,0,0],a=0.7, v=0.6, t=0, r=0)
+            break
+        end
     end
-    stopj(5)
+    stopj(2)
 end
