@@ -16,7 +16,7 @@ from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
 from isaaclab.markers import VisualizationMarkers
-from isaaclab.utils.math import sample_uniform
+from isaaclab.utils.math import sample_uniform, quat_mul, quat_conjugate, quat_error_magnitude
 
 
 # Import shared configurations
@@ -43,10 +43,10 @@ from Woodworking_Simulation.common.robot_configs import (
 
 @configclass
 class PoseOrientationNoGripper(DirectRLEnvCfg):
-    episode_length_s = 8.0
+    episode_length_s = 3.0
     decimation = 2
     action_space = 6  # 6 joints UR5e
-    observation_space = 21  # to target(3), joint_pos(6), joint_vel(6), last actions(6)
+    observation_space = 19  # to_target(3), ori_error(4), joint_pos(6), joint_vel(6)
     state_space = 0  # Not used in this task
 
     # Local simulation and scene configurations
@@ -89,12 +89,15 @@ class PoseOrientationNoGripper(DirectRLEnvCfg):
     # Camera pole configuration (generalized)
     camera_pole_spawn_cfg = get_camera_pole_cfg()
 
-    action_scale = 7.0
-    velocity_scale = 0.1
-    reward_position = -0.2
-    reward_orientation = -0.13
+    action_scale = 5.0
+    reward_position = 0.5
+    penalty_position = -0.2
+    penalty_orientation = -0.13
     reset_frac = 1
-    action_penalty_scale = -0.001
+    action_penalty_scale = -0.005
+    elbow_penalty_scale = -0.5  # penalize elbow below table surface
+    elbow_min_height = 0.035     # minimum height (m) above table surface
+    std = 0.1 # scaling for tanh reward
 
 
 class PoseOrientationNoGripperV0(DirectRLEnv):
@@ -124,6 +127,15 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
             [JOINT_LIMITS[name][1] for name in self._robot.joint_names], device=self.device
         )
         self.q_des = self._robot.data.joint_pos.clone()
+
+        # Elbow body index for table collision avoidance
+        self._elbow_body_idx = self._robot.body_names.index("forearm_link")
+        # Table surface z in world frame (env_origins already includes TABLE_HEIGHT)
+        self._table_z = self.env_origins[:, 2]  # (num_envs,)
+        
+        #Add more speed to wrist 3 link
+        self.robot_q_des_speed_scale = torch.ones_like(self.q_min)
+        #self.robot_q_des_speed_scale[5] = 2  # last wrist move faster for orientation control
         
         # Cached tensors for _sample_goal
         self.robot_base_local = torch.tensor([-0.36, -0.54, 0.0], device=self.device)
@@ -134,6 +146,7 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
         self.goal_marker = VisualizationMarkers(cfg.goal_marker)
         self.origin_marker = VisualizationMarkers(cfg.origin_marker)
         self.ee_marker = VisualizationMarkers(cfg.ee_marker)
+ 
         self._sample_goal()
         print("Init of V0 complete.")
                 
@@ -142,15 +155,6 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
-
-        # Debug: list available robot prims for matching FrameTransformer paths
-        try:
-            robot_prims = sim_utils.find_matching_prims("/World/envs/env_0/ur5e/**")
-            print("[DEBUG] Robot prims under /World/envs/env_0/ur5e:")
-            for prim in robot_prims:
-                print(f"  - {prim.GetPath().pathString}")
-        except Exception as exc:
-            print(f"[DEBUG] Failed to list robot prims: {exc}")
 
         self._frame_transformer = FrameTransformer(self.cfg.frame_transformer)
         self.scene.sensors["frame_transformer"] = self._frame_transformer
@@ -172,7 +176,7 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
     def _pre_physics_step(self, actions: torch.Tensor):
         # store actions for logging / action penalty
         self.actions = actions.clamp(-1.0, 1.0)
-        delta = self.dt * self.cfg.velocity_scale * self.cfg.action_scale * self.actions
+        delta = self.dt * self.robot_q_des_speed_scale * self.cfg.action_scale * self.actions
         self.q_des = torch.clamp(self.q_des + delta, self.q_min, self.q_max)
         # Update marker (world frame)
         marker_idx = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
@@ -183,12 +187,19 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
         self._robot.set_joint_position_target(self.q_des)
 
     def _get_observations(self):
-        # EE TCP pose relative to table center (source frame)
+        # EE TCP pose relative to table center (source frame) for position
         frame_data = self._frame_transformer.data
         ee_pos = frame_data.target_pos_source[:, self._ee_frame_idx, :] 
         to_target = self.goal_pos - ee_pos
         joint_pos = self._robot.data.joint_pos
         joint_vel = self._robot.data.joint_vel
+        
+        # Orientation error: use WORLD frame for both ee and goal (goal_quat is world frame)
+        ee_quat_w = frame_data.target_quat_w[:, self._ee_frame_idx, :]
+        # quat_diff = goal * current^-1  (rotation FROM current TO goal)
+        ori_error = quat_mul(self.goal_quat, quat_conjugate(ee_quat_w))
+        # Ensure w >= 0 for shortest-path (double-cover) representation
+        ori_error = torch.where(ori_error[:, 0:1] < 0, -ori_error, ori_error)
         
         # Normalized observations
         to_target_norm = torch.zeros_like(to_target)
@@ -199,31 +210,26 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
         
         # Update ee_marker
         ee_pos_w = frame_data.target_pos_w[:, self._ee_frame_idx, :]
-        ee_quat_w = frame_data.target_quat_w[:, self._ee_frame_idx, :]
         self.ee_marker.visualize(
             ee_pos_w,
             ee_quat_w,
             marker_indices=torch.zeros(self.num_envs, dtype=torch.int64, device=self.device),
         )
-        #print(f"to_target env 0: [{to_target[0,0]:.4f}, {to_target[0,1]:.4f}, {to_target[0,2]:.4f}]")
-        # ee_pos_mm = ee_pos[0].cpu().numpy() * 1000
-        # goal_pos_m = self.goal_pos[0].cpu().numpy()
-        # print(f"ee_pos env 0: [{ee_pos_mm[0]:.2f}, {ee_pos_mm[1]:.2f}, {ee_pos_mm[2]:.2f}], goal_pos env 0: [{goal_pos_m[0]:.4f}, {goal_pos_m[1]:.4f}, {goal_pos_m[2]:.4f}]")
-        obs = torch.cat([to_target_norm, joint_pos_norm, joint_vel_norm, self.actions], dim=1)
-        return {"policy": obs}
+        elbow_pos = self._robot.data.body_pos_w[:, self._elbow_body_idx, :]
+        elbow_quat = self._robot.data.body_quat_w[:, self._elbow_body_idx, :]
 
-    @staticmethod
-    def _quat_diff(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
-        """Quaternion difference (q1 * q2^-1)."""
-        q2_inv = q2 * torch.tensor([1, -1, -1, -1], device=q2.device)
-        w1, x1, y1, z1 = q1[:, 0], q1[:, 1], q1[:, 2], q1[:, 3]
-        w2, x2, y2, z2 = q2_inv[:, 0], q2_inv[:, 1], q2_inv[:, 2], q2_inv[:, 3]
-        return torch.stack([
-            w1*w2 - x1*x2 - y1*y2 - z1*z2,
-            w1*x2 + x1*w2 + y1*z2 - z1*y2,
-            w1*y2 - x1*z2 + y1*w2 + z1*x2,
-            w1*z2 + x1*y2 - y1*x2 + z1*w2,
-        ], dim=1)
+
+        obs = torch.cat(
+            [
+                to_target_norm,     # 3: position error (source frame)
+                ori_error,          # 4: orientation error quaternion (world frame)
+                joint_pos_norm,     # 6: normalized joint positions
+                joint_vel_norm,     # 6: normalized joint velocities
+            ], 
+            dim=1
+        )
+        return {"policy": torch.clamp(obs, -5.0, 5.0)}
+
 
     def _get_rewards(self) -> torch.Tensor:
         if "log" not in self.extras:
@@ -231,17 +237,36 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
 
         frame_data = self._frame_transformer.data
         ee_pos = frame_data.target_pos_source[:, self._ee_frame_idx, :]
-        ee_quat = frame_data.target_quat_source[:, self._ee_frame_idx, :]
+        # Use WORLD frame orientation for both (goal_quat is in world frame)
+        ee_quat_w = frame_data.target_quat_w[:, self._ee_frame_idx, :]
+        # Penalize position using L2 norm
         pos_err = torch.norm(self.goal_pos - ee_pos, dim=1)
-        ori_err = 1.0 - torch.abs(torch.sum(self.goal_quat * ee_quat, dim=1))
+        # Reward tracking using the tanh kernel
+        pos_rew = 1.0 - torch.tanh(pos_err / self.cfg.std)
+        # Orientation error in world frame (both quaternions now in same frame)
+        ori_err = quat_error_magnitude(ee_quat_w, self.goal_quat)
         action_penalty = torch.sum(self.actions **2, dim=-1)
-        rewards = self.cfg.reward_position * pos_err + self.cfg.reward_orientation * ori_err + self.cfg.action_penalty_scale * action_penalty
+        
+        # Elbow above table: penalize when forearm_link z drops below table + margin
+        elbow_z = self._robot.data.body_pos_w[:, self._elbow_body_idx, 2]
+        elbow_below = torch.relu(self._table_z + self.cfg.elbow_min_height - elbow_z)
+
+        rewards = (
+            self.cfg.reward_position * pos_rew +
+            self.cfg.penalty_position * pos_err + 
+            self.cfg.penalty_orientation * ori_err + 
+            self.cfg.action_penalty_scale * action_penalty +
+            self.cfg.elbow_penalty_scale * elbow_below
+        )
+
         self.extras["log"].update({
             "rewards_mean": rewards.mean().item(),
             "rewards_std": rewards.std().item(),
             "pos_error": pos_err.mean().item(),
+            "pos_rew": pos_rew.mean().item(),
             "ori_error": ori_err.mean().item(),
             "action_penalty": action_penalty.mean().item(),
+            "elbow_below_table": elbow_below.mean().item(),
         })
         return rewards
 
@@ -287,10 +312,23 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
         self.goal_pos[env_ids, 1] = self.robot_base_local[1] + radius * torch.sin(angle)
         self.goal_pos[env_ids, 2] = height
         
-        # Random orientation (full SO(3))
-        q = torch.randn(n, 4, device=self.device)
-        self.goal_quat[env_ids] = q / q.norm(dim=1, keepdim=True)
+        # Orientation sampling per request:
+        # Start from orientation with z pointing downward (180° about X),
+        # then apply Rx in ±25°, then Rz in ±25°, then final Rz in ±180°.
+        q_down = torch.tensor([0.0, 1.0, 0.0, 0.0], device=self.device).unsqueeze(0).expand(n, -1)
 
+        max_tilt = 25.0 * torch.pi / 180.0
+        ax = torch.empty(n, device=self.device).uniform_(-max_tilt, max_tilt)
+        az_small = torch.empty(n, device=self.device).uniform_(-max_tilt, max_tilt)
+        az_big = torch.empty(n, device=self.device).uniform_(-torch.pi, torch.pi)
+
+        qx = torch.stack([torch.cos(ax * 0.5), torch.sin(ax * 0.5), torch.zeros(n, device=self.device), torch.zeros(n, device=self.device)], dim=1)
+        qz_small = torch.stack([torch.cos(az_small * 0.5), torch.zeros(n, device=self.device), torch.zeros(n, device=self.device), torch.sin(az_small * 0.5)], dim=1)
+        qz_big = torch.stack([torch.cos(az_big * 0.5), torch.zeros(n, device=self.device), torch.zeros(n, device=self.device), torch.sin(az_big * 0.5)], dim=1)
+
+        # Compose: q = Rz_big * Rz_small * Rx * q_down
+        q = quat_mul(qz_big, quat_mul(qz_small, quat_mul(qx, q_down)))
+        self.goal_quat[env_ids] = q / q.norm(dim=1, keepdim=True)
 
 @configclass
 class PoseOrientationNoGripperV1Cfg(PoseOrientationNoGripper):
@@ -324,14 +362,5 @@ class PoseOrientationNoGripperV1(PoseOrientationNoGripperV0):
         super().__init__(cfg, render_mode, **kwargs)
         print("Init of V1 complete.")
 
-    def _pre_physics_step(self, actions: torch.Tensor):
-        # Convert actions to desired joint position increments (q_des)
-        self.actions = actions.clamp(-1.0, 1.0)
-        inc = self.dt * self.cfg.velocity_scale * self.cfg.action_scale * self.actions
-        self.q_des = torch.clamp(self.q_des + inc, self.q_min, self.q_max)
-        
-        # Update markers
-        marker_idx = torch.zeros(self.num_envs, dtype=torch.int64, device=self.device)
-        self.goal_marker.visualize(self.goal_pos + self.env_origins, self.goal_quat, marker_indices=marker_idx)
-        self.origin_marker.visualize(self.env_origins, self.identity_quat.unsqueeze(0).expand(self.num_envs, -1), marker_indices=marker_idx)
+
 

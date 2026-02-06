@@ -7,7 +7,7 @@ from isaaclab.utils import configclass
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
 
-# Tuned for pose/orientation task (19-dim obs, 6-dim action)
+# Tuned for pose/orientation task (25-dim obs, 6-dim action)
 # Network parameter from the franka cabinet task but smaller network due to smaller obs/action space
 @configclass
 class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
