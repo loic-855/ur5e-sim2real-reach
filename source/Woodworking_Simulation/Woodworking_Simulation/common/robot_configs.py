@@ -12,7 +12,7 @@ from pathlib import Path
 import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
+from isaaclab.actuators import ImplicitActuatorCfg, DelayedPDActuatorCfg
 from isaaclab.assets import ArticulationCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.markers import VisualizationMarkersCfg
@@ -85,7 +85,7 @@ def get_goal_marker_cfg(scale: tuple[float, float, float] = (0.05, 0.05, 0.05)) 
         )},
     )
 
-def get_origin_marker_cfg(scale: tuple[float, float, float] = (0.05, 0.05, 0.05)) -> VisualizationMarkersCfg:
+def get_origin_marker_cfg(scale: tuple[float, float, float] = (0.02, 0.02, 0.02)) -> VisualizationMarkersCfg:
     """Get origin marker configuration for debugging."""
     return VisualizationMarkersCfg(
         prim_path="/Visuals/origin",
@@ -95,7 +95,7 @@ def get_origin_marker_cfg(scale: tuple[float, float, float] = (0.05, 0.05, 0.05)
         )},
     )
 
-def get_robot_grasp_marker_cfg(scale: tuple[float, float, float] = (0.02, 0.02, 0.02)) -> VisualizationMarkersCfg:
+def get_robot_grasp_marker_cfg(scale: tuple[float, float, float] = (0.05, 0.05, 0.05)) -> VisualizationMarkersCfg:
     """Get robot grasp marker configuration for debugging."""
     return VisualizationMarkersCfg(
         prim_path="/Visuals/robot_grasp_markers",
@@ -135,6 +135,7 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
     
     # Robot position in local frame (table center = origin)
     robot_local_pos = (0.08, 0.08, TABLE_HEIGHT + MOUNT_HEIGHT)
+    #robot_local_pos = (0.0, 0.0, 0.0)
     # Standard rotation: -90° around Z to match real setup (consistent across all robots)
     robot_local_rot = (0.7071, 0.0, 0.0, -0.7071)
     
@@ -161,6 +162,14 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 pos=robot_local_pos,
                 rot=robot_local_rot,
             ),
+            # joint_pos={
+            #         "shoulder_pan_joint": -0.38,
+            #         "shoulder_lift_joint": -2.15,
+            #         "elbow_joint": -1.737,
+            #         "wrist_1_joint": -0.742,
+            #         "wrist_2_joint": 1.659,
+            #         "wrist_3_joint": -0.299,
+            #     },
             actuators={
                 "shoulder": ImplicitActuatorCfg(
                     joint_names_expr=["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint"],
@@ -331,21 +340,35 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 ),
             ),
             init_state=ArticulationCfg.InitialStateCfg(
+                # joint_pos={
+                #     "shoulder_lift_joint": -1.57,
+                #     "wrist_1_joint": -1.57
+                # },
                 joint_pos={
-                    "shoulder_lift_joint": -1.57,
-                    "wrist_1_joint": -1.57
+                    "shoulder_pan_joint": -0.36,
+                    "shoulder_lift_joint": -2.12,
+                    "elbow_joint": -1.837,
+                    "wrist_1_joint": -0.742,
+                    "wrist_2_joint": 1.659,
+                    "wrist_3_joint": -0.299,
                 },
                 pos=robot_local_pos,
                 rot=robot_local_rot,
             ),
             actuators={
-                "shoulder": ImplicitActuatorCfg(
+                "shoulder": DelayedPDActuatorCfg(
                     joint_names_expr=["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint"],
-                    stiffness=120.0, damping=22.0
+                    stiffness=200.0,
+                    damping=35.0,
+                    min_delay=0,
+                    max_delay=0,
                 ),
-                "wrist": ImplicitActuatorCfg(
+                "wrist": DelayedPDActuatorCfg(
                     joint_names_expr=["wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
-                    stiffness=60.0, damping=15.0
+                    stiffness=90.0,
+                    damping=15.0,
+                    min_delay=0,
+                    max_delay=0,
                 ),
             },
         )
