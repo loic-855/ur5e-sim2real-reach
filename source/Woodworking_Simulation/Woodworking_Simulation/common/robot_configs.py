@@ -330,7 +330,7 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 usd_path=str(USD_FILES_DIR / "ur5e_gripper_tcp_unactuated.usd"),
                 #usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/UniversalRobots/ur5e/ur5e.usd",
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    disable_gravity=False,
+                    disable_gravity=True,
                     max_depenetration_velocity=5.0,
                 ),
                 articulation_props=sim_utils.ArticulationRootPropertiesCfg(
@@ -340,33 +340,47 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 ),
             ),
             init_state=ArticulationCfg.InitialStateCfg(
-                # joint_pos={
-                #     "shoulder_lift_joint": -1.57,
-                #     "wrist_1_joint": -1.57
-                # },
                 joint_pos={
-                    "shoulder_pan_joint": -0.36,
-                    "shoulder_lift_joint": -2.12,
-                    "elbow_joint": -1.837,
-                    "wrist_1_joint": -0.742,
-                    "wrist_2_joint": 1.659,
-                    "wrist_3_joint": -0.299,
+                    "shoulder_lift_joint": -1.57, 
+                    "wrist_1_joint": -1.57
                 },
                 pos=robot_local_pos,
                 rot=robot_local_rot,
             ),
             actuators={
-                "shoulder": DelayedPDActuatorCfg(
+                "shoulder_action": DelayedPDActuatorCfg(
                     joint_names_expr=["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint"],
-                    stiffness=200.0,
-                    damping=35.0,
+                    stiffness=160.0,
+                    damping=28.0,
+                    effort_limit=100.0,
+                    velocity_limit=MAX_JOINT_VEL,
                     min_delay=0,
                     max_delay=0,
                 ),
-                "wrist": DelayedPDActuatorCfg(
-                    joint_names_expr=["wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
-                    stiffness=90.0,
-                    damping=15.0,
+                "wrist_action_1": DelayedPDActuatorCfg(
+                    joint_names_expr=["wrist_1_joint"],
+                    stiffness=125.0,
+                    damping=19.0,
+                    effort_limit=60.0,
+                    velocity_limit=MAX_JOINT_VEL,
+                    min_delay=0,
+                    max_delay=0,
+                ),
+                "wrist_action_2": DelayedPDActuatorCfg(
+                    joint_names_expr=["wrist_2_joint"],
+                    stiffness=100.0,
+                    damping=16.0,
+                    effort_limit=60.0,
+                    velocity_limit=MAX_JOINT_VEL,
+                    min_delay=0,
+                    max_delay=0,
+                ),
+                "wrist_action_3": DelayedPDActuatorCfg(
+                    joint_names_expr=["wrist_3_joint"],
+                    stiffness=80.0,
+                    damping=14.0,
+                    effort_limit=60.0,
+                    velocity_limit=MAX_JOINT_VEL,
                     min_delay=0,
                     max_delay=0,
                 ),

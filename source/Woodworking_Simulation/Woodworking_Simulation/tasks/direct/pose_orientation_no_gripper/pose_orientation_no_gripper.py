@@ -43,14 +43,14 @@ from Woodworking_Simulation.common.robot_configs import (
 
 @configclass
 class PoseOrientationNoGripper(DirectRLEnvCfg):
-    episode_length_s = 3.0
+    episode_length_s = 4.0
     decimation = 2
     action_space = 6  # 6 joints UR5e
     observation_space = 19  # to_target(3), ori_error(4), joint_pos(6), joint_vel(6)
     state_space = 0  # Not used in this task
 
     # Local simulation and scene configurations
-    sim: SimulationCfg = SimulationCfg(dt=1/120, render_interval=decimation)
+    sim: SimulationCfg = SimulationCfg(dt=1/200, render_interval=decimation)
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=3.0, replicate_physics=True)
     
     # Robot configuration using shared factory function
@@ -70,8 +70,7 @@ class PoseOrientationNoGripper(DirectRLEnvCfg):
         #the offset points to the table center.
         source_frame_offset=OffsetCfg(
             pos=(- (TABLE_WIDTH / 2 - 0.08), TABLE_DEPTH / 2 - 0.08, - MOUNT_HEIGHT),
-            rot=(0.7071, 0.0, 0.0, 0.7071),
-            #rot=(1.0, 0.0, 0.0, 0.0)     
+            rot=(0.7071, 0.0, 0.0, 0.7071),    
         ),
         target_frames=[
             FrameTransformerCfg.FrameCfg(
@@ -89,12 +88,12 @@ class PoseOrientationNoGripper(DirectRLEnvCfg):
     # Camera pole configuration (generalized)
     camera_pole_spawn_cfg = get_camera_pole_cfg()
 
-    action_scale = 5.0
+    action_scale = 4.0
     reward_position = 0.5
     penalty_position = -0.2
     penalty_orientation = -0.13
-    reset_frac = 1
-    action_penalty_scale = -0.005
+    reset_frac = 0.8
+    action_penalty_scale = -0.01
     elbow_penalty_scale = -0.5  # penalize elbow below table surface
     elbow_min_height = 0.035     # minimum height (m) above table surface
     std = 0.1 # scaling for tanh reward
@@ -105,7 +104,7 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
 
     def __init__(self, cfg: PoseOrientationNoGripper, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
-        self.dt = self.cfg.sim.dt * self.cfg.decimation  # 1/60s = 60Hz policy
+        self.dt = self.cfg.sim.dt * self.cfg.decimation  # 1/100s = 100Hz policy
         
         # Cached constants on device - use shared origin offset
         self.env_origins = self.scene.env_origins + ENV_ORIGIN_OFFSET.to(device=self.device)      
@@ -215,9 +214,6 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
             ee_quat_w,
             marker_indices=torch.zeros(self.num_envs, dtype=torch.int64, device=self.device),
         )
-        elbow_pos = self._robot.data.body_pos_w[:, self._elbow_body_idx, :]
-        elbow_quat = self._robot.data.body_quat_w[:, self._elbow_body_idx, :]
-
 
         obs = torch.cat(
             [
@@ -274,9 +270,8 @@ class PoseOrientationNoGripperV0(DirectRLEnv):
         return torch.zeros(self.num_envs, dtype=torch.bool, device=self.device), \
                self.episode_length_buf >= self.max_episode_length - 1
 
-    def _reset_idx(self, env_ids: torch.Tensor):
-        super()._reset_idx(env_ids)
-        
+    def _reset_idx(self, env_ids: torch.Tensor): # type: ignore
+        super()._reset_idx(env_ids) # type: ignore      
         # Randomly select which environments to reset (shuffle every time)
         # This ensures diversity in joint states across environments during training
         if self.num_envs_to_reset > 0:
@@ -337,10 +332,10 @@ class PoseOrientationNoGripperV1Cfg(PoseOrientationNoGripper):
     
    # Frame transformer to compute TCP pose relative to table center
     frame_transformer = FrameTransformerCfg(
-        prim_path="/World/envs/env_.*/Table/woodworking_table",
+        prim_path="/World/envs/env_.*/ur5e/ur5e/base_link",
         source_frame_offset=OffsetCfg(
-            pos=(TABLE_DEPTH / 2.0, TABLE_WIDTH / 2.0, TABLE_HEIGHT),
-            rot=(1.0, 0.0, 0.0, 0.0),
+            pos=(- (TABLE_WIDTH / 2 - 0.08), TABLE_DEPTH / 2 - 0.08, - MOUNT_HEIGHT),
+            rot=(0.7071, 0.0, 0.0, 0.7071),    
         ),
         target_frames=[
             FrameTransformerCfg.FrameCfg(
@@ -354,6 +349,28 @@ class PoseOrientationNoGripperV1Cfg(PoseOrientationNoGripper):
             )
         ],
     )
+
+    # # Frame transformer to compute TCP pose relative to table center
+    # frame_transformer = FrameTransformerCfg(
+    #     prim_path="/World/envs/env_.*/ur5e/base_link",
+    #     #prim_path="/World/envs/env_.*/Table/woodworking_table",
+    #     #the offset points to the table center.
+    #     source_frame_offset=OffsetCfg(
+    #         pos=(- (TABLE_WIDTH / 2 - 0.08), TABLE_DEPTH / 2 - 0.08, - MOUNT_HEIGHT),
+    #         rot=(0.7071, 0.0, 0.0, 0.7071),    
+    #     ),
+    #     target_frames=[
+    #         FrameTransformerCfg.FrameCfg(
+    #             prim_path="/World/envs/env_.*/ur5e/wrist_3_link",
+
+    #             name="ee_tcp",
+    #             offset=OffsetCfg(
+    #                 pos=(0.0, 0.0, 0.15),
+    #                 rot=(1.0, 0.0, 0.0, 0.0),
+    #             ),
+    #         )
+    #     ],
+    # )
 
 class PoseOrientationNoGripperV1(PoseOrientationNoGripperV0):
     cfg: PoseOrientationNoGripperV1Cfg
