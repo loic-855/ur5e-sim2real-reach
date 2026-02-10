@@ -263,6 +263,16 @@ class TestV0(DirectRLEnv):
             + self.cfg.ee_orientation_tracking * orientation_error
             + self.cfg.action_penalty * action_cost
         )
+        if "log" not in self.extras:
+            self.extras["log"] = {}
+        self.extras["log"].update({
+            "action_penalty": (self.cfg.action_penalty * action_cost).mean(),
+            "ori_reward": (self.cfg.ee_orientation_tracking * orientation_error).mean(),
+            "pos_reward": (self.cfg.ee_position_tracking * position_error).mean(),
+            "rewards_mean": reward.mean(),
+            "rewards_std": reward.std(),
+        })
+        
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
