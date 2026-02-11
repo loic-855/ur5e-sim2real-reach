@@ -15,7 +15,7 @@ import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
-from isaaclab.sensors import FrameTransformer, FrameTransformerCfg, OffsetCfg
+from isaaclab.sensors import FrameTransformer, FrameTransformerCfg, OffsetCfg, ContactSensor, ContactSensorCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.sim import SimulationCfg
@@ -46,6 +46,12 @@ from Woodworking_Simulation.common.robot_configs import (
     JOINT_LIMITS,
     ENV_ORIGIN_OFFSET,
 )
+from Woodworking_Simulation.common.domain_randomization import (
+    DomainRandomizationCfg,
+    ActionBuffer,
+    ObservationBuffer,
+    ActuatorRandomizer,
+)
 
 """
 The script implemented a pose and orientation control task with the gripper arm.
@@ -60,11 +66,15 @@ class TestCfg(DirectRLEnvCfg):
     decimation = 2
     # space definition
     action_space = 6
-    observation_space = 36 #includes EE pose, orientation quat, EE lin and ang vel, goal pos and quat, joint pos and vel.
+    observation_space = 32 #includes EE pose, orientation quat, EE lin and ang vel, goal pos and quat, joint pos and vel.
     state_space = 0
 
     # simulation
-    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
+    sim: SimulationCfg = SimulationCfg(
+            dt=1 / 120, 
+            render_interval=decimation,
+            physx=PhysxCfg(solver_type=1, enable_external_forces_every_iteration=True),
+        )
 
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
@@ -105,13 +115,17 @@ class TestCfg(DirectRLEnvCfg):
     # Camera pole configuration (generalized)
     camera_pole_spawn_cfg = get_camera_pole_cfg()
     
-    action_scale = 7.5
+    action_scale = 6.0
     dof_velocity_scale = 0.1
 
     #reward scale from UR10tuto
     ee_position_tracking = -0.2
-    ee_orientation_tracking = -0.1
-    action_penalty = -0.0001
+    ee_orientation_tracking = -0.15
+    action_penalty = -0.0005
+    # contact penalty defaults (unused by TestV0, used by TestV1)
+    contact_penalty_scale = -0.01
+    contact_force_threshold_penalty = 5.0
+    contact_force_threshold_done = 10.0
 
 
 class TestV0(DirectRLEnv):
@@ -134,8 +148,6 @@ class TestV0(DirectRLEnv):
 
         self._ee_frame_idx = self._frame_transformer.data.target_frame_names.index("ee_tcp")
 
-        # robot and joint limits / targets
-        print("Available body names:", self._robot.body_names)
         # body index for velocities (wrist_3_link used as EE body in frame transformer)
         self.ee_body_idx = self._robot.body_names.index("wrist_3_link")
 
@@ -143,64 +155,55 @@ class TestV0(DirectRLEnv):
         self.robot_dof_upper_limits = self._robot.data.soft_joint_pos_limits[0, :, 1].to(device=self.device)
         self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)
 
+        # Per-joint speed tuning: slow down shoulder/elbow, speed up wrist
+        joint_names = self._robot.joint_names
+        for i, name in enumerate(joint_names):
+            if name in ("shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint"):
+                self.robot_dof_speed_scales[i] = 0.8
+            elif name in ("wrist_1_joint", "wrist_2_joint", "wrist_3_joint"):
+                self.robot_dof_speed_scales[i] = 1.5
+
         self.robot_dof_targets = self._robot.data.joint_pos.clone()
-        self.robot_default_dof_pos = self.robot_dof_targets.clone()
 
-        stage = get_current_stage()
-        robot_base_pos_orient = self._get_env_local_pose(
-            self.env_origins[0],
-            UsdGeom.Xformable(stage.GetPrimAtPath("/World/envs/env_0/ur5e/base_link")),
-            self.device,
-        )
-        self.robot_base_pos = robot_base_pos_orient[:3].to(device=self.device)
-
-        # goals are expressed in the "source" (table-relative / env-local) frame
-        self.goal_pos_local = torch.zeros((self._num_envs, 3), device=self.device, dtype=torch.float32)
-        self.goal_quat = torch.zeros((self._num_envs, 4), device=self.device, dtype=torch.float32)
+        # goals are expressed in the source frame (table-relative)
+        # use explicit names to avoid confusion
+        self.robot_base_local = torch.tensor([-0.36, -0.54, 0.0], device=self.device)
+        self.goal_pos_source = torch.zeros((self._num_envs, 3), device=self.device, dtype=torch.float32)
+        self.goal_quat_source = torch.zeros((self._num_envs, 4), device=self.device, dtype=torch.float32)
 
         self.actions = torch.zeros((self._num_envs, self.cfg.action_space), device=self.device, dtype=torch.float32)
 
+        self.goal_marker = VisualizationMarkers(cfg.goal_marker)
+        self.origin_marker = VisualizationMarkers(cfg.origin_marker)
+        self.ee_marker = VisualizationMarkers(cfg.ee_marker)
+
         self._sample_goal()
 
-        # Instanz erstellen
-        physx_cfg = PhysxCfg()
-
-        # Alle Standardwerte anzeigen
-        print(physx_cfg)
-
-        # Gezielte Abfrage einzelner Werte
-        print(f"Solver Type: {physx_cfg.solver_type}") # Default: 1 (TGS)
-        print(f"External Forces: {physx_cfg.enable_external_forces_every_iteration}")
-
     def _setup_scene(self):
-        # create robot articulation from config
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
 
-        # frame transformer sensor (taken from pose_orientation_no_gripper)
         self._frame_transformer = FrameTransformer(self.cfg.frame_transformer)
         self.scene.sensors["frame_transformer"] = self._frame_transformer
 
-        self.cfg.table.func(
-            "/World/envs/env_0/Table",
-            self.cfg.table,
-            translation=(0.0, 0.0, 0.0),
-            orientation=(1.0, 0.0, 0.0, 0.0),
+        self.cfg.table.func("/World/envs/env_0/Table", self.cfg.table)
+
+        self.camera_left_pole = self.cfg.camera_pole_spawn_cfg.func(
+            "/World/envs/env_0/CameraLeftPole", self.cfg.camera_pole_spawn_cfg,
+            translation=(TABLE_DEPTH/2 + 0.365, TABLE_WIDTH/2 - 0.535, TABLE_HEIGHT + 0.37),
+        )
+        self.camera_right_pole = self.cfg.camera_pole_spawn_cfg.func(
+            "/World/envs/env_0/CameraRightPole", self.cfg.camera_pole_spawn_cfg,
+            translation=(TABLE_DEPTH/2 - 0.365, TABLE_WIDTH/2 + 0.535, TABLE_HEIGHT + 0.37),
         )
 
-        spawn_ground_plane(prim_path=self.cfg.terrain.prim_path, cfg=GroundPlaneCfg())
+        spawn_ground_plane(self.cfg.terrain.prim_path, GroundPlaneCfg())
+        setup_dome_light(intensity=2000.0)
 
         self.scene.clone_environments(copy_from_source=False)
         if self.device == "cpu":
             self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
 
-        light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
-        light_cfg.func("/World/Light", light_cfg)
-
-        #create dummy initial marker
-        init_pos = torch.zeros((1, 3), device=self.device)
-        init_ori = torch.tensor([[0, 0, 0, 1]], device=self.device)
-        self.goal_marker.visualize(init_pos, init_ori, marker_indices=torch.tensor([0]))
 
     def _pre_physics_step(self, actions: torch.Tensor):
         actions = actions.to(self.device)
@@ -219,39 +222,37 @@ class TestV0(DirectRLEnv):
             self.robot_dof_lower_limits.unsqueeze(0),
             self.robot_dof_upper_limits.unsqueeze(0),
         )
-         # Keep the marker always at the goal pose
-        marker_idx = torch.zeros(self.goal_pos_local.shape[0], dtype=torch.int64, device=self.device)
-        self.goal_marker.visualize(self.goal_pos_local + self.env_origins, self.goal_quat, marker_indices=marker_idx)
-        
+
 
     def _apply_action(self):
         self._robot.set_joint_position_target(self.robot_dof_targets)
+
 
     def _get_observations(self): # type: ignore
         # Use frame transformer for EE pose in source (local) and world frames
         frame_data = self._frame_transformer.data
         ee_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
         ee_pos_w = frame_data.target_pos_w[:, self._ee_frame_idx, :]
-        ee_quat_w = frame_data.target_quat_w[:, self._ee_frame_idx, :]
+        ee_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
 
-        # velocities from robot articulation (world frame)
-        ee_lin_vel = self._robot.data.body_lin_vel_w[:, self.ee_body_idx]
-        ee_ang_vel = self._robot.data.body_ang_vel_w[:, self.ee_body_idx]
-
+        # compute EE point velocities (accounts for FrameTransformer offset)
+        ee_lin_vel, ee_ang_vel = self._compute_ee_point_velocity(
+            frame_data, self._robot, self._ee_frame_idx, self.ee_body_idx
+        )
         joint_pos = self._robot.data.joint_pos
         joint_vel = self._robot.data.joint_vel
 
-        # observations: keep positional values in source/local frame (consistent with goal_pos_local)
+        # observations: keep positional and orientation values in source frame
         obs = torch.cat(
             [
                 ee_pos_source,
-                ee_quat_w,
+                ee_quat_source,
                 ee_lin_vel,
                 ee_ang_vel,
                 joint_pos,
                 joint_vel,
-                self.goal_pos_local,
-                self.goal_quat,
+                self.goal_pos_source,
+                self.goal_quat_source,
             ],
             dim=1,
         )
@@ -262,12 +263,15 @@ class TestV0(DirectRLEnv):
         # Use frame transformer data so positions are in the same "source" frame as goals
         frame_data = self._frame_transformer.data
         ee_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
-        ee_quat_w = frame_data.target_quat_w[:, self._ee_frame_idx, :]
+        ee_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
 
-        position_error = torch.norm(self.goal_pos_local - ee_pos_source, dim=1)
-        quat_dot = torch.sum(self.goal_quat * ee_quat_w, dim=1)
+        # compare in source frame (positions and orientations)
+        position_error = torch.norm(self.goal_pos_source - ee_pos_source, dim=1)
+        quat_dot = torch.sum(self.goal_quat_source * ee_quat_source, dim=1)
         orientation_error = 1.0 - torch.abs(quat_dot)
         action_cost = torch.sum(self.actions * self.actions, dim=1)
+
+        self.ee_marker.visualize(frame_data.target_pos_w[:, self._ee_frame_idx, :], frame_data.target_quat_w[:, self._ee_frame_idx, :])
 
         reward = (
             self.cfg.ee_position_tracking * position_error
@@ -294,7 +298,7 @@ class TestV0(DirectRLEnv):
     def _reset_idx(self, env_ids: torch.Tensor): # type: ignore
         super()._reset_idx(env_ids) # type: ignore
         env_ids = env_ids.to(self.device, dtype=torch.long)
-         # robot state
+        # robot state
         joint_pos = self._robot.data.default_joint_pos[env_ids] + sample_uniform(
             -0.125,
             0.125,
@@ -310,46 +314,245 @@ class TestV0(DirectRLEnv):
         self._robot.set_joint_position_target(self.robot_dof_targets)
         self._sample_goal(env_ids)
 
-        # Move marker to the goal
+        # Move marker to the goal (convert source->world for visualization)
         marker_idx = torch.zeros(len(env_ids), dtype=torch.int64, device=self.device)
-        self.goal_marker.visualize(self.goal_pos_local[env_ids] + self.env_origins[env_ids], self.goal_quat[env_ids], marker_indices=marker_idx)
+        self.goal_marker.visualize(self.goal_pos_source[env_ids] + self.env_origins[env_ids], self.goal_quat_source[env_ids], marker_indices=marker_idx)
 
     def _sample_goal(self, env_ids: torch.Tensor | None = None):
+        """
+        Define goal positions and orientations for the end-effector within a cylindrical volume around the robot base.
+        The goals are expressed in the source frame (table-relative).
+        """
+
         if env_ids is None:
             env_ids = torch.arange(self._num_envs, dtype=torch.long, device=self.device)
         else:
             env_ids = env_ids.to(device=self.device, dtype=torch.long)
 
-        num = env_ids.shape[0]
-        offsets = torch.empty((num, 3), device=self.device)
-        offsets[:, 0].uniform_(-0.08, 0.72)
-        offsets[:, 1].uniform_(-0.08, 1.12)
-        offsets[:, 2].uniform_(0.0, 1.0)
+        # 360° around robot base (cylindrical sampling)
+        angle = torch.empty(len(env_ids), device=self.device).uniform_(-torch.pi, torch.pi)
+        radius = torch.empty(len(env_ids), device=self.device).uniform_(0.3, 0.75)  # within reach
+        height = torch.empty(len(env_ids), device=self.device).uniform_(0.1, 0.6)   # above table
 
-        self.goal_pos_local[env_ids] = self.robot_base_pos.to(device=self.device) + offsets
-        delta_quat = torch.randn(num, 4, device=self.device)
+        # sample relative to robot base in source frame
+        self.goal_pos_source[env_ids, 0] = self.robot_base_local[0] + radius * torch.cos(angle)
+        self.goal_pos_source[env_ids, 1] = self.robot_base_local[1] + radius * torch.sin(angle)
+        self.goal_pos_source[env_ids, 2] = height
+
+        # sample random orientations in source frame (normalize)
+        delta_quat = torch.randn(len(env_ids), 4, device=self.device)
         delta_quat = delta_quat / torch.norm(delta_quat, dim=1, keepdim=True)
-
-
-
-        self.goal_quat[env_ids] = delta_quat
+        self.goal_quat_source[env_ids] = delta_quat
 
 
     @staticmethod
-    def _get_env_local_pose(env_pos: torch.Tensor, xformable: UsdGeom.Xformable, device: torch.device):
-        """Compute pose in env-local coordinates"""
-        world_transform = xformable.ComputeLocalToWorldTransform(0)
-        world_pos = world_transform.ExtractTranslation()
-        world_quat = world_transform.ExtractRotationQuat()
+    def _compute_ee_point_velocity(frame_data: object, robot: Articulation, ee_frame_idx: int, ee_body_idx: int):
+        """Compute linear and angular velocity of the EE TCP point (accounts for FrameTransformer offset).
 
-        px = world_pos[0] - env_pos[0]
-        py = world_pos[1] - env_pos[1]
-        pz = world_pos[2] - env_pos[2]
-        qx = world_quat.imaginary[0]
-        qy = world_quat.imaginary[1]
-        qz = world_quat.imaginary[2]
-        qw = world_quat.real
+        Returns velocities in world frame.
 
-        return torch.tensor([px, py, pz, qw, qx, qy, qz], device=device, dtype=torch.float32)
+        Args:
+            frame_data: the FrameTransformer data object (must provide target_pos_w)
+            robot: the `Articulation` instance to read body positions/velocities from
+            ee_frame_idx: index of the target frame in the frame_transformer
+            ee_body_idx: index of the robot body corresponding to the frame's base
+
+        Returns:
+            ee_lin_vel, ee_ang_vel  (both tensors shaped (N,3) in world frame)
+        """
+        # world-space EE point position (includes offset)
+        ee_pos_w = frame_data.target_pos_w[:, ee_frame_idx, :]
+
+        # body origin position and velocities (wrist_3_link)
+        body_pos_w = robot.data.body_pos_w[:, ee_body_idx]
+        body_lin_vel_w = robot.data.body_lin_vel_w[:, ee_body_idx]
+        body_ang_vel_w = robot.data.body_ang_vel_w[:, ee_body_idx]
+
+        # lever arm from body origin to EE point (world)
+        r_world = ee_pos_w - body_pos_w
+
+        # velocity at point: v_point = v_body + omega x r
+        ee_lin_vel_w_point = body_lin_vel_w + torch.cross(body_ang_vel_w, r_world, dim=1)
+
+        return ee_lin_vel_w_point, body_ang_vel_w
 
 
+@configclass
+class TestV1Cfg(TestCfg):
+    # Contact sensor on all robot links.
+    # net_forces_w reports the total normal contact force on each body (from ALL contacts).
+    # force_matrix_w is only available when filter_prim_paths_expr is non-empty (one-to-many filtering).
+    # For our use case (penalize ANY collision), net_forces_w is the correct field.
+    contact_sensor: ContactSensorCfg = ContactSensorCfg(
+        prim_path="/World/envs/env_.*/ur5e/.*",
+        update_period=0.0,
+        history_length=6,
+        debug_vis=False, 
+        filter_prim_paths_expr=[],  # Empty = no force_matrix_w, but net_forces_w still works
+    )
+    # Debug: print contact info every N env steps (0 = disabled)
+    contact_debug_interval: int = 0
+
+    episode_length_s = 5.0
+
+    # Domain randomisation (action delay/noise, observation noise, actuator randomisation)
+    domain_randomization: DomainRandomizationCfg = DomainRandomizationCfg()
+
+
+class TestV1(TestV0):
+    cfg: TestV1Cfg
+
+    def __init__(self, cfg: TestV1Cfg, render_mode: str | None = None, **kwargs):
+        super().__init__(cfg, render_mode, **kwargs)
+        self._debug_step_count = 0
+
+        # --- Domain randomisation helpers (all tensors on self.device) ---
+        dr = cfg.domain_randomization
+        self._action_buffer = ActionBuffer(
+            num_envs=self._num_envs,
+            action_dim=self.cfg.action_space,
+            cfg=dr,
+            device=self.device,
+        )
+        self._obs_buffer = ObservationBuffer(
+            num_envs=self._num_envs,
+            obs_dim=self.cfg.observation_space,
+            num_joints=self._robot.num_joints,
+            cfg=dr,
+            device=self.device,
+        )
+        self._actuator_randomizer = ActuatorRandomizer(
+            robot=self._robot,
+            cfg=dr,
+            device=self.device,
+        )
+
+    def _setup_scene(self):
+        self._robot = Articulation(self.cfg.robot)
+        self.scene.articulations["robot"] = self._robot
+
+        self._frame_transformer = FrameTransformer(self.cfg.frame_transformer)
+        self.scene.sensors["frame_transformer"] = self._frame_transformer
+
+        self._contact_sensor = ContactSensor(self.cfg.contact_sensor)
+        self.scene.sensors["contact_sensor"] = self._contact_sensor
+
+        self.cfg.table.func("/World/envs/env_0/Table", self.cfg.table)
+
+        self.camera_left_pole = self.cfg.camera_pole_spawn_cfg.func(
+            "/World/envs/env_0/CameraLeftPole", self.cfg.camera_pole_spawn_cfg,
+            translation=(TABLE_DEPTH/2 + 0.365, TABLE_WIDTH/2 - 0.535, TABLE_HEIGHT + 0.37),
+        )
+        self.camera_right_pole = self.cfg.camera_pole_spawn_cfg.func(
+            "/World/envs/env_0/CameraRightPole", self.cfg.camera_pole_spawn_cfg,
+            translation=(TABLE_DEPTH/2 - 0.365, TABLE_WIDTH/2 + 0.535, TABLE_HEIGHT + 0.37),
+        )
+
+        spawn_ground_plane(self.cfg.terrain.prim_path, GroundPlaneCfg())
+        setup_dome_light(intensity=2000.0)
+
+        self.scene.clone_environments(copy_from_source=False)
+        if self.device == "cpu":
+            self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
+
+    # -- Domain-randomised overrides -----------------------------------------
+
+    def _pre_physics_step(self, actions: torch.Tensor):
+        actions = actions.to(self.device)
+        self.actions = actions.clone().clamp(-1.0, 1.0)
+
+        # Push through action buffer (applies delay, noise, packet-loss)
+        effective_actions = self._action_buffer.push(self.actions)
+
+        increments = (
+            self.robot_dof_speed_scales.unsqueeze(0)
+            * self.dt
+            * self.cfg.dof_velocity_scale
+            * effective_actions
+            * self.cfg.action_scale
+        )
+        targets = self.robot_dof_targets + increments
+        self.robot_dof_targets[:] = torch.clamp(
+            targets,
+            self.robot_dof_lower_limits.unsqueeze(0),
+            self.robot_dof_upper_limits.unsqueeze(0),
+        )
+
+    def _apply_action(self):
+        self._robot.set_joint_position_target(self.robot_dof_targets)
+
+    def _get_observations(self):  # type: ignore
+        obs_dict = super()._get_observations()
+        # Apply observation delay + noise
+        obs_dict["policy"] = self._obs_buffer.append_and_get(obs_dict["policy"])
+        return obs_dict
+
+    def _reset_idx(self, env_ids: torch.Tensor):  # type: ignore
+        super()._reset_idx(env_ids)
+        env_ids = env_ids.to(self.device, dtype=torch.long)
+        # Reset DR buffers for these envs
+        self._action_buffer.reset(env_ids)
+        self._obs_buffer.reset(env_ids)
+        # Randomise actuator dynamics (stiffness, damping, friction)
+        self._actuator_randomizer.sample_and_apply(env_ids)
+
+    def _compute_contact_metric(self) -> torch.Tensor:
+        """Return max normal contact force per environment (N).
+
+        Uses the contact sensor's ``net_forces_w`` which has shape (num_envs, num_bodies, 3).
+        ``force_matrix_w`` is only available when ``filter_prim_paths_expr`` is non-empty.
+        If data is not yet available, returns zeros.
+        """
+        if self._contact_sensor is None:
+            return torch.zeros(self._num_envs, device=self.device)
+
+        data = self._contact_sensor.data
+        if data is None or data.net_forces_w is None:
+            return torch.zeros(self._num_envs, device=self.device)
+
+        # net_forces_w: (num_envs, num_bodies, 3)
+        forces = data.net_forces_w
+        # magnitude per body
+        magnitudes = torch.norm(forces, dim=2)  # (num_envs, num_bodies)
+        # max per env
+        max_per_env, max_body_idx = magnitudes.max(dim=1)
+
+        # --- Debug logging (only every N steps, env 0 only) ---
+        if self.cfg.contact_debug_interval > 0 and self._debug_step_count % self.cfg.contact_debug_interval == 0:
+            env0_mags = magnitudes[0]  # per-body forces for env 0
+            body_names = self._contact_sensor.body_names
+            parts = [f"{name}: {env0_mags[i].item():.2f}N" for i, name in enumerate(body_names)]
+            top_body = body_names[max_body_idx[0].item()] if body_names else "?"
+            print(
+                f"[ContactDebug step={self._debug_step_count}] "
+                f"env0 max={max_per_env[0].item():.2f}N ({top_body}) | "
+                f"all_envs max={max_per_env.max().item():.2f}N mean={max_per_env.mean().item():.2f}N\n"
+                f"  per-body: {', '.join(parts)}"
+            )
+
+        return max_per_env
+
+    def _get_rewards(self) -> torch.Tensor:
+        base = super()._get_rewards()
+        self._debug_step_count += 1
+        contact_forces = self._compute_contact_metric()
+        # small penalty when contact force exceeds threshold (only amount above threshold)
+        excess = torch.relu(contact_forces - self.cfg.contact_force_threshold_penalty)
+        contact_penalty = self.cfg.contact_penalty_scale * excess
+        reward = base + contact_penalty
+
+        if "log" not in self.extras:
+            self.extras["log"] = {}
+        self.extras["log"].update({
+            "contact_force_max": contact_forces.max(),
+            "contact_force_mean": contact_forces.mean(),
+            "contact_penalty_mean": contact_penalty.mean(),
+        })
+        return reward
+
+    # def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
+    #     terminated, truncated = super()._get_dones()
+    #     contact_forces = self._compute_contact_metric()
+    #     terminated = terminated | (contact_forces > self.cfg.contact_force_threshold_done)
+    #     return terminated, truncated
+    

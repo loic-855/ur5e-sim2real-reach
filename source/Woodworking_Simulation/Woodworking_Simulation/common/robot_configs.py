@@ -106,7 +106,7 @@ def get_robot_grasp_marker_cfg(scale: tuple[float, float, float] = (0.05, 0.05, 
     )
 
 def get_camera_pole_cfg(
-    size: tuple[float, float, float] = (0.07, 0.13, 0.7),
+    size: tuple[float, float, float] = (0.1, 0.18, 0.7),
     color: tuple[float, float, float] = (0.0, 1.0, 0.0)
 ) -> sim_utils.CuboidCfg:
     """Get camera pole configuration (size and color only)."""
@@ -153,6 +153,7 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                     solver_position_iteration_count=12, 
                     solver_velocity_iteration_count=1
                 ),
+                activate_contact_sensors=True,
             ),
             init_state=ArticulationCfg.InitialStateCfg(
                 joint_pos={
@@ -173,11 +174,15 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
             actuators={
                 "shoulder": ImplicitActuatorCfg(
                     joint_names_expr=["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint"],
-                    stiffness=800, damping=80
+                    stiffness=200, damping=35,
+                    effort_limit_sim=150.0, 
+                    velocity_limit_sim=MAX_JOINT_VEL,
                 ),
                 "wrist": ImplicitActuatorCfg(
                     joint_names_expr=["wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
-                    stiffness=500, damping=50
+                    stiffness=80, damping=15,
+                    effort_limit_sim=28.0,
+                    velocity_limit_sim=MAX_JOINT_VEL,
                 ),
             },
         )
@@ -352,7 +357,7 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                     joint_names_expr=["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint"],
                     stiffness=160.0,
                     damping=28.0,
-                    effort_limit=100.0,
+                    effort_limit=120.0,
                     velocity_limit=MAX_JOINT_VEL,
                     min_delay=0,
                     max_delay=0,
@@ -360,7 +365,7 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 "wrist_action_1": DelayedPDActuatorCfg(
                     joint_names_expr=["wrist_1_joint"],
                     stiffness=125.0,
-                    damping=19.0,
+                    damping=24.0,
                     effort_limit=60.0,
                     velocity_limit=MAX_JOINT_VEL,
                     min_delay=0,
@@ -369,7 +374,7 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 "wrist_action_2": DelayedPDActuatorCfg(
                     joint_names_expr=["wrist_2_joint"],
                     stiffness=100.0,
-                    damping=16.0,
+                    damping=22.0,
                     effort_limit=60.0,
                     velocity_limit=MAX_JOINT_VEL,
                     min_delay=0,
@@ -378,7 +383,7 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 "wrist_action_3": DelayedPDActuatorCfg(
                     joint_names_expr=["wrist_3_joint"],
                     stiffness=80.0,
-                    damping=14.0,
+                    damping=20.0,
                     effort_limit=60.0,
                     velocity_limit=MAX_JOINT_VEL,
                     min_delay=0,
