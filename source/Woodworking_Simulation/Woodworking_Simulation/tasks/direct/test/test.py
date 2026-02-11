@@ -24,6 +24,7 @@ from isaaclab.utils import configclass
 from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import sample_uniform
+from isaaclab.sim import PhysxCfg
 
 # Import shared configurations
 from Woodworking_Simulation.common.robot_configs import (
@@ -160,6 +161,16 @@ class TestV0(DirectRLEnv):
         self.actions = torch.zeros((self._num_envs, self.cfg.action_space), device=self.device, dtype=torch.float32)
 
         self._sample_goal()
+
+        # Instanz erstellen
+        physx_cfg = PhysxCfg()
+
+        # Alle Standardwerte anzeigen
+        print(physx_cfg)
+
+        # Gezielte Abfrage einzelner Werte
+        print(f"Solver Type: {physx_cfg.solver_type}") # Default: 1 (TGS)
+        print(f"External Forces: {physx_cfg.enable_external_forces_every_iteration}")
 
     def _setup_scene(self):
         # create robot articulation from config
