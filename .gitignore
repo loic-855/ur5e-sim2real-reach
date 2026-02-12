@@ -79,3 +79,6 @@ source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/woodworking_si
 scripts/list_envs.txt
 .vscode/tools/setup_vscode.py
 Woodworking_Simulation.code-workspace
+chat.md
+.gitignore
+workstation_config.txt
