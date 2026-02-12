@@ -12,6 +12,9 @@ Usage:
     
     # Interactive mode (change goal from terminal)
     python3 goal_publisher.py --interactive
+
+    #Random goal every 10 seconds
+    python3 goal_publisher.py --random --update 10
     
 RViz Setup:
     1. Start RViz: ros2 run rviz2 rviz2
