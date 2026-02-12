@@ -26,14 +26,15 @@ TABLE_ASSET_PATH = USD_FILES_DIR / "woodworking_table.usd"
 
 # === Physical Constants ===
 # Table dimensions (origin at corner, we offset to center)
-TABLE_DEPTH = 0.8   # x-axis
-TABLE_WIDTH = 1.2   # y-axis  
+TABLE_WIDTH = 1.2  # x-axis
+TABLE_DEPTH = 0.8   # y-axis
 TABLE_HEIGHT = 0.842  # z-axis
 # Aluminium block on which the robot is mounted
 MOUNT_HEIGHT = 0.02
 
 # Environment origin offset to place origin at table center at plateau height
-ENV_ORIGIN_OFFSET = torch.tensor([TABLE_DEPTH / 2.0, TABLE_WIDTH / 2.0, TABLE_HEIGHT])
+ENV_ORIGIN_OFFSET = torch.tensor([-TABLE_WIDTH / 2.0, TABLE_DEPTH / 2.0, TABLE_HEIGHT])
+# = (-0.6, 0.4, 0.842)
 
 # === UR5e Robot Constants ===
 MAX_REACH = 0.85  # UR5e reach ~850mm
@@ -133,11 +134,9 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
         ValueError: If robot_type is not supported
     """
     
-    # Robot position in local frame (table center = origin)
-    robot_local_pos = (0.08, 0.08, TABLE_HEIGHT + MOUNT_HEIGHT)
-    #robot_local_pos = (0.0, 0.0, 0.0)
-    # Standard rotation: -90° around Z to match real setup (consistent across all robots)
-    robot_local_rot = (0.7071, 0.0, 0.0, -0.7071)
+
+    robot_local_pos = (-1.12, 0.72, TABLE_HEIGHT + MOUNT_HEIGHT)
+    robot_local_rot = (0.0, 0.0, 0.0, 1.0) 
     
     if robot_type == RobotType.NO_GRIPPER:
         return ArticulationCfg(
@@ -280,10 +279,9 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
         )
     
     elif robot_type == RobotType.SCREWDRIVER_TCP:
-        # Position for screwdriver robot (placeholder, adjust based on your tests)
-        screwdriver_pos = (0.72, 1.12, TABLE_HEIGHT + MOUNT_HEIGHT)
-        # Rotation placeholder (will be tested by user)
-        screwdriver_rot = (0.0, 0.0, 0.0, 1.0)  # Identity quaternion, adjust later
+        
+        screwdriver_pos = (-0.08, 0.08, TABLE_HEIGHT + MOUNT_HEIGHT)
+        screwdriver_rot = (0.0, 0.0, 0.0, 1.0)
         
         return ArticulationCfg(
             prim_path=prim_path,

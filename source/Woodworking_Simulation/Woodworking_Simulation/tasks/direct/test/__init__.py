@@ -21,3 +21,25 @@ gym.register(
     },
 )
 
+gym.register(
+    id="Template-Test-Direct-v1",
+    entry_point=f"{__name__}.test:TestV1",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.test:TestV1Cfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
+        # Use the extended PPO runner config for v1 by default
+        #"rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg_extended:PPORunnerCfg",
+    },
+)
+
+# Duplicate of v1 but using the extended PPO config
+gym.register(
+    id="Template-Test-Direct-v1-ext",
+    entry_point=f"{__name__}.test:TestV1",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.test:TestV1Cfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg_extended:PPORunnerCfg",
+    },
+)

@@ -96,9 +96,9 @@ class TestCfg(DirectRLEnvCfg):
         #prim_path="/World/envs/env_.*/Table/woodworking_table",
         #the offset points to the table center.
         source_frame_offset=OffsetCfg(
-            pos=(- (TABLE_WIDTH / 2 - 0.08), TABLE_DEPTH / 2 - 0.08, - MOUNT_HEIGHT),
-            rot=(0.7071, 0.0, 0.0, 0.7071),    
-        ),
+        pos=(-(TABLE_WIDTH / 2 - 0.08), TABLE_DEPTH / 2 - 0.08, -MOUNT_HEIGHT),
+        rot=(0.0, 0.0, 0.0, 1.0), 
+),
         target_frames=[
             FrameTransformerCfg.FrameCfg(
                 prim_path="/World/envs/env_.*/ur5e/wrist_3_link",
@@ -106,7 +106,7 @@ class TestCfg(DirectRLEnvCfg):
                 name="ee_tcp",
                 offset=OffsetCfg(
                     pos=(0.0, 0.0, 0.15),
-                    rot=(1.0, 0.0, 0.0, 0.0),
+                    rot=(0.0, 0.0, 0.0, 1.0),
                 ),
             )
         ],
@@ -169,7 +169,7 @@ class TestV0(DirectRLEnv):
 
         # goals are expressed in the source frame (table-relative)
         # use explicit names to avoid confusion
-        self.robot_base_local = torch.tensor([-0.36, -0.54, 0.0], device=self.device)
+        self.robot_base_local = torch.tensor([-0.52, 0.32, 0.0], device=self.device)
         self.goal_pos_source = torch.zeros((self._num_envs, 3), device=self.device, dtype=torch.float32)
         self.goal_quat_source = torch.zeros((self._num_envs, 4), device=self.device, dtype=torch.float32)
 
@@ -179,6 +179,8 @@ class TestV0(DirectRLEnv):
         self.goal_marker = VisualizationMarkers(cfg.goal_marker)
         self.origin_marker = VisualizationMarkers(cfg.origin_marker)
         self.ee_marker = VisualizationMarkers(cfg.ee_marker)
+        # Marker to visualize the FrameTransformer source_frame_offset in world frame
+        self.source_marker = VisualizationMarkers(cfg.origin_marker)
 
         self._sample_goal()
 
@@ -189,16 +191,22 @@ class TestV0(DirectRLEnv):
         self._frame_transformer = FrameTransformer(self.cfg.frame_transformer)
         self.scene.sensors["frame_transformer"] = self._frame_transformer
 
-        self.cfg.table.func("/World/envs/env_0/Table", self.cfg.table)
+        self.cfg.table.func(
+            "/World/envs/env_0/Table", self.cfg.table,
+            orientation=(0.7071068, 0.0, 0.0, 0.7071068),
+        )
 
         self.camera_left_pole = self.cfg.camera_pole_spawn_cfg.func(
             "/World/envs/env_0/CameraLeftPole", self.cfg.camera_pole_spawn_cfg,
-            translation=(TABLE_DEPTH/2 + 0.365, TABLE_WIDTH/2 - 0.535, TABLE_HEIGHT + 0.37),
+            translation= (- TABLE_WIDTH + 0.07, 0.05, TABLE_HEIGHT + 0.37),
+            orientation= (0.7071068, 0.0, 0.0, 0.7071068)
         )
         self.camera_right_pole = self.cfg.camera_pole_spawn_cfg.func(
             "/World/envs/env_0/CameraRightPole", self.cfg.camera_pole_spawn_cfg,
-            translation=(TABLE_DEPTH/2 - 0.365, TABLE_WIDTH/2 + 0.535, TABLE_HEIGHT + 0.37),
+            translation=(- 0.05, TABLE_DEPTH - 0.05, TABLE_HEIGHT + 0.37),
+            orientation=(0.7071068, 0.0, 0.0, 0.7071068)
         )
+
 
         spawn_ground_plane(self.cfg.terrain.prim_path, GroundPlaneCfg())
         setup_dome_light(intensity=2000.0)
@@ -331,6 +339,25 @@ class TestV0(DirectRLEnv):
         marker_idx = torch.zeros(len(env_ids), dtype=torch.int64, device=self.device)
         self.goal_marker.visualize(self.goal_pos_source[env_ids] + self.env_origins[env_ids], self.goal_quat_source[env_ids], marker_indices=marker_idx)
         self.origin_marker.visualize(self.env_origins, marker_indices=marker_idx)
+        # Visualize FrameTransformer source_frame_offset (anchor in base_link frame)
+        try:
+            base_idx = self._robot.body_names.index("base_link")
+            # env-local offset (convert tuple to tensor)
+            src_off = torch.tensor(self.cfg.frame_transformer.source_frame_offset.pos, device=self.device, dtype=torch.float32)
+            src_off = src_off.unsqueeze(0).expand(len(env_ids), -1)
+            src_rot = torch.tensor(self.cfg.frame_transformer.source_frame_offset.rot, device=self.device, dtype=torch.float32)
+            # base link poses
+            body_pos_w = self._robot.data.body_pos_w[env_ids, base_idx]
+            body_quat_w = self._robot.data.body_quat_w[env_ids, base_idx]
+            # rotate offset into world: v' = v + 2 * cross(q_vec, cross(q_vec, v) + q_w * v)
+            q_w = body_quat_w[:, 0:1]
+            q_vec = body_quat_w[:, 1:4]
+            rotated = src_off + 2.0 * torch.cross(q_vec, torch.cross(q_vec, src_off) + q_w * src_off, dim=1)
+            src_world = body_pos_w + rotated
+            self.source_marker.visualize(src_world, src_rot, marker_indices=marker_idx)
+        except Exception:
+            # best-effort visualization; don't fail reset if something goes wrong
+            pass
 
     def _sample_goal(self, env_ids: torch.Tensor | None = None):
         """
@@ -452,15 +479,20 @@ class TestV1(TestV0):
         self._contact_sensor = ContactSensor(self.cfg.contact_sensor)
         self.scene.sensors["contact_sensor"] = self._contact_sensor
 
-        self.cfg.table.func("/World/envs/env_0/Table", self.cfg.table)
+        self.cfg.table.func(
+            "/World/envs/env_0/Table", self.cfg.table,
+            orientation=(0.7071068, 0.0, 0.0, 0.7071068),
+        )
 
         self.camera_left_pole = self.cfg.camera_pole_spawn_cfg.func(
             "/World/envs/env_0/CameraLeftPole", self.cfg.camera_pole_spawn_cfg,
-            translation=(TABLE_DEPTH/2 + 0.365, TABLE_WIDTH/2 - 0.535, TABLE_HEIGHT + 0.37),
+            translation= (- TABLE_WIDTH + 0.07, 0.05, TABLE_HEIGHT + 0.37),
+            orientation= (0.7071068, 0.0, 0.0, 0.7071068)
         )
         self.camera_right_pole = self.cfg.camera_pole_spawn_cfg.func(
             "/World/envs/env_0/CameraRightPole", self.cfg.camera_pole_spawn_cfg,
-            translation=(TABLE_DEPTH/2 - 0.365, TABLE_WIDTH/2 + 0.535, TABLE_HEIGHT + 0.37),
+            translation=(- 0.05, TABLE_DEPTH - 0.05, TABLE_HEIGHT + 0.37),
+            orientation=(0.7071068, 0.0, 0.0, 0.7071068)
         )
 
         spawn_ground_plane(self.cfg.terrain.prim_path, GroundPlaneCfg())
