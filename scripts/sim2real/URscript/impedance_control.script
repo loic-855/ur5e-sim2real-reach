@@ -5,7 +5,7 @@ def impedance_control():
     kp = [200.0, 200.0, 200.0, 80.0, 80.0, 80.0]
     kd = [35.0, 35.0, 35.0, 15.0, 15.0, 15.0]     
     max_error = 0.15 
-    execution = True
+    stop = False
 
     while True:
 
@@ -16,7 +16,7 @@ def impedance_control():
         q_des[3] = read_input_float_register(27)
         q_des[4] = read_input_float_register(28)
         q_des[5] = read_input_float_register(29)
-        execution = read_input_boolean_register(64)
+        stop = read_input_boolean_register(64)
         
         q = get_actual_joint_positions()
         q_dot = get_actual_joint_speeds()
@@ -37,7 +37,7 @@ def impedance_control():
         tau = kp * e - kd * q_dot
         direct_torque(tau)
 
-        if not execution:
+        if stop:
             textmsg("Back to home position...")
             movej([-0.0,-1.57,0.0,-1.57,0,0],a=0.7, v=0.6, t=0, r=0)
             break

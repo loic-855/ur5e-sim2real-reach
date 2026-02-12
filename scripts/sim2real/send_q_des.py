@@ -50,9 +50,7 @@ setp = con.send_input_setup(q_des_names, q_des_types)
 if setp is None:
     logging.error("Unable to configure q_des input")
     sys.exit()
-  
 
-# Setup RTDE for stop signal
 stop = con.send_input_setup(stop_name, stop_type)
 if stop is None:
     logging.error("Unable to configure stop signal")
@@ -65,19 +63,20 @@ if not con.send_start():
 
 
 # Send the URScript to the robot
-stop.input_bit_register_64 = True
+stop.input_bit_register_64 = False
 con.send(stop)
 print("Sending URScript to robot...")
 time.sleep(1)  # Petit délai avant d'envoyer
 send_urscript_file(ur_script_filename)
-time.sleep(2)  # Attendre que le script démarre sur le robot
+time.sleep(3)  # Attendre que le script démarre sur le robot
 
 
 # pose for the robot to cycle through
+# [shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3]
 pose_list = [[0.0, -1.57, 0.0, -1.57, 0.0, 0.0],
-        [0.3, -1.47, 0.5, -1.27, 0.0, 0.0],
+        [0.2, -1.47, -0.5, -1.27, 0.0, 0.0],
         [0.0, -1.77, 0.0, -1.67, 0.0, 0.3],
-        [-0.4, -1.57, 1.77, -0.57, 0.0, 1.57]]
+        [-0.2, -1.57, -1.77, -0.57, 0.0, 1.57]]
 
 
 
@@ -150,7 +149,7 @@ except KeyboardInterrupt:
     keep_running = False
     print("\nStopping URScript on robot...")
     # Send stop signal to URScript via RTDE
-    stop.input_bit_register_64 = False
+    stop.input_bit_register_64 = True
     con.send(stop)
     time.sleep(1)  # Attendre que le script s'arrête proprement
     print("URScript stopped")
