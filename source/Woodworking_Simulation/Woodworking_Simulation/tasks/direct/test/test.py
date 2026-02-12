@@ -115,13 +115,16 @@ class TestCfg(DirectRLEnvCfg):
     # Camera pole configuration (generalized)
     camera_pole_spawn_cfg = get_camera_pole_cfg()
     
-    action_scale = 6.0
+    action_scale = 7.0
     dof_velocity_scale = 0.1
 
     #reward scale from UR10tuto
-    ee_position_tracking = -0.2
-    ee_orientation_tracking = -0.15
-    action_penalty = -0.0005
+    ee_position_penalty = -0.25
+    ee_position_reward = 0.3
+    tanh_scaling = 0.2 # distance at which the tanh reward activate
+    ee_orientation_penalty = -0.15
+    action_penalty = -0.0008
+    action_rate_penalty = -0.005
     # contact penalty defaults (unused by TestV0, used by TestV1)
     contact_penalty_scale = -0.01
     contact_force_threshold_penalty = 5.0
@@ -140,7 +143,6 @@ class TestV0(DirectRLEnv):
         self._num_envs = self.scene.cfg.num_envs
         # include global origin offset used elsewhere
         self.env_origins = (self.scene.env_origins + ENV_ORIGIN_OFFSET.to(device=self.device)).to(device=self.device, dtype=torch.float32)
-
         # frame transformer (created in _setup_scene during super().__init__)
         self._frame_transformer = self.scene.sensors.get("frame_transformer")
         if self._frame_transformer is None:
@@ -172,6 +174,7 @@ class TestV0(DirectRLEnv):
         self.goal_quat_source = torch.zeros((self._num_envs, 4), device=self.device, dtype=torch.float32)
 
         self.actions = torch.zeros((self._num_envs, self.cfg.action_space), device=self.device, dtype=torch.float32)
+        self.prev_actions = torch.zeros_like(self.actions)
 
         self.goal_marker = VisualizationMarkers(cfg.goal_marker)
         self.origin_marker = VisualizationMarkers(cfg.origin_marker)
@@ -207,6 +210,7 @@ class TestV0(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor):
         actions = actions.to(self.device)
+        self.prev_actions[:] = self.actions
         self.actions = actions.clone().clamp(-1.0, 1.0)
 
         increments = (
@@ -267,23 +271,31 @@ class TestV0(DirectRLEnv):
 
         # compare in source frame (positions and orientations)
         position_error = torch.norm(self.goal_pos_source - ee_pos_source, dim=1)
+        position_error_tanh = 1 - torch.tanh(position_error/self.cfg.tanh_scaling)
         quat_dot = torch.sum(self.goal_quat_source * ee_quat_source, dim=1)
         orientation_error = 1.0 - torch.abs(quat_dot)
         action_cost = torch.sum(self.actions * self.actions, dim=1)
+        action_rate_cost = torch.sum((self.actions - self.prev_actions) ** 2, dim=1)
 
         self.ee_marker.visualize(frame_data.target_pos_w[:, self._ee_frame_idx, :], frame_data.target_quat_w[:, self._ee_frame_idx, :])
 
         reward = (
-            self.cfg.ee_position_tracking * position_error
-            + self.cfg.ee_orientation_tracking * orientation_error
+            self.cfg.ee_position_penalty * position_error
+          #  + self.cfg.ee_position_reward * position_error_tanh
+            + self.cfg.ee_orientation_penalty * orientation_error
             + self.cfg.action_penalty * action_cost
+            + self.cfg.action_rate_penalty * action_rate_cost
         )
         if "log" not in self.extras:
             self.extras["log"] = {}
         self.extras["log"].update({
             "action_penalty": (self.cfg.action_penalty * action_cost).mean(),
-            "ori_reward": (self.cfg.ee_orientation_tracking * orientation_error).mean(),
-            "pos_reward": (self.cfg.ee_position_tracking * position_error).mean(),
+            "action_rate_penalty": (self.cfg.action_rate_penalty * action_rate_cost).mean(),
+            "ori_error": orientation_error.mean(),
+            "ori_reward": (self.cfg.ee_orientation_penalty * orientation_error).mean(),
+            "pos_error": position_error.mean(),
+            "pos_reward": (self.cfg.ee_position_penalty * position_error).mean(),
+          #  "pos_reward_tanh": (self.cfg.ee_position_reward * position_error_tanh).mean(),
             "rewards_mean": reward.mean(),
             "rewards_std": reward.std(),
         })
@@ -310,6 +322,7 @@ class TestV0(DirectRLEnv):
         self._robot.data.joint_pos[env_ids] = joint_pos
         self._robot.data.joint_vel[env_ids] = 0.0
         self.actions[env_ids] = 0.0
+        self.prev_actions[env_ids] = 0.0
 
         self._robot.set_joint_position_target(self.robot_dof_targets)
         self._sample_goal(env_ids)
@@ -317,6 +330,7 @@ class TestV0(DirectRLEnv):
         # Move marker to the goal (convert source->world for visualization)
         marker_idx = torch.zeros(len(env_ids), dtype=torch.int64, device=self.device)
         self.goal_marker.visualize(self.goal_pos_source[env_ids] + self.env_origins[env_ids], self.goal_quat_source[env_ids], marker_indices=marker_idx)
+        self.origin_marker.visualize(self.env_origins, marker_indices=marker_idx)
 
     def _sample_goal(self, env_ids: torch.Tensor | None = None):
         """
@@ -426,6 +440,7 @@ class TestV1(TestV0):
             cfg=dr,
             device=self.device,
         )
+  
 
     def _setup_scene(self):
         self._robot = Articulation(self.cfg.robot)
@@ -460,7 +475,6 @@ class TestV1(TestV0):
     def _pre_physics_step(self, actions: torch.Tensor):
         actions = actions.to(self.device)
         self.actions = actions.clone().clamp(-1.0, 1.0)
-
         # Push through action buffer (applies delay, noise, packet-loss)
         effective_actions = self._action_buffer.push(self.actions)
 
@@ -539,6 +553,9 @@ class TestV1(TestV0):
         # small penalty when contact force exceeds threshold (only amount above threshold)
         excess = torch.relu(contact_forces - self.cfg.contact_force_threshold_penalty)
         contact_penalty = self.cfg.contact_penalty_scale * excess
+        #small penalty for action rate change
+
+        
         reward = base + contact_penalty
 
         if "log" not in self.extras:

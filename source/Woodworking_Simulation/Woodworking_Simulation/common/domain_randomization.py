@@ -119,7 +119,7 @@ class ActionBuffer:
         """
         if not self.cfg.enabled:
             return actions
-
+        # print("Original actions: ", actions)
         # --- additive noise ---
         if self.cfg.action_noise_std > 0.0:
             actions = actions + torch.randn_like(actions) * self.cfg.action_noise_std
@@ -146,6 +146,7 @@ class ActionBuffer:
             )
 
         self.last_action = delayed.clone()
+        # print("Delayed noisy actions: ", delayed)
         return delayed
 
     def reset(self, env_ids: torch.Tensor) -> None:
