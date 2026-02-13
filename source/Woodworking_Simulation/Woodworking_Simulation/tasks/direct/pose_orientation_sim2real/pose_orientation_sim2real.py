@@ -130,20 +130,23 @@ class PoseOrientationSim2RealCfg(DirectRLEnvCfg):
     dof_velocity_scale = 0.1
 
     # reward weights
-    ee_position_penalty = -0.25
-    ee_position_reward = 0.3
-    tanh_scaling = 0.2
+    ee_position_penalty = -0.20
+    ee_position_reward = 0.35
+    tanh_scaling = [0.3, 0.15]
     ee_orientation_penalty = -0.15
+    ee_orientation_reward = 0.0
+    ori_tanh_scaling = [0.3, 0.15]
     action_penalty = -0.0008
     action_rate_penalty = -0.005
+    alignement_bonus_scale = 0.3
 
     # contact penalties (unused in V0, active in V1)
     contact_penalty_scale = -0.01
     contact_force_threshold_penalty = 5.0
     contact_force_threshold_done = 10.0
 
-    # --- Debug / visualisation toggle (set True to see markers) -----------
-    debug_visualization: bool = True
+    # --- Debug general toggle (set True to see markers and print statements) -----------
+    debug = False
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +197,7 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
         self.prev_actions = torch.zeros_like(self.actions)
 
         # visualisation markers (only used when debug_visualization is True)
-        if self.cfg.debug_visualization:
+        if self.cfg.debug:
             self.goal_marker = VisualizationMarkers(cfg.goal_marker)
             self.origin_marker = VisualizationMarkers(cfg.origin_marker)
             self.ee_marker = VisualizationMarkers(cfg.ee_marker)
@@ -282,23 +285,38 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
             ],
             dim=1,
         )
+        if self.cfg.debug and self.common_step_counter % 1000 == 0:   
+            print(f"Observations: ee_pos_source={ee_pos_source[0].cpu().numpy()}, ee_quat_source={ee_quat_source[0].cpu().numpy()}, ")
         return {"policy": obs}
 
     # -- Rewards ------------------------------------------------------------
 
     def _get_rewards(self) -> torch.Tensor:
+        if self.common_step_counter > 30000:
+            tanh_scaling = self.cfg.tanh_scaling[1]
+            ori_tanh_scaling = self.cfg.ori_tanh_scaling[1]
+        else:
+            tanh_scaling = self.cfg.tanh_scaling[0]
+            ori_tanh_scaling = self.cfg.ori_tanh_scaling[0] 
+
         frame_data = self._frame_transformer.data
         ee_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
         ee_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
 
         position_error = torch.norm(self.goal_pos_source - ee_pos_source, dim=1)
+        position_reward_tanh = 1.0 - torch.tanh(position_error / tanh_scaling)
         quat_dot = torch.sum(self.goal_quat_source * ee_quat_source, dim=1)
         orientation_error = 1.0 - torch.abs(quat_dot)
+        orientation_reward_tanh = 1.0 - torch.tanh(orientation_error / ori_tanh_scaling)
         action_cost = torch.sum(self.actions ** 2, dim=1)
         action_rate_cost = torch.sum((self.actions - self.prev_actions) ** 2, dim=1)
 
+        close_pos = (position_error < 0.10).float()   # < 10cm
+        close_ori = (orientation_error < 0.15).float() # quat error < 0.15
+        alignment_bonus = self.cfg.alignement_bonus_scale * close_pos * close_ori
+
         # EE marker visualisation (debug only)
-        if self.cfg.debug_visualization:
+        if self.cfg.debug:
             self.ee_marker.visualize(
                 frame_data.target_pos_w[:, self._ee_frame_idx, :],
                 frame_data.target_quat_w[:, self._ee_frame_idx, :],
@@ -306,9 +324,12 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
 
         reward = (
             self.cfg.ee_position_penalty * position_error
+            + self.cfg.ee_position_reward * position_reward_tanh 
             + self.cfg.ee_orientation_penalty * orientation_error
+            + self.cfg.ee_orientation_reward * orientation_reward_tanh
             + self.cfg.action_penalty * action_cost
             + self.cfg.action_rate_penalty * action_rate_cost
+            + alignment_bonus
         )
 
         if "log" not in self.extras:
@@ -317,6 +338,8 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
             {
                 "action_penalty": (self.cfg.action_penalty * action_cost).mean(),
                 "action_rate_penalty": (self.cfg.action_rate_penalty * action_rate_cost).mean(),
+                "alignment_bonus": alignment_bonus.mean(),
+                "step_counter": self.common_step_counter,
                 "ori_error": orientation_error.mean(),
                 "ori_reward": (self.cfg.ee_orientation_penalty * orientation_error).mean(),
                 "pos_error": position_error.mean(),
@@ -357,7 +380,7 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
         self._sample_goal(env_ids)
 
         # debug markers
-        if self.cfg.debug_visualization:
+        if self.cfg.debug:
             marker_idx = torch.zeros(len(env_ids), dtype=torch.int64, device=self.device)
             self.goal_marker.visualize(
                 self.goal_pos_source[env_ids] + self.env_origins[env_ids],
@@ -437,7 +460,7 @@ class PoseOrientationSim2RealV1Cfg(PoseOrientationSim2RealCfg):
     )
     contact_debug_interval: int = 0
 
-    episode_length_s = 5.0
+    episode_length_s = 6.0
 
     domain_randomization: DomainRandomizationCfg = DomainRandomizationCfg()
 

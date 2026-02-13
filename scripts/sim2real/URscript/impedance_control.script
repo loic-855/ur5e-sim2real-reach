@@ -1,15 +1,36 @@
 def impedance_control():
-    # Read q_des from input registers 24-29 (RTDE reserved range)
-    # Default values if not set
-    q_des = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+    # ===================================================================
+    # Impedance controller with first-order interpolation filter
+    #
+    # The policy sends q_des via RTDE at 60 Hz (registers 24-29).
+    # This controller runs at 500 Hz on the robot and uses a first-order
+    # low-pass filter to smoothly interpolate between successive q_des
+    # commands, avoiding jerky motion.
+    #
+    # Filter:  q_filt(k+1) = alpha * q_des + (1 - alpha) * q_filt(k)
+    #   where  alpha = 1 - exp(-dt_ctrl / tau)
+    #
+    # With dt_ctrl = 1/500 = 0.002 s and tau = 0.02 s (≈ 1 policy step)
+    #   => alpha ≈ 0.095
+    # ===================================================================
+
+    # Default / initial position
+    q_des  = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+    q_filt = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+
+    # Impedance gains
     kp = [200.0, 200.0, 200.0, 80.0, 80.0, 80.0]
-    kd = [35.0, 35.0, 35.0, 15.0, 15.0, 15.0]     
-    max_error = 0.15 
+    kd = [35.0, 35.0, 35.0, 15.0, 15.0, 15.0]
+    max_error = 0.15
+
+    # First-order filter coefficient
+    # alpha = 1 - exp(-dt / tau),  dt = 0.002 s,  tau = 0.02 s
+    alpha = 0.2
+
     stop = False
 
     while True:
-
-        # Update q_des from input float registers 24-29 (RTDE reserved)
+        # ----- Read q_des from RTDE input registers 24-29 -----
         q_des[0] = read_input_float_register(24)
         q_des[1] = read_input_float_register(25)
         q_des[2] = read_input_float_register(26)
@@ -17,12 +38,20 @@ def impedance_control():
         q_des[4] = read_input_float_register(28)
         q_des[5] = read_input_float_register(29)
         stop = read_input_boolean_register(64)
-        
+
+        # ----- First-order filter: smooth interpolation -----
+        i = 0
+        while i < 6:
+            q_filt[i] = alpha * q_des[i] + (1.0 - alpha) * q_filt[i]
+            i = i + 1
+        end
+
+        # ----- Impedance control on the filtered target -----
         q = get_actual_joint_positions()
         q_dot = get_actual_joint_speeds()
-        
-        # Compute error and saturate
-        e = q_des - q
+
+        # Compute error (use filtered target) and saturate
+        e = q_filt - q
         i = 0
         while i < 6:
             if e[i] > max_error:
@@ -32,14 +61,14 @@ def impedance_control():
             end
             i = i + 1
         end
-        
+
         # Compute torque: τ = Kp * e - Kd * q_dot
         tau = kp * e - kd * q_dot
         direct_torque(tau)
 
         if stop:
             textmsg("Back to home position...")
-            movej([-0.0,-1.57,0.0,-1.57,0,0],a=0.7, v=0.6, t=0, r=0)
+            movej([-0.0, -1.57, 0.0, -1.57, 0, 0], a=0.7, v=0.6, t=0, r=0)
             break
         end
     end

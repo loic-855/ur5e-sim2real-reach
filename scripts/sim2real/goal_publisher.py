@@ -44,7 +44,7 @@ TABLE_HEIGHT = 0.842  # z (only used if converting from corner-origin coords)
 
 # Robot base position relative to TABLE CENTER (not corner!)
 # In IsaacSim: robot at (0.08, 0.08) from corner = (0.08 - 0.4, 0.08 - 0.6) = (-0.32, -0.52) from center
-ROBOT_BASE_LOCAL = np.array([-0.32, -0.52, 0.0])
+ROBOT_BASE_LOCAL = np.array([-0.52, -0.32, 0.0])
 
 
 class GoalPublisher(Node):
@@ -69,7 +69,9 @@ class GoalPublisher(Node):
         # Default goal (in front of robot, slightly elevated)
         # NOTE: Coordinates relative to table CENTER (frame "table" at 0,0,0)
         self.goal_position = np.array([0.0, 0.0, 0.3])  # 30cm above table center
-        self.goal_quaternion = np.array([1.0, 0.0, 0.0, 0.0])  # Identity (w, x, y, z)
+        # Internal quaternion convention: (w, x, y, z)
+        # Use 180deg rotation around X (0,1,0,0) so +Z points DOWN by default
+        self.goal_quaternion = np.array([0.0, 1.0, 0.0, 0.0])  # (w, x, y, z)
         
         # Cycling goals feature
         self.cycling_goals = cycling_goals if cycling_goals is not None else []
@@ -97,10 +99,11 @@ class GoalPublisher(Node):
         """Update to a new random goal pose."""
         # Random quaternion (uniform sampling on unit sphere)
         rand_u, rand_v, rand_w = np.random.uniform(0.0, 1.0, size=3)
-        rand_quat = (np.sqrt(1 - rand_u) * np.sin(2 * np.pi * rand_v),
-                     np.sqrt(1 - rand_u) * np.cos(2 * np.pi * rand_v),
-                     np.sqrt(rand_u) * np.sin(2 * np.pi * rand_w),
-                     np.sqrt(rand_u) * np.cos(2 * np.pi * rand_w))  
+        xq = np.sqrt(1 - rand_u) * np.sin(2 * np.pi * rand_v)
+        yq = np.sqrt(1 - rand_u) * np.cos(2 * np.pi * rand_v)
+        zq = np.sqrt(rand_u) * np.sin(2 * np.pi * rand_w)
+        wq = np.sqrt(rand_u) * np.cos(2 * np.pi * rand_w)
+        # rand quaternion components computed as (x, y, z, w) -- convert to (w, x, y, z)
         # 360° around robot base (cylindrical sampling)
         # Random angle and radius for full 360° coverage
         angle = np.random.uniform(0, np.pi/2)
@@ -110,7 +113,7 @@ class GoalPublisher(Node):
         rand_x = ROBOT_BASE_LOCAL[0] + radius * np.cos(angle)
         rand_y = ROBOT_BASE_LOCAL[1] + radius * np.sin(angle)
         rand_z = height
-        self.set_goal(rand_x, rand_y, rand_z, *rand_quat)
+        self.set_goal(rand_x, rand_y, rand_z, wq, xq, yq, zq)
     
     def publish_coordinate_frame(self):
         """Publish RViz coordinate frame markers at goal position and orientation."""
@@ -120,8 +123,9 @@ class GoalPublisher(Node):
         # Y-axis: rotate 90 deg around Z
         quat_y_rot = np.array([0.7071067811865476, 0.0, 0.0, 0.7071067811865475])
         quat_y = self.quaternion_multiply(self.goal_quaternion, quat_y_rot)
-        # Z-axis: rotate 90 deg around Y
-        quat_z_rot = np.array([0.7071067811865476, 0.0, 0.7071067811865475, 0.0])
+        # Z-axis: rotate -90 deg around Y to map +X -> +Z (right-hand rule)
+        # Previous +90deg mapped +X -> -Z, so invert sign to point Z up.
+        quat_z_rot = np.array([0.7071067811865476, 0.0, -0.7071067811865475, 0.0])
         quat_z = self.quaternion_multiply(self.goal_quaternion, quat_z_rot)
         
         axes = [
@@ -184,10 +188,11 @@ class GoalPublisher(Node):
     def set_goal(
         self,
         x: float, y: float, z: float,
-        qw: float = 1.0, qx: float = 0.0, qy: float = 0.0, qz: float = 0.0
+        qw: float = 0.0, qx: float = 1.0, qy: float = 0.0, qz: float = 0.0
     ):
         """Set new goal pose."""
         self.goal_position = np.array([x, y, z])
+        # Store internally as (w, x, y, z)
         self.goal_quaternion = np.array([qw, qx, qy, qz])
         
         # Normalize quaternion
@@ -197,7 +202,7 @@ class GoalPublisher(Node):
         
         self.get_logger().info(
             f"Goal set: pos=[{x:.3f}, {y:.3f}, {z:.3f}], "
-            f"quat=[{qw:.3f}, {qx:.3f}, {qy:.3f}, {qz:.3f}]"
+            f"quat=[{self.goal_quaternion[0]:.3f}, {self.goal_quaternion[1]:.3f}, {self.goal_quaternion[2]:.3f}, {self.goal_quaternion[3]:.3f}] (w,x,y,z)"
         )
     
     def publish_goal(self):

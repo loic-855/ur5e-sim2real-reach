@@ -16,7 +16,7 @@ class PolicyInference:
         self,
         model_path: Union[str, Path],
         device: str = "cuda",
-        observation_dim: int = 19,
+        observation_dim: int = 26,
         action_dim: int = 6,
     ):
         """Initialize policy inference.
@@ -119,7 +119,7 @@ class PolicyInference:
 
 def load_policy(
     model_path: Optional[str] = None,
-    device: str = "cpu",
+    device: str = "cuda",
 ) -> PolicyInference:
     """Convenience function to load policy.
     
@@ -133,12 +133,12 @@ def load_policy(
     if model_path is None:
         # Default path relative to this file
         repo_root = Path(__file__).resolve().parents[2]
-        model_path = repo_root / "pretrained_models" / "exported" / "policy.pt"
-    
+        model_path = str(repo_root / "logs" / "rsl_rl" / "pose_orientation_sim2real_ext_nn" / "2026-02-13_10-43-10" / "exported" / "policy.pt")
+        #model_path = str(repo_root/"logs/rsl_rl/pose_orientation_sim2real_ext_nn_125hz/2026-02-13_14-35-41/exported/policy.pt")
     return PolicyInference(
         model_path=model_path,
         device=device,
-        observation_dim=19,
+        observation_dim=26,
         action_dim=6,
     )
 
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Test policy inference")
     parser.add_argument("--model", type=str, default=None, help="Path to .pt model")
-    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"])
+    parser.add_argument("--device", type=str, default="cuda", choices=["cpu", "cuda"])
     args = parser.parse_args()
     
     # Load policy
@@ -160,7 +160,7 @@ if __name__ == "__main__":
     
     # Test with random observation
     print("\nTesting with random observation...")
-    obs = np.random.randn(19).astype(np.float32) * 0.1
+    obs = np.random.randn(26).astype(np.float32) * 0.1
     action = policy.get_action(obs)
     
     print(f"Observation: {obs}")
