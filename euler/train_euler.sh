@@ -1,4 +1,6 @@
 #!/bin/bash
+# Single training run. For hyperparameter sweeps, see:
+#   euler/launch_sweep.sh  (generates & submits SLURM array jobs)
 
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4

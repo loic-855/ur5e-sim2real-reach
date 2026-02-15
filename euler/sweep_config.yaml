@@ -1,0 +1,97 @@
+# ============================================================================
+# Hyperparameter Sweep Configuration
+# ============================================================================
+# The sweep is the Cartesian product of all dimensions below.
+# Each dimension has named presets; values are Hydra override strings.
+#
+# Current grid: 3 actuators × 2 DR × 2 networks = 12 runs
+# With 4 GPUs, sequential_per_job=3: 4 SLURM jobs × 3 runs ≈ 3h total
+# ============================================================================
+
+task_name: "Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
+
+# --- SLURM settings ---
+slurm:
+  time: "08:00:00"
+  gpus: "rtx_4090:1"
+  cpus_per_task: 4
+  mem_per_cpu: 6000
+
+# How many training runs to chain sequentially in each SLURM job
+# (each run ≈ 1h, so 3 runs ≈ 3h, fits well within 8h wall-time)
+sequential_per_job: 3
+
+# Overrides applied to EVERY run (on top of the task's defaults)
+base_overrides:
+  - "agent.max_iterations=1500"
+
+# ============================================================================
+# Sweep Dimensions
+# ============================================================================
+# Each key under 'dimensions' is one axis of the grid.
+# Each named preset is a list of Hydra overrides (empty list = use defaults).
+# The generator computes the Cartesian product across all dimensions.
+
+dimensions:
+
+  # -------------------------------------------------------------------
+  # Actuator stiffness & damping
+  # -------------------------------------------------------------------
+  # Current:  shoulder(stiffness=200, damping=35), wrist(stiffness=80, damping=15)
+  # High:     shoulder(stiffness=800, damping=60), wrist(stiffness=350, damping=35)
+  # Mid:      averages between current and high
+  actuators:
+    current: []
+    mid:
+      - "env.robot.actuators.shoulder.stiffness=500"
+      - "env.robot.actuators.shoulder.damping=48"
+      - "env.robot.actuators.wrist.stiffness=215"
+      - "env.robot.actuators.wrist.damping=25"
+    high:
+      - "env.robot.actuators.shoulder.stiffness=800"
+      - "env.robot.actuators.shoulder.damping=60"
+      - "env.robot.actuators.wrist.stiffness=350"
+      - "env.robot.actuators.wrist.damping=35"
+
+  # -------------------------------------------------------------------
+  # Domain Randomization level
+  # -------------------------------------------------------------------
+  # current = defaults from DomainRandomizationCfg
+  # high    = ~2-2.5× more noise/delay/variation
+  domain_rand:
+    current: []
+    high:
+      - "env.domain_randomization.action_noise_std=0.025"
+      - "env.domain_randomization.packet_loss_prob=0.03"
+      - "env.domain_randomization.obs_noise_std_pos=0.005"
+      - "env.domain_randomization.obs_noise_std_quat=0.025"
+      - "env.domain_randomization.obs_noise_std_joint_pos=0.012"
+      - "env.domain_randomization.obs_noise_std_joint_vel=0.025"
+      - "env.domain_randomization.stiffness_scale_range=[0.8,1.2]"
+      - "env.domain_randomization.damping_scale_range=[0.8,1.2]"
+      - "env.domain_randomization.friction_variation=0.35"
+      - "env.domain_randomization.action_delay_range=[0,5]"
+      - "env.domain_randomization.obs_delay_range=[0,3]"
+
+  # -------------------------------------------------------------------
+  # Network architecture (actor & critic)
+  # -------------------------------------------------------------------
+  # ext4 = current extended network [512,256,128,64]
+  # ext3 = 3-layer variant [512,256,128]
+  network:
+    ext4: []
+    ext3:
+      - "agent.policy.actor_hidden_dims=[512,256,128]"
+      - "agent.policy.critic_hidden_dims=[512,256,128]"
+
+  # -------------------------------------------------------------------
+  # [OPTIONAL] Action rate penalty — anti-jitter knob
+  # -------------------------------------------------------------------
+  # Uncomment this dimension to add 2 levels (doubles the sweep to 24 runs).
+  # -0.005 = current, -0.02 = 4× stronger smoothing penalty.
+  # 24 runs still fits in 8h with 4 GPUs (sequential_per_job=6).
+  #
+  action_rate:
+    current: []
+    strong:
+      - "env.action_rate_penalty=-0.02"
