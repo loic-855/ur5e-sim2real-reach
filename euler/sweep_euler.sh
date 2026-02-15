@@ -21,14 +21,15 @@
 # --- CONFIGURATION ---
 TASK_NAME="Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
 SEQUENTIAL_PER_JOB=4
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Use SLURM_SUBMIT_DIR (the directory from which sbatch was launched)
+PROJECT_PATH="$SLURM_SUBMIT_DIR"
+PROJECT_NAME=$(basename "$PROJECT_PATH")
+SCRIPT_DIR="$SLURM_SUBMIT_DIR/euler"
 SWEEP_FILE="$SCRIPT_DIR/sweep_runs.txt"
 
 # UPDATE THIS PATH to where you uploaded your .sif file
 SIF_PATH="/cluster/scratch/$USER/isaac_euler_salziegl.sif"
-
-PROJECT_PATH=$(pwd)
-PROJECT_NAME=$(basename "$PROJECT_PATH")
 
 # --- WandB API Key ---
 if [ -f "$HOME/.wandb_key" ]; then
@@ -40,7 +41,10 @@ fi
 
 # --- Validate sweep file ---
 if [ ! -f "$SWEEP_FILE" ]; then
-    echo "Error: $SWEEP_FILE not found. Run: python euler/generate_sweep.py"
+    echo "Error: $SWEEP_FILE not found."
+    echo "  SLURM_SUBMIT_DIR=$SLURM_SUBMIT_DIR"
+    echo "  SWEEP_FILE=$SWEEP_FILE"
+    echo "  Run: python euler/generate_sweep.py"
     exit 1
 fi
 
