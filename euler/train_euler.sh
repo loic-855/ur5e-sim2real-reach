@@ -10,9 +10,9 @@
 #SBATCH --error=logs/train_%j.err
 
 # --- CONFIGURATION ---
-TASK_NAME="Template-Pose-Orientation-No-Gripper-Robot-Direct-v0"
+TASK_NAME="Template-Pose-Orientation-Sim2Real-Direct-v1-ext",
 # UPDATE THIS PATH to where you uploaded your .sif file
-SIF_PATH="/cluster/home/$USER/isaac_euler_salziegl.sif"
+SIF_PATH="/cluster/scratch/$USER/isaac_euler_salziegl.sif"
 
 PROJECT_PATH=$(pwd)
 PROJECT_NAME=$(basename "$PROJECT_PATH")
