@@ -10,7 +10,7 @@
 #SBATCH --error=logs/train_%j.err
 
 # --- CONFIGURATION ---
-TASK_NAME="Template-Pose-Orientation-Sim2Real-Direct-v1-ext",
+TASK_NAME="Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
 # UPDATE THIS PATH to where you uploaded your .sif file
 SIF_PATH="/cluster/scratch/$USER/isaac_euler_salziegl.sif"
 
