@@ -5,14 +5,14 @@
 # Each array task runs SEQUENTIAL_PER_JOB training runs sequentially.
 # Array index selects which chunk of sweep_runs.txt to execute.
 #
-# Usage:  sbatch --array=0-3 euler/sweep_euler.sh
-#    or:  bash euler/launch_sweep.sh       (auto-computes array range)
+# Usage (auto):  bash euler/launch_sweep.sh       (computes array range)
+# Usage (manual): sbatch --array=0-2 euler/sweep_euler.sh     (3 jobs for 12 runs)
 # ============================================================================
 
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=rtx_4090:1
-#SBATCH --time=08:00:00
+#SBATCH --time=07:00:00
 #SBATCH --mem-per-cpu=6000
 #SBATCH --job-name="ur5e_sweep"
 #SBATCH --output=logs/sweep_%A_%a.out
@@ -20,7 +20,7 @@
 
 # --- CONFIGURATION ---
 TASK_NAME="Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
-SEQUENTIAL_PER_JOB=3
+SEQUENTIAL_PER_JOB=4
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SWEEP_FILE="$SCRIPT_DIR/sweep_runs.txt"
 

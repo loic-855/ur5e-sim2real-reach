@@ -99,8 +99,10 @@ def main():
     print(f"  Total runs:       {len(runs)}")
     print(f"  Sequential/job:   {seq_per_job}")
     print(f"  SLURM array jobs: {num_jobs}  (--array=0-{num_jobs - 1})")
-    print(f"  Est. time/run:    ~1h")
-    print(f"  Est. wall-time:   ~{seq_per_job}h per GPU")
+    print(f"  Est. time/run:    ~1h15 (2500 iterations)")
+    print(
+        f"  Est. wall-time:   ~{int(seq_per_job * 1.25 + 1)}h per job  (3 GPUs parallel → ~{int(seq_per_job * 1.25 + 1)}h total)"
+    )
     print()
 
     # --- Dimension breakdown ---

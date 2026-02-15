@@ -5,25 +5,25 @@
 # Each dimension has named presets; values are Hydra override strings.
 #
 # Current grid: 3 actuators × 2 DR × 2 networks = 12 runs
-# With 4 GPUs, sequential_per_job=3: 4 SLURM jobs × 3 runs ≈ 3h total
+# With 2500 iters/run (~1h15 each) + 3 GPUs parallel: 3 SLURM jobs × 4 runs ≈ 5.5h per job
 # ============================================================================
 
 task_name: "Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
 
 # --- SLURM settings ---
 slurm:
-  time: "08:00:00"
+  time: "07:00:00"  # 5.5h compute (4 × 1h15) + 1.5h buffer
   gpus: "rtx_4090:1"
   cpus_per_task: 4
   mem_per_cpu: 6000
 
 # How many training runs to chain sequentially in each SLURM job
-# (each run ≈ 1h, so 3 runs ≈ 3h, fits well within 8h wall-time)
-sequential_per_job: 3
+# (each run ≈ 1h15 with 2500 iters, so 4 runs ≈ 5h, fits within 7h wall-time)
+sequential_per_job: 4
 
 # Overrides applied to EVERY run (on top of the task's defaults)
 base_overrides:
-  - "agent.max_iterations=1500"
+  - "agent.max_iterations=2500"
 
 # ============================================================================
 # Sweep Dimensions
@@ -35,11 +35,11 @@ base_overrides:
 dimensions:
 
   # -------------------------------------------------------------------
-  # Actuator stiffness & damping
+  # Actuator stiffness & damping (affects trembling)
   # -------------------------------------------------------------------
-  # Current:  shoulder(stiffness=200, damping=35), wrist(stiffness=80, damping=15)
-  # High:     shoulder(stiffness=800, damping=60), wrist(stiffness=350, damping=35)
-  # Mid:      averages between current and high
+  # current:  shoulder(stiffness=200, damping=35), wrist(stiffness=80, damping=15)
+  # mid:      shoulder(stiffness=500, damping=48), wrist(stiffness=215, damping=25)
+  # high:     shoulder(stiffness=800, damping=60), wrist(stiffness=350, damping=35)
   actuators:
     current: []
     mid:
@@ -54,10 +54,10 @@ dimensions:
       - "env.robot.actuators.wrist.damping=35"
 
   # -------------------------------------------------------------------
-  # Domain Randomization level
+  # Domain Randomization level (for sim-to-real robustness)
   # -------------------------------------------------------------------
-  # current = defaults from DomainRandomizationCfg
-  # high    = ~2-2.5× more noise/delay/variation
+  # current = defaults (policy tends to overfit to perfect sim)
+  # high    = ~2-2.5× noise/delay/variance (tougher training, more robust policy)
   domain_rand:
     current: []
     high:
