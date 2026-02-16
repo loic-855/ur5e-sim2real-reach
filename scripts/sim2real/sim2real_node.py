@@ -78,7 +78,7 @@ HOME_Q = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
 # Robot base position relative to TABLE CENTRE (table frame origin).
 # actual_TCP_pose from RTDE is in the robot-base frame; we add this offset
 # to convert to the table-centre frame used by the policy / goal publisher.
-ROBOT_BASE_LOCAL = np.array([-0.52, -0.32, 0.0], dtype=np.float32)
+ROBOT_BASE_LOCAL = np.array([-0.52, 0.32, 0.0], dtype=np.float32)
 
 
 # ============================================================================
@@ -267,12 +267,15 @@ class Sim2RealNode(Node):
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         action_scale: float = 7.0,
         robot_host: str = ROBOT_HOST,
+        log_obs: bool = False,
+        log_dir: Optional[str] = None,
     ):
         super().__init__("sim2real_policy_node")
 
         self.robot_prefix = robot_prefix
         self.control_rate = control_rate
         self.dt = 1.0 / control_rate
+        print(f"[DEBUG] self.dt: {self.dt}")
         self.action_scale = action_scale
 
         # State variables (protected by lock)
@@ -295,7 +298,11 @@ class Sim2RealNode(Node):
         # Load policy
         # ==================================================================
         self.get_logger().info(f"Loading policy from: {model_path or 'default'}")
-        self.policy = load_policy(model_path=model_path, device=device)
+        # keep logging flags for later use / for the policy loader
+        self._log_obs = bool(log_obs)
+        self._log_dir = log_dir
+        # pass through logging flags to the policy inference loader
+        self.policy = load_policy(model_path=model_path, device=device, log_obs=self._log_obs, log_dir=self._log_dir)
         self.get_logger().info("Policy loaded successfully!")
 
         # ==================================================================
@@ -502,6 +509,18 @@ def main():
         help="Path to TorchScript policy (.pt file)",
     )
     parser.add_argument(
+        "--log-obs",
+        action="store_true",
+        default=False,
+        help="Enable logging of observations and actions to logs/obs/ (binary + metadata)",
+    )
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default=None,
+        help="Custom output directory for observation logs (default: logs/obs)",
+    )
+    parser.add_argument(
         "--rate",
         type=float,
         default=60.0,
@@ -528,6 +547,17 @@ def main():
     )
     args = parser.parse_args()
 
+    # --- Script flags summary ---
+    # Available flags:
+    #  --robot <gripper|screwdriver>    : robot prefix
+    #  --model <path>                    : TorchScript .pt policy file to load
+    #  --rate <hz>                       : control loop rate (Hz)
+    #  --device <cpu|cuda>               : device for inference
+    #  --action-scale <float>            : action scaling factor
+    #  --robot-ip <ip>                   : RTDE robot IP address
+    #  --log-obs                         : enable observation/action logging (writes logs/obs/*.bin + .json)
+    #  --log-dir <path>                  : custom directory for observation logs
+
     # Initialise ROS2 (needed for goal_pose subscriber)
     rclpy.init()
 
@@ -540,6 +570,8 @@ def main():
             device=args.device,
             action_scale=args.action_scale,
             robot_host=args.robot_ip,
+            log_obs=args.log_obs,
+            log_dir=args.log_dir,
         )
 
         node.start()
