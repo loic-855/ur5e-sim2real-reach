@@ -9,6 +9,7 @@
 
 import argparse
 import sys
+import os
 
 from isaaclab.app import AppLauncher
 
@@ -35,6 +36,12 @@ parser.add_argument(
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
 parser.add_argument("--log-obs", action="store_true", default=False, help="Log observations and actions to binary file.")
+parser.add_argument(
+    "--sweep_file",
+    type=str,
+    default=None,
+    help="Path to sweep file listing hydra overrides for named runs.",
+)
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -51,6 +58,41 @@ if args_cli.task == "Template-Grasping-Single-Robot-Direct-v0" \
     or args_cli.task == "Template-Grasping-Single-Robot-Direct-v1":
     # append the override as a plain string so Hydra will pick it up from sys.argv
     hydra_args.append("env.wooden_block.spawn.rigid_props.disable_gravity=false")
+
+# If a sweep file is provided, parse it and append matching hydra overrides
+# to the hydra args list based on the checkpoint run name.
+if args_cli.sweep_file and getattr(args_cli, "checkpoint", None):
+    try:
+        checkpoint_path = args_cli.checkpoint
+        base = os.path.basename(checkpoint_path)
+        if base.endswith('.pt'):
+            run_dir = os.path.basename(os.path.dirname(checkpoint_path))
+        else:
+            run_dir = base
+
+        with open(args_cli.sweep_file, 'r') as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if '|' not in line:
+                    continue
+                key, overrides = line.split('|', 1)
+                key = key.strip()
+                overrides = overrides.strip()
+                if not key:
+                    continue
+                # simple match: key equals or is contained in run_dir
+                if key == run_dir or key in run_dir:
+                    if overrides:
+                        tokens = overrides.split()
+                        hydra_args.extend(tokens)
+                    print(f"[INFO] Applied overrides from sweep file for run '{key}': {overrides}")
+                    break
+            else:
+                print(f"[WARN] No matching entry for run '{run_dir}' found in sweep file {args_cli.sweep_file}")
+    except Exception as e:
+        print(f"[ERROR] Failed to parse sweep file {args_cli.sweep_file}: {e}")
 
 # clear out sys.argv for Hydra
 sys.argv = [sys.argv[0]] + hydra_args
@@ -130,6 +172,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             return
     elif args_cli.checkpoint:
         resume_path = retrieve_file_path(args_cli.checkpoint)
+        # Require an explicit checkpoint file path; do not resolve directories.
+        if os.path.isdir(resume_path):
+            raise ValueError(
+                f"Provided --checkpoint is a directory ({resume_path}).\n"
+                "Please provide the explicit checkpoint file path, e.g. "
+                "logs/rsl_rl/<run>/model_2499.pt"
+            )
     else:
         resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
