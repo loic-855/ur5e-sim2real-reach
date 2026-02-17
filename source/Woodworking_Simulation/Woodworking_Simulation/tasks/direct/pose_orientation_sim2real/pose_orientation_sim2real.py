@@ -37,7 +37,7 @@ from isaaclab.sensors import (
 from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
-from isaaclab.utils.math import sample_uniform
+from isaaclab.utils.math import sample_uniform, quat_error_magnitude
 
 # Shared project helpers
 from Woodworking_Simulation.common.robot_configs import (
@@ -305,8 +305,10 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
 
         position_error = torch.norm(self.goal_pos_source - ee_pos_source, dim=1)
         position_reward_tanh = 1.0 - torch.tanh(position_error / tanh_scaling)
-        quat_dot = torch.sum(self.goal_quat_source * ee_quat_source, dim=1)
-        orientation_error = 1.0 - torch.abs(quat_dot)
+        
+        # quat_dot = torch.sum(self.goal_quat_source * ee_quat_source, dim=1)
+        # orientation_error = 1.0 - torch.abs(quat_dot)
+        orientation_error = quat_error_magnitude(self.goal_quat_source, ee_quat_source)
         orientation_reward_tanh = 1.0 - torch.tanh(orientation_error / ori_tanh_scaling)
         action_cost = torch.sum(self.actions ** 2, dim=1)
         action_rate_cost = torch.sum((self.actions - self.prev_actions) ** 2, dim=1)

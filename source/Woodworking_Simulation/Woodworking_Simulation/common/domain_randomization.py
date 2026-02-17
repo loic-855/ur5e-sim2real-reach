@@ -176,13 +176,11 @@ class ActionBuffer:
 class ObservationBuffer:
     """Per-environment observation delay buffer with structured Gaussian noise.
 
-    The noise standard-deviations are applied **per-component** according to the
-    observation layout:
+    The noise standard-deviations are applied per-component for the reduced layout:
 
-        [ee_pos(3), ee_quat(4), ee_lin_vel(3), ee_ang_vel(3),
-         joint_pos(N), joint_vel(N), goal_pos(3), goal_quat(4)]
+        [ee_pos(3), ee_quat(4), joint_pos(N), joint_vel(N), goal_pos(3), goal_quat(4)]
 
-    Goal components are **not** corrupted (the agent knows its own goal exactly).
+    Goal components are not corrupted (the agent knows its own goal exactly).
     """
 
     def __init__(
@@ -268,29 +266,26 @@ class ObservationBuffer:
             )
 
     def _build_noise_vector(self) -> torch.Tensor:
-        """Construct a 1-D noise-std tensor aligned with the observation layout.
-
-        Layout (sizes depend on ``num_joints``):
-            ee_pos(3) | ee_quat(4) | ee_lin_vel(3) | ee_ang_vel(3) |
-            joint_pos(J) | joint_vel(J) | goal_pos(3) | goal_quat(4)
-        """
+        """Construct a 1-D noise-std tensor aligned with the reduced observation layout."""
         nj = self.num_joints
         cfg = self.cfg
+
+        expected_dim = 3 + 4 + nj + nj + 3 + 4
+        if self.obs_dim != expected_dim:
+            raise ValueError(
+                f"ObservationBuffer expects reduced layout dim={expected_dim}, got obs_dim={self.obs_dim}. "
+                "Update environment observation_space/layout or this noise builder."
+            )
+
         parts: list[torch.Tensor] = [
-            torch.full((3,), cfg.obs_noise_std_pos, device=self.device),       # ee_pos
-            torch.full((4,), cfg.obs_noise_std_quat, device=self.device),      # ee_quat
-            torch.full((3,), cfg.obs_noise_std_pos, device=self.device),       # ee_lin_vel (same as pos)
-            torch.full((3,), cfg.obs_noise_std_quat, device=self.device),      # ee_ang_vel (same as quat)
-            torch.full((nj,), cfg.obs_noise_std_joint_pos, device=self.device),  # joint_pos
-            torch.full((nj,), cfg.obs_noise_std_joint_vel, device=self.device),  # joint_vel
-            torch.zeros(3, device=self.device),                                # goal_pos  (no noise)
-            torch.zeros(4, device=self.device),                                # goal_quat (no noise)
+            torch.full((3,), cfg.obs_noise_std_pos, device=self.device),           # ee_pos
+            torch.full((4,), cfg.obs_noise_std_quat, device=self.device),          # ee_quat
+            torch.full((nj,), cfg.obs_noise_std_joint_pos, device=self.device),    # joint_pos
+            torch.full((nj,), cfg.obs_noise_std_joint_vel, device=self.device),    # joint_vel
+            torch.zeros(3, device=self.device),                                     # goal_pos (no noise)
+            torch.zeros(4, device=self.device),                                     # goal_quat (no noise)
         ]
-        vec = torch.cat(parts)
-        # Pad or truncate to match obs_dim (safety)
-        if vec.shape[0] < self.obs_dim:
-            vec = torch.cat([vec, torch.zeros(self.obs_dim - vec.shape[0], device=self.device)])
-        return vec[: self.obs_dim]
+        return torch.cat(parts)
 
 
 # ---------------------------------------------------------------------------
