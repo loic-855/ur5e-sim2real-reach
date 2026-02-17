@@ -35,6 +35,10 @@ import logging
 import time
 import socket
 import sys
+import json
+import os
+from datetime import datetime, timezone
+
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Optional
@@ -294,6 +298,11 @@ class Sim2RealNode(Node):
         # Control state
         self.is_running = False
 
+        # Benchmarking
+        self._benchmark = False
+        self._benchmark_samples = []  # list of (timestamp, pos_err, ori_err)
+        self._benchmark_lock = Lock()
+
         # ==================================================================
         # Load policy
         # ==================================================================
@@ -302,7 +311,7 @@ class Sim2RealNode(Node):
         self._log_obs = bool(log_obs)
         self._log_dir = log_dir
         # pass through logging flags to the policy inference loader
-        self.policy = load_policy(model_path=model_path, device=device, log_obs=self._log_obs, log_dir=self._log_dir)
+        self.policy = load_policy(model_path=model_path, device=device)
         self.get_logger().info("Policy loaded successfully!")
 
         # ==================================================================
@@ -347,6 +356,73 @@ class Sim2RealNode(Node):
         self.get_logger().info(f"Sim2Real node initialised at {control_rate} Hz")
         self.get_logger().info(f"Robot prefix: {robot_prefix}")
         self.get_logger().info(f"Action scale: {action_scale} (IsaacSim uses 7.5)")
+
+    # -- Benchmarking helpers ----------------------------------------------
+
+    def _record_benchmark_sample(self, robot_state: RobotState, goal_state: GoalState):
+        """Record one sample of position and orientation error.
+
+        Position error: Euclidean distance (m).
+        Orientation error: angle (radians) computed from quaternion dot.
+        """
+        if robot_state is None or goal_state is None:
+            return
+
+        # Position error
+        pos_err = float(np.linalg.norm(robot_state.ee_position - goal_state.position))
+
+        # Orientation error: q stored as (w, x, y, z)
+        q1 = robot_state.ee_quaternion
+        q2 = goal_state.quaternion
+        dot = float(np.abs(np.dot(q1, q2)))
+        if dot > 1.0:
+            dot = 1.0
+        ori_err = float(2.0 * math.acos(dot))
+
+        with self._benchmark_lock:
+            self._benchmark_samples.append((time.time(), pos_err, ori_err))
+
+    def _save_benchmark_results(self, out_path: str, metadata: dict):
+        """Save benchmark aggregated results (mean over samples) to JSON file."""
+        with self._benchmark_lock:
+            samples = list(self._benchmark_samples)
+
+        if len(samples) == 0:
+            self.get_logger().warn("No benchmark samples collected; nothing to save")
+            return
+
+        pos_errs = [s[1] for s in samples]
+        ori_errs = [s[2] for s in samples]
+
+        results = {
+            "metadata": metadata,
+            "samples_count": len(samples),
+            "mean_position_error_m": float(np.mean(pos_errs)),
+            "median_position_error_m": float(np.median(pos_errs)),
+            "mean_orientation_error_rad": float(np.mean(ori_errs)),
+            "median_orientation_error_rad": float(np.median(ori_errs)),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Global error: simple mean of mean position error and mean orientation error
+        try:
+            mp = results.get("mean_position_error_m", 0.0)
+            mo = results.get("mean_orientation_error_rad", 0.0)
+            results["global_error"] = float((mp + mo) / 2.0)
+        except Exception:
+            results["global_error"] = None
+
+        try:
+            Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(out_path, "w") as f:
+                json.dump(results, f, indent=2)
+            self.get_logger().info(f"Benchmark results saved: {out_path}")
+        except Exception as e:
+            self.get_logger().error(f"Failed to save benchmark results: {e}")
+
+        return results
+
+    # (benchmark summary CSV removed - per-run JSON is used instead)
 
     # -- RTDE state reading -------------------------------------------------
 
@@ -454,6 +530,13 @@ class Sim2RealNode(Node):
         # 3. Build observation
         observation = build_observation(robot_state, goal_state)
 
+        # If benchmarking: record sample (before action application)
+        if self._benchmark:
+            try:
+                self._record_benchmark_sample(robot_state, goal_state)
+            except Exception:
+                pass
+
         # 4. Policy inference
         actions = self.policy.get_action(observation)
 
@@ -468,8 +551,10 @@ class Sim2RealNode(Node):
 
         # DEBUG log at ~2 Hz
         self.get_logger().info(
-            f"EE: ({robot_state.ee_position[0]:.3f}, {robot_state.ee_position[1]:.3f}, {robot_state.ee_position[2]:.3f}) | "
-            f"Goal: ({goal_state.position[0]:.3f}, {goal_state.position[1]:.3f}, {goal_state.position[2]:.3f}) | "
+            f"pos: EE: ({robot_state.ee_position[0]:.3f}, {robot_state.ee_position[1]:.3f}, {robot_state.ee_position[2]:.3f}) | "
+            f"Goal: ({goal_state.position[0]:.3f}, {goal_state.position[1]:.3f}, {goal_state.position[2]:.3f}) | \n"
+            f"quat: EE: ({robot_state.ee_quaternion[0]:.3f}, {robot_state.ee_quaternion[1]:.3f}, {robot_state.ee_quaternion[2]:.3f}, {robot_state.ee_quaternion[3]:.3f}) | "
+            f"Goal: ({goal_state.quaternion[0]:.3f}, {goal_state.quaternion[1]:.3f}, {goal_state.quaternion[2]:.3f}, {goal_state.quaternion[3]:.3f}) | \n"  
             f"Act: ({actions[0]:.2f}, {actions[1]:.2f}, {actions[2]:.2f}, {actions[3]:.2f}, {actions[4]:.2f}, {actions[5]:.2f})",
             throttle_duration_sec=0.5,
         )
@@ -509,18 +594,6 @@ def main():
         help="Path to TorchScript policy (.pt file)",
     )
     parser.add_argument(
-        "--log-obs",
-        action="store_true",
-        default=False,
-        help="Enable logging of observations and actions to logs/obs/ (binary + metadata)",
-    )
-    parser.add_argument(
-        "--log-dir",
-        type=str,
-        default=None,
-        help="Custom output directory for observation logs (default: logs/obs)",
-    )
-    parser.add_argument(
         "--rate",
         type=float,
         default=60.0,
@@ -545,6 +618,13 @@ def main():
         default=ROBOT_HOST,
         help=f"Robot IP address (default {ROBOT_HOST})",
     )
+    parser.add_argument(
+        "--benchmark",
+        action="store_true",
+        default=False,
+        help="Run policy for a fixed duration and record mean position/orientation errors",
+    )
+    # NOTE: benchmark duration and summary output are hardcoded per user request
     args = parser.parse_args()
 
     # --- Script flags summary ---
@@ -555,8 +635,7 @@ def main():
     #  --device <cpu|cuda>               : device for inference
     #  --action-scale <float>            : action scaling factor
     #  --robot-ip <ip>                   : RTDE robot IP address
-    #  --log-obs                         : enable observation/action logging (writes logs/obs/*.bin + .json)
-    #  --log-dir <path>                  : custom directory for observation logs
+
 
     # Initialise ROS2 (needed for goal_pose subscriber)
     rclpy.init()
@@ -570,12 +649,69 @@ def main():
             device=args.device,
             action_scale=args.action_scale,
             robot_host=args.robot_ip,
-            log_obs=args.log_obs,
-            log_dir=args.log_dir,
         )
 
         node.start()
-        rclpy.spin(node)
+        # If benchmarking, start benchmark mode and run a background thread
+        # that will disable benchmarking and save results after the duration.
+        if args.benchmark:
+            # Hardcoded duration and summary output per user request
+            BENCHMARK_DURATION = 90.0
+            node.get_logger().info(f"Starting benchmark for {BENCHMARK_DURATION} seconds (hardcoded)...")
+            node._benchmark = True
+
+            # Determine JSON output path for detailed results
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
+            out_path = str(REPO_ROOT / "logs" / "benchmarks" / f"policy_bench_{ts}.json")
+
+            def _bench_thread():
+                try:
+                    time.sleep(BENCHMARK_DURATION)
+                except Exception:
+                    pass
+
+                # Disable benchmarking and save results
+                node._benchmark = False
+                metadata = {
+                    # full path and name for clarity in JSON
+                    "model": Path(args.model).name if args.model else "default_policy",
+                    "model_path": args.model,
+                    "model_name": Path(args.model).name if args.model else "default_policy",
+                    "robot": args.robot,
+                    "rate_hz": args.rate,
+                    "action_scale": args.action_scale,
+                    "duration_s": BENCHMARK_DURATION,
+                }
+                try:
+                    results = node._save_benchmark_results(out_path, metadata)
+                except Exception as e:
+                    node.get_logger().error(f"Benchmark thread error: {e}")
+                finally:
+                    try:
+                        node.get_logger().info("Benchmark finished; shutting down.")
+                    except Exception:
+                        pass
+                    # Attempt graceful shutdown of ROS and exit process
+                    try:
+                        node.shutdown()
+                    except Exception:
+                        pass
+                    try:
+                        rclpy.shutdown()
+                    except Exception:
+                        pass
+                    try:
+                        os._exit(0)
+                    except Exception:
+                        pass
+
+            t = Thread(target=_bench_thread, daemon=True)
+            t.start()
+
+            # Run normal ROS spinning (timers and callbacks continue uninterrupted)
+            rclpy.spin(node)
+        else:
+            rclpy.spin(node)
 
     except KeyboardInterrupt:
         print("\nShutting down...")

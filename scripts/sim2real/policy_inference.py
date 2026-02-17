@@ -133,9 +133,8 @@ def load_policy(
     if model_path is None:
         # Default path relative to this file
         repo_root = Path(__file__).resolve().parents[2]
-        #model_path = str(repo_root / "logs" / "rsl_rl" / "pose_orientation_sim2real_ext_nn" / "2026-02-13_10-43-10" / "exported" / "policy.pt")
         model_path = str(repo_root/"logs/rsl_rl/2026-02-16_00-59-56_actuators-high_domain_rand-current_network-ext3_action_rate-current/exported/policy.pt")
-        #model_path = str(repo_root/"logs/rsl_rl/pose_orientation_sim2real_ext_nn_125hz/2026-02-13_14-35-41/exported/policy.pt")
+
     return PolicyInference(
         model_path=model_path,
         device=device,
