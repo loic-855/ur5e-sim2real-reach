@@ -5,7 +5,7 @@
 # Grid:   5 position × 6 orientation = 30 runs
 # ============================================================================
 
-task_name: "Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
+task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v1"
 
 # --- SLURM settings ---
 slurm:
