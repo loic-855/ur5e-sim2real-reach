@@ -14,8 +14,8 @@ task_name: "Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
 slurm:
   time: "07:00:00"  # 5.5h compute (4 × 1h15) + 1.5h buffer
   gpus: "rtx_4090:1"
-  cpus_per_task: 4
-  mem_per_cpu: 6000
+  cpus_per_task: 3
+  mem_per_cpu: 4000
 
 # How many training runs to chain sequentially in each SLURM job
 # (each run ≈ 1h15 with 2500 iters, so 4 runs ≈ 5h, fits within 7h wall-time)

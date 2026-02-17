@@ -19,7 +19,7 @@
 #SBATCH --error=logs/sweep_%A_%a.err
 
 # --- CONFIGURATION ---
-TASK_NAME="Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
+TASK_NAME="Template-Pose-Orientation-Sim2Real-Direct-v1-tuesday"
 SEQUENTIAL_PER_JOB=4
 
 # Use SLURM_SUBMIT_DIR (the directory from which sbatch was launched)

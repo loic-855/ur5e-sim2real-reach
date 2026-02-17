@@ -1,0 +1,74 @@
+# ============================================================================
+# Position × Orientation Reward Sweep (Cartesian Product)
+# ============================================================================
+# Grid: 6 position presets × 6 orientation presets = 36 runs
+# Each run ≈ 45 min on RTX 4090
+# sequential_per_job=6 → 6 SLURM jobs (--array=0-5)
+# 6 runs × 45 min ≈ 4h30 per job → wall-time 6h
+# 4 GPUs parallel → ~6h total
+# ============================================================================
+
+task_name: "Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
+
+# --- SLURM settings ---
+slurm:
+  time: "06:30:00"  # 4h30 compute + 2h buffer
+  gpus: "rtx_4090:1"
+  cpus_per_task: 3
+  mem_per_cpu: 4000
+
+# 6 runs per job × 45 min = 4h30
+sequential_per_job: 6
+
+# Overrides applied to EVERY run
+base_overrides:
+  - "agent.max_iterations=2500"
+
+# ============================================================================
+# Sweep Dimensions (Cartesian Product)
+# ============================================================================
+
+dimensions:
+
+  # -------------------------------------------------------------------
+  # EE Position Reward Weighting
+  # -------------------------------------------------------------------
+  # default = use code defaults (penalty=-0.20, reward=0.35)
+  # Progression from conservative (focus position less) to aggressive (strong reward)
+  reward_position:
+    default: []
+    conservative:
+      - "env.ee_position_penalty=-0.15"
+      - "env.ee_position_reward=0.25"
+    moderate:
+      - "env.ee_position_penalty=-0.18"
+      - "env.ee_position_reward=0.30"
+    strong:
+      - "env.ee_position_penalty=-0.25"
+      - "env.ee_position_reward=0.40"
+    aggressive:
+      - "env.ee_position_penalty=-0.30"
+      - "env.ee_position_reward=0.50"
+
+  # -------------------------------------------------------------------
+  # EE Orientation Reward Weighting
+  # -------------------------------------------------------------------
+  # default = use code defaults (penalty=-0.15, reward=0.0)
+  # Progression from conservative (light incentive) to aggressive (orientation priority)
+  reward_orientation:
+    default: []
+    conservative:
+      - "env.ee_orientation_penalty=-0.10"
+      - "env.ee_orientation_reward=0.0"
+    moderate:
+      - "env.ee_orientation_penalty=-0.12"
+      - "env.ee_orientation_reward=0.10"
+    balanced:
+      - "env.ee_orientation_penalty=-0.15"
+      - "env.ee_orientation_reward=0.20"
+    strong:
+      - "env.ee_orientation_penalty=-0.18"
+      - "env.ee_orientation_reward=0.30"
+    aggressive:
+      - "env.ee_orientation_penalty=-0.20"
+      - "env.ee_orientation_reward=0.40"
