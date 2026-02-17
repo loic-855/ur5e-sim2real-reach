@@ -6,6 +6,7 @@ PhysxCfg(
 	max_velocity_iteration_count=255,
 	enable_ccd=False,
 	enable_stabilization=False,
+	enable_external_forces_every_iteration=False,
 	enable_enhanced_determinism=False,
 	bounce_threshold_velocity=0.5,
 	friction_offset_threshold=0.04,
@@ -24,3 +25,4 @@ PhysxCfg(
 	solve_articulation_contact_last=False
 )
 Solver Type: 1
+External Forces: False

@@ -85,7 +85,7 @@ Les wrists sont **sous-critiquement amortis** ($\zeta < 1$), ce qui explique dir
 - Wrist 3 : $K_d = 2\sqrt{80} \approx 17.9$ → utiliser **20**
 
 Ou mieux : augmenter les stiffness aussi pour un tracking plus rapide (ex: 200/150/120/100 avec damping proportionnel).
-
+-> essai en changeant l'amortissement et augmente le max torque des gros joints
 ---
 
 ### 2. Méthode de contrôle — **Delta position + action_scale trop élevé**
@@ -105,7 +105,7 @@ Cela signifie que la policy peut commander **±0.04 rad par step** (soit ~2.3°/
 - **Réduire `action_scale` à 1.5–2.0** pour limiter les deltas par step
 - **Ajouter les actions précédentes dans l'observation** (`self.actions` ou `self.q_des`) — actuellement la policy est "aveugle" à ce qu'elle a commandé au step précédent, ce qui empêche un comportement lisse
 - **Ajouter un smoothing exponentiel** sur `q_des` : `q_des = α * q_des_new + (1-α) * q_des_old` avec $\alpha \approx 0.3$
-
+-> action scale 1.5 + smoothing (1st order filter)
 ---
 
 ### 3. Espace d'observation — **Incomplet pour un contrôle lisse**
@@ -122,6 +122,7 @@ Actuellement 19 dims : `to_target(3) + ori_error(4) + joint_pos(6) + joint_vel(6
 
 Ajouter au minimum **les actions précédentes** (augmenter `observation_space` à 25). C'est quasi-standard pour tout contrôle de robot RL avec actuateurs réalistes.
 
+-> ajouté juste les previous actions, on verra plus tard pour plus
 ---
 
 ### 4. Structure de récompense — **Signaux contradictoires et shaping sous-optimal**
@@ -139,7 +140,9 @@ $$r = 0.5 \cdot (1 - \tanh(\frac{d}{\sigma})) - 0.2 \cdot d - 0.13 \cdot e_{ori}
 **Structure suggérée** :
 $$r = w_1 \cdot (1 - \tanh(\frac{d}{0.25})) + w_2 \cdot (1 - \tanh(\frac{e_{ori}}{0.5})) - w_3 \|a\|^2 - w_4 \|a_t - a_{t-1}\|^2 - w_5 \cdot e_{elbow} + w_6 \cdot \mathbb{1}_{close}$$
 
+-> reward un peu comme le robot franka, pas comme proposé
 ---
+
 
 ### 5. Hyperparamètres PPO — **Exploration insuffisante**
 
