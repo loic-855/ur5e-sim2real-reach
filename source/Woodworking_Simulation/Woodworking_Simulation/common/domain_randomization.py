@@ -33,31 +33,31 @@ class DomainRandomizationCfg:
     """Master switch – when ``False`` every helper is a transparent pass-through."""
 
     # -- Action buffer ---------------------------------------------------------
-    action_delay_range: tuple[int, int] = (0, 3)
+    action_delay_range: tuple[int, int] = (0, 5)
     """Uniform int range [lo, hi] for per-env action delay (in *decimated* steps)."""
-    action_noise_std: float = 0.01
+    action_noise_std: float = 0.025
     """Std-dev of additive Gaussian noise on the (normalised) actions."""
-    packet_loss_prob: float = 0.01
+    packet_loss_prob: float = 0.03
     """Probability that an action packet is dropped (replaced by the previous one)."""
 
     # -- Observation buffer ----------------------------------------------------
-    obs_delay_range: tuple[int, int] = (0, 2)
+    obs_delay_range: tuple[int, int] = (0, 3)
     """Uniform int range [lo, hi] for per-env observation delay (in *decimated* steps)."""
-    obs_noise_std_pos: float = 0.002
+    obs_noise_std_pos: float = 0.005
     """Observation noise on EE position (m)."""
-    obs_noise_std_quat: float = 0.01
+    obs_noise_std_quat: float = 0.025
     """Observation noise on EE orientation quaternion."""
-    obs_noise_std_joint_pos: float = 0.005
+    obs_noise_std_joint_pos: float = 0.012
     """Observation noise on joint positions (rad)."""
-    obs_noise_std_joint_vel: float = 0.01
+    obs_noise_std_joint_vel: float = 0.025
     """Observation noise on joint velocities (rad/s)."""
 
     # -- Actuator randomisation ------------------------------------------------
-    stiffness_scale_range: tuple[float, float] = (0.9, 1.1)
+    stiffness_scale_range: tuple[float, float] = (0.8, 1.2)
     """Multiplicative scale range applied to nominal joint stiffness."""
-    damping_scale_range: tuple[float, float] = (0.9, 1.1)
+    damping_scale_range: tuple[float, float] = (0.8, 1.2)
     """Multiplicative scale range applied to nominal joint damping."""
-    friction_variation: float = 0.2
+    friction_variation: float = 0.35
     """Fractional variation (±) around default per-joint friction coefficients."""
     default_joint_friction: tuple[float, ...] = (8.24, 10.51, 7.9, 1.43, 1.05, 1.63)
     """Nominal static friction for each joint (shoulder_pan → wrist_3)."""

@@ -162,24 +162,16 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 pos=robot_local_pos,
                 rot=robot_local_rot,
             ),
-            # joint_pos={
-            #         "shoulder_pan_joint": -0.38,
-            #         "shoulder_lift_joint": -2.15,
-            #         "elbow_joint": -1.737,
-            #         "wrist_1_joint": -0.742,
-            #         "wrist_2_joint": 1.659,
-            #         "wrist_3_joint": -0.299,
-            #     },
             actuators={
                 "shoulder": ImplicitActuatorCfg(
                     joint_names_expr=["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint"],
-                    stiffness=200, damping=35,
+                    stiffness=800, damping=60,
                     effort_limit_sim=150.0, 
                     velocity_limit_sim=MAX_JOINT_VEL,
                 ),
                 "wrist": ImplicitActuatorCfg(
                     joint_names_expr=["wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
-                    stiffness=80, damping=15,
+                    stiffness=350, damping=35,
                     effort_limit_sim=28.0,
                     velocity_limit_sim=MAX_JOINT_VEL,
                 ),

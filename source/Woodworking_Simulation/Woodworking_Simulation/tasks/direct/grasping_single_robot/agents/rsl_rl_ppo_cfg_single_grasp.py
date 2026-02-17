@@ -13,7 +13,7 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 1500
     save_interval = 50
-    experiment_name = "grasping_single_robot_ppo_small"
+    experiment_name = "grasping_single_robot"
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0, #1.0
         actor_obs_normalization=True,
