@@ -75,7 +75,7 @@ apptainer exec --nv \
         # 2. Run Training
         echo 'Starting Training...'
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
-            --task=$TASK_NAME \
+            --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 agent.experiment_name=actuators-high_domain_rand-high_network-ext4_action_rate-current_v2 \
             --headless
     "
 
