@@ -7,7 +7,7 @@ from pxr import UsdGeom
 
 
 import isaaclab.sim as sim_utils
-from isaaclab.actuators.actuator_cfg import ImplicitActuatorCfg
+from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
 from isaaclab.scene import InteractiveSceneCfg
