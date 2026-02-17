@@ -1,11 +1,8 @@
 # ============================================================================
-# Hyperparameter Sweep Configuration
+# Hyperparameter Sweep: Actuators × DR × Network × Action Rate
 # ============================================================================
-# The sweep is the Cartesian product of all dimensions below.
-# Each dimension has named presets; values are Hydra override strings.
-#
-# Current grid: 3 actuators × 2 DR × 2 networks = 12 runs
-# With 2500 iters/run (~1h15 each) + 3 GPUs parallel: 3 SLURM jobs × 4 runs ≈ 5.5h per job
+# Usage:  python euler/generate_sweep.py --config euler/sweep_config.yaml --submit
+# Grid:   3 actuators × 2 DR × 2 networks × 2 action_rate = 24 runs
 # ============================================================================
 
 task_name: "Template-Pose-Orientation-Sim2Real-Direct-v1-ext"

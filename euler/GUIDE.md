@@ -1,24 +1,22 @@
-
 ---
 
 # Isaac Lab Training on Euler (ETH Zurich)
 
 This guide details how to run **Isaac Lab** training jobs on the ETH Euler cluster using a custom Apptainer (`.sif`) container.
 
-## quick comands:
+## Quick Commands
 
 ```bash
 module load stack/2025-06 gcc/12.2.0 && module load git-lfs/3.5.1 && git pull
-
 ```
 
 ```bash
+# Single training run
 sbatch train_euler.sh
 
+# Sweep: generate + submit
+python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --submit
 ```
-
-
-
 ## 1. Prerequisites
 
 Before starting, ensure you have:
@@ -33,197 +31,160 @@ Before starting, ensure you have:
 
 ### Transfer the SIF to Euler
 
-If your `.sif` file is on your local machine, use `scp` (Secure Copy) to upload it to your home directory on Euler. Run this **from your local terminal**:
+Upload your `.sif` file from your local machine:
 
 ```bash
-# Replace 'local/path/to/file' and 'username'
-scp /path/to/local/isaac_euler_salziegl.sif username@euler.ethz.ch:/cluster/home/username/
-
+scp /path/to/local/isaac_euler_salziegl.sif username@euler.ethz.ch:/cluster/scratch/username/
 ```
 
 ### Configure WandB on Euler
 
-1. Log in to [wandb.ai](https://www.google.com/search?q=https://wandb.ai) and copy your API Key from the settings.
-2. SSH into Euler.
-3. Save the key to a hidden file (replace `YOUR_LONG_API_KEY_HERE` with your actual key):
+1. Log in to [wandb.ai](https://wandb.ai) and copy your API Key from settings.
+2. SSH into Euler and save the key:
 
 ```bash
 echo YOUR_LONG_API_KEY_HERE > ~/.wandb_key
-
-```
-
-4. Secure the file so only you can read it:
-
-```bash
 chmod 600 ~/.wandb_key
-
-```
-
-### Prepare Your Code (SKRL Example)
-
-If you are using **skrl**, you must enable WandB in your agent configuration file (e.g., `skrl_ppo_cfg.yaml`). Add this to the `experiment:` section:
-
-```yaml
-experiment:
-  # ... existing settings ...
-  wandb: True
-  wandb_kwargs:
-    project: "My_Project_Name"  # Your Project Name on WandB
-    entity: "my_team_name"         # Your WandB Username/Team
-    tags: ["euler", "ur5e"]     # (Optional) Tags for filtering
-    monitor_gym: True           # Log video/metrics from the environment
-
-```
-
-> **Note:** Ensure your local code works and connects to WandB before pushing to Euler.
-
----
-
-## 3. The Euler Job Script (`train_euler.sh`)
-
-Add this script to your repository and name it train_euler.sh
-**Important:** make sure the `TASK_NAME` and `SIF_PATH` variables are correct and you use the appropriate amount of compute resource.
-
-```bash
-#!/bin/bash
-
-#SBATCH -n 1
-#SBATCH --cpus-per-task=4
-#SBATCH --gpus=rtx_4090:1
-#SBATCH --time=04:00:00
-#SBATCH --mem-per-cpu=6000
-#SBATCH --job-name="ur5e_train"
-#SBATCH --output=logs/train_%j.out
-#SBATCH --error=logs/train_%j.err
-
-# --- CONFIGURATION ---
-#Your task name to run
-TASK_NAME="Ur5e-Torque-Reach-v0"
-# UPDATE THIS PATH to where you uploaded your .sif file
-SIF_PATH="/cluster/home/$USER/isaac_euler_salziegl.sif"
-
-PROJECT_PATH=$(pwd)
-PROJECT_NAME=$(basename "$PROJECT_PATH")
-
-# WandB API Key
-if [ -f "$HOME/.wandb_key" ]; then
-    export WANDB_API_KEY=$(cat $HOME/.wandb_key)
-else
-    echo "Error: ~/.wandb_key not found!"
-    exit 1
-fi
-
-# --- CACHE SETUP ---
-# Creates writable scratch folders for Isaac Sim caches
-JOB_CACHE="/cluster/scratch/$USER/isaac_cache/$SLURM_JOB_ID"
-
-mkdir -p $JOB_CACHE/kit_cache $JOB_CACHE/kit_data $JOB_CACHE/ov $JOB_CACHE/pip \
-         $JOB_CACHE/glcache $JOB_CACHE/computecache $JOB_CACHE/logs $JOB_CACHE/data \
-         $JOB_CACHE/documents $JOB_CACHE/warp $JOB_CACHE/local_lib \
-         $JOB_CACHE/wandb_cache $JOB_CACHE/wandb_config $JOB_CACHE/wandb_data
-
-# Load Proxy (Required for internet access on compute nodes)
-module load eth_proxy
-
-echo "----------------------------------------------------------------"
-echo "Job ID: $SLURM_JOB_ID"
-echo "Project: $PROJECT_NAME"
-echo "Container: $SIF_PATH"
-echo "----------------------------------------------------------------"
-
-# --- EXECUTION ---
-apptainer exec --nv \
-    -B $JOB_CACHE/kit_cache:/isaac-sim/kit/cache:rw \
-    -B $JOB_CACHE/kit_data:/isaac-sim/kit/data:rw \
-    -B $JOB_CACHE/ov:$HOME/.cache/ov:rw \
-    -B $JOB_CACHE/pip:$HOME/.cache/pip:rw \
-    -B $JOB_CACHE/warp:$HOME/.cache/warp:rw \
-    -B $JOB_CACHE/local_lib:$HOME/.local:rw \
-    -B $JOB_CACHE/glcache:$HOME/.cache/nvidia/GLCache:rw \
-    -B $JOB_CACHE/computecache:$HOME/.nv/ComputeCache:rw \
-    -B $JOB_CACHE/logs:$HOME/.nvidia-omniverse/logs:rw \
-    -B $JOB_CACHE/data:$HOME/.local/share/ov/data:rw \
-    -B $JOB_CACHE/documents:$HOME/Documents:rw \
-    -B $JOB_CACHE/wandb_cache:$HOME/.cache/wandb:rw \
-    -B $JOB_CACHE/wandb_config:$HOME/.config/wandb:rw \
-    -B $JOB_CACHE/wandb_data:$PROJECT_PATH/wandb:rw \
-    -B $PROJECT_PATH:/workspace/isaaclab/$PROJECT_NAME:rw \
-    --env WANDB_API_KEY=$WANDB_API_KEY \
-    --env WANDB_DIR=$PROJECT_PATH \
-    --env WANDB_CACHE_DIR=$HOME/.cache/wandb \
-    --env WANDB_CONFIG_DIR=$HOME/.config/wandb \
-    $SIF_PATH \
-    bash -c "
-        # 1. Install Project in Editable Mode
-        echo 'Installing Project...'
-        /isaac-sim/python.sh -m pip install --user -e /workspace/isaaclab/$PROJECT_NAME/source/$PROJECT_NAME
-
-        # 2. Run Training
-        echo 'Starting Training...'
-        /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/skrl/train.py \
-            --task=$TASK_NAME \
-            --headless
-    "
-
-# Cleanup Cache
-rm -rf $JOB_CACHE
-
 ```
 
 ---
 
-## 4. Workflow: Running a Job
+## 3. Single Training Run (`train_euler.sh`)
 
-1. **Push your code:** Make sure your local changes are pushed to GitHub.
-2. **SSH into Euler:**
+For running a single training job with fixed parameters.
+
+**Important:** Update `TASK_NAME` and `SIF_PATH` in the script before running.
+
 ```bash
+# 1. SSH into Euler and pull latest code
 ssh username@euler.ethz.ch
-
-```
-
-
-3. **Navigate to your repo and update:**
-```bash
-cd your_project_name
-
-```
-
-```bash
+cd Woodworking_Simulation
 module load stack/2025-06 gcc/12.2.0 && module load git-lfs/3.5.1 && git pull
 
-```
-
-
-*(Note: Ensure your GitHub repository name matches the folder name in `/source/Project_Name`, or update the paths in the script).*
-4. **Start the training:**
-```bash
+# 2. Submit
 sbatch train_euler.sh
-
 ```
-
-
 
 ### Monitoring
 
-* **Check status:** `squeue` (Shows running/pending jobs)
+* **Check status:** `squeue -u $USER`
 * **Cancel job:** `scancel JOB_ID`
-* **View Logs:** Check the `logs/` folder inside your repo (e.g., `cat logs/train_12345.out`).
+* **View Logs:** `cat logs/train_<JOB_ID>.out`
 * **View Progress:** Go to your WandB Dashboard
+
+---
+
+## 4. Hyperparameter Sweep
+
+The sweep system runs many training configurations in parallel on the cluster.
+
+### Files
+
+| File | Role |
+|------|------|
+| `euler/sweep_*.yaml` | Sweep config: task name, SLURM settings, dimensions, presets |
+| `euler/generate_sweep.py` | Generates `sweep_runs.txt` from YAML, optionally submits to SLURM |
+| `euler/sweep_euler.sh` | SLURM job script (reads config from `sweep_runs.txt` metadata) |
+| `euler/sweep_runs.txt` | Generated output: metadata header + one line per run |
+
+### 4.1 Sweep Config (YAML)
+
+Create a YAML file in `euler/` defining your sweep. Example:
+
+```yaml
+task_name: "Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
+
+slurm:
+  time: "06:30:00"
+  gpus: "rtx_4090:1"
+  cpus_per_task: 3
+  mem_per_cpu: 4000
+
+sequential_per_job: 6    # runs chained per SLURM job
+
+base_overrides:
+  - "agent.max_iterations=2500"
+
+dimensions:
+  reward_position:
+    default: []           # use code defaults
+    moderate:
+      - "env.ee_position_penalty=-0.18"
+      - "env.ee_position_reward=0.30"
+  reward_orientation:
+    default: []
+    strong:
+      - "env.ee_orientation_penalty=-0.18"
+      - "env.ee_orientation_reward=0.30"
+```
+
+Key fields:
+- **`task_name`**: Registered Isaac Lab task to train
+- **`slurm`**: Resource settings (override `#SBATCH` defaults in `sweep_euler.sh`)
+- **`sequential_per_job`**: How many runs to chain in one SLURM job
+- **`base_overrides`**: Hydra overrides applied to every run
+- **`dimensions`**: Each dimension has named presets. The sweep is the **Cartesian product** of all dimensions. Use `[]` for "use defaults".
+
+Existing configs:
+- `sweep_config.yaml` — actuators × DR × network × action_rate
+- `sweep_reward_weight.yaml` — orientation reward only (5 presets)
+- `sweep_position_orientation.yaml` — position × orientation reward grid
+
+### 4.2 Workflow
+
+```bash
+# 1. SSH into Euler and pull latest code
+ssh username@euler.ethz.ch
+cd Woodworking_Simulation
+module load stack/2025-06 gcc/12.2.0 && module load git-lfs/3.5.1 && git pull
+
+# 2. Preview the sweep (no files written, no jobs submitted)
+python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --dry-run
+
+# 3. Generate sweep_runs.txt AND submit to SLURM
+python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --submit
+
+# 4. Monitor
+squeue -u $USER
+cat logs/sweep_<JOB_ID>_<ARRAY_ID>.out
+```
+
+### 4.3 How It Works
+
+1. `generate_sweep.py` computes the Cartesian product of all dimension presets
+2. Writes `sweep_runs.txt` with a metadata header and one line per run:
+   ```
+   # META task_name=Template-Pose-Orientation-Sim2Real-Direct-v1-ext
+   # META sequential_per_job=6
+   # META total_runs=36
+   run_name_1|hydra_override_1 hydra_override_2
+   run_name_2|hydra_override_1 hydra_override_2
+   ```
+3. Submits `sweep_euler.sh` as a SLURM array job (`sbatch --array=0-N --time=... --gpus=...`)
+4. Each array task reads its chunk of runs from `sweep_runs.txt` and executes them sequentially
+5. SLURM settings from the YAML override the `#SBATCH` defaults via command-line flags
+
+### 4.4 Tips
+
+- Use `--dry-run` first to verify the sweep grid
+- Failed runs are logged but don't stop the remaining runs in the job
+- Run names are auto-generated from preset names (e.g. `reward_position-moderate_reward_orientation-strong`)
+- `SIF_PATH` in `sweep_euler.sh` must point to your `.sif` container
+- Generate without submitting (omit `--submit`) to inspect `sweep_runs.txt` first
 
 ---
 
 ## 5. Moving Checkpoints (Euler -> Local)
 
-When training is finished, your checkpoints (and logs) will be in your repository folder on Euler in `logs/skrl`.
+When training is finished, your checkpoints are in `logs/rsl_rl/` on Euler.
 
-
-
-1. **Download:**
 ```bash
-# Downloads the whole 'runs' folder to your current local directory
-scp -r username@euler.ethz.ch:~/your_project_name/logs/skrl .
+# Download a specific run
+scp -r username@euler.ethz.ch:~/Woodworking_Simulation/logs/rsl_rl/<experiment>/<timestamp> .
 
+# Download all logs
+scp -r username@euler.ethz.ch:~/Woodworking_Simulation/logs/rsl_rl .
 ```
 
-you can still look at the logs with tensorboard locally, if the WandB synchronisation didn't work.
-and make sure to delete the checkpoints on euler from time to time to avoid running out of space!
+You can view logs with TensorBoard locally if WandB sync didn't work.
+Delete old checkpoints on Euler regularly to avoid running out of space.

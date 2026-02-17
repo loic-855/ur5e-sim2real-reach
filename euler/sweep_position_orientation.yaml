@@ -1,11 +1,8 @@
 # ============================================================================
-# Position × Orientation Reward Sweep (Cartesian Product)
+# Hyperparameter Sweep: Position × Orientation Reward Weights
 # ============================================================================
-# Grid: 6 position presets × 6 orientation presets = 36 runs
-# Each run ≈ 45 min on RTX 4090
-# sequential_per_job=6 → 6 SLURM jobs (--array=0-5)
-# 6 runs × 45 min ≈ 4h30 per job → wall-time 6h
-# 4 GPUs parallel → ~6h total
+# Usage:  python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --submit
+# Grid:   5 position × 6 orientation = 30 runs
 # ============================================================================
 
 task_name: "Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
