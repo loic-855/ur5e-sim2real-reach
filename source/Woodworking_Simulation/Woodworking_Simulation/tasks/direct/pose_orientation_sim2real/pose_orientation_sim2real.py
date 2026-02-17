@@ -78,7 +78,9 @@ class PoseOrientationSim2RealCfg(DirectRLEnvCfg):
 
     # spaces  (no EE velocities → 26 obs instead of 32)
     action_space = 6
-    observation_space = 26  # ee_pos(3) + ee_quat(4) + jpos(6) + jvel(6) + goal_pos(3) + goal_quat(4)
+    observation_space = (
+        26  # ee_pos(3) + ee_quat(4) + jpos(6) + jvel(6) + goal_pos(3) + goal_quat(4)
+    )
     state_space = 0
 
     # simulation
@@ -159,7 +161,9 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
 
     cfg: PoseOrientationSim2RealCfg
 
-    def __init__(self, cfg: PoseOrientationSim2RealCfg, render_mode: str | None = None, **kwargs):
+    def __init__(
+        self, cfg: PoseOrientationSim2RealCfg, render_mode: str | None = None, **kwargs
+    ):
         super().__init__(cfg, render_mode, **kwargs)
 
         self.dt = self.cfg.sim.dt * self.cfg.decimation
@@ -172,11 +176,17 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
 
         # frame transformer
         self._frame_transformer = self.scene.sensors["frame_transformer"]
-        self._ee_frame_idx = self._frame_transformer.data.target_frame_names.index("ee_tcp")
+        self._ee_frame_idx = self._frame_transformer.data.target_frame_names.index(
+            "ee_tcp"
+        )
 
         # joint limits & speed scales
-        self.robot_dof_lower_limits = self._robot.data.soft_joint_pos_limits[0, :, 0].to(device=self.device)
-        self.robot_dof_upper_limits = self._robot.data.soft_joint_pos_limits[0, :, 1].to(device=self.device)
+        self.robot_dof_lower_limits = self._robot.data.soft_joint_pos_limits[
+            0, :, 0
+        ].to(device=self.device)
+        self.robot_dof_upper_limits = self._robot.data.soft_joint_pos_limits[
+            0, :, 1
+        ].to(device=self.device)
         self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)
 
         for i, name in enumerate(self._robot.joint_names):
@@ -189,11 +199,19 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
 
         # goal tensors (source frame = table-relative)
         self.robot_base_local = torch.tensor([-0.52, 0.32, 0.0], device=self.device)
-        self.goal_pos_source = torch.zeros((self._num_envs, 3), device=self.device, dtype=torch.float32)
-        self.goal_quat_source = torch.zeros((self._num_envs, 4), device=self.device, dtype=torch.float32)
+        self.goal_pos_source = torch.zeros(
+            (self._num_envs, 3), device=self.device, dtype=torch.float32
+        )
+        self.goal_quat_source = torch.zeros(
+            (self._num_envs, 4), device=self.device, dtype=torch.float32
+        )
 
         # action buffers
-        self.actions = torch.zeros((self._num_envs, self.cfg.action_space), device=self.device, dtype=torch.float32)
+        self.actions = torch.zeros(
+            (self._num_envs, self.cfg.action_space),
+            device=self.device,
+            dtype=torch.float32,
+        )
         self.prev_actions = torch.zeros_like(self.actions)
 
         # visualisation markers (only used when debug_visualization is True)
@@ -276,17 +294,19 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
 
         obs = torch.cat(
             [
-                ee_pos_source,       # 3
-                ee_quat_source,      # 4
-                joint_pos,           # 6
-                joint_vel,           # 6
-                self.goal_pos_source,   # 3
+                ee_pos_source,  # 3
+                ee_quat_source,  # 4
+                joint_pos,  # 6
+                joint_vel,  # 6
+                self.goal_pos_source,  # 3
                 self.goal_quat_source,  # 4
             ],
             dim=1,
         )
-        if self.cfg.debug and self.common_step_counter % 1000 == 0:   
-            print(f"Observations: ee_pos_source={ee_pos_source[0].cpu().numpy()}, ee_quat_source={ee_quat_source[0].cpu().numpy()}, ")
+        if self.cfg.debug and self.common_step_counter % 1000 == 0:
+            print(
+                f"Observations: ee_pos_source={ee_pos_source[0].cpu().numpy()}, ee_quat_source={ee_quat_source[0].cpu().numpy()}, "
+            )
         return {"policy": obs}
 
     # -- Rewards ------------------------------------------------------------
@@ -297,7 +317,7 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
             ori_tanh_scaling = self.cfg.ori_tanh_scaling[1]
         else:
             tanh_scaling = self.cfg.tanh_scaling[0]
-            ori_tanh_scaling = self.cfg.ori_tanh_scaling[0] 
+            ori_tanh_scaling = self.cfg.ori_tanh_scaling[0]
 
         frame_data = self._frame_transformer.data
         ee_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
@@ -305,16 +325,16 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
 
         position_error = torch.norm(self.goal_pos_source - ee_pos_source, dim=1)
         position_reward_tanh = 1.0 - torch.tanh(position_error / tanh_scaling)
-        
-        # quat_dot = torch.sum(self.goal_quat_source * ee_quat_source, dim=1)
-        # orientation_error = 1.0 - torch.abs(quat_dot)
-        orientation_error = quat_error_magnitude(self.goal_quat_source, ee_quat_source)
+
+        quat_dot = torch.sum(self.goal_quat_source * ee_quat_source, dim=1)
+        orientation_error = 1.0 - torch.abs(quat_dot)
+        # orientation_error = quat_error_magnitude(self.goal_quat_source, ee_quat_source)
         orientation_reward_tanh = 1.0 - torch.tanh(orientation_error / ori_tanh_scaling)
-        action_cost = torch.sum(self.actions ** 2, dim=1)
+        action_cost = torch.sum(self.actions**2, dim=1)
         action_rate_cost = torch.sum((self.actions - self.prev_actions) ** 2, dim=1)
 
-        close_pos = (position_error < 0.10).float()   # < 10cm
-        close_ori = (orientation_error < 0.15).float() # quat error < 0.15
+        close_pos = (position_error < 0.10).float()  # < 10cm
+        close_ori = (orientation_error < 0.15).float()  # quat error < 0.15
         alignment_bonus = self.cfg.alignement_bonus_scale * close_pos * close_ori
 
         # EE marker visualisation (debug only)
@@ -326,7 +346,7 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
 
         reward = (
             self.cfg.ee_position_penalty * position_error
-            + self.cfg.ee_position_reward * position_reward_tanh 
+            + self.cfg.ee_position_reward * position_reward_tanh
             + self.cfg.ee_orientation_penalty * orientation_error
             + self.cfg.ee_orientation_reward * orientation_reward_tanh
             + self.cfg.action_penalty * action_cost
@@ -339,11 +359,15 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
         self.extras["log"].update(
             {
                 "action_penalty": (self.cfg.action_penalty * action_cost).mean(),
-                "action_rate_penalty": (self.cfg.action_rate_penalty * action_rate_cost).mean(),
+                "action_rate_penalty": (
+                    self.cfg.action_rate_penalty * action_rate_cost
+                ).mean(),
                 "alignment_bonus": alignment_bonus.mean(),
                 "step_counter": self.common_step_counter,
                 "ori_error": orientation_error.mean(),
-                "ori_reward": (self.cfg.ee_orientation_penalty * orientation_error).mean(),
+                "ori_reward": (
+                    self.cfg.ee_orientation_penalty * orientation_error
+                ).mean(),
                 "pos_error": position_error.mean(),
                 "pos_reward": (self.cfg.ee_position_penalty * position_error).mean(),
                 "rewards_mean": reward.mean(),
@@ -383,7 +407,9 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
 
         # debug markers
         if self.cfg.debug:
-            marker_idx = torch.zeros(len(env_ids), dtype=torch.int64, device=self.device)
+            marker_idx = torch.zeros(
+                len(env_ids), dtype=torch.int64, device=self.device
+            )
             self.goal_marker.visualize(
                 self.goal_pos_source[env_ids] + self.env_origins[env_ids],
                 self.goal_quat_source[env_ids],
@@ -401,12 +427,18 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
         else:
             env_ids = env_ids.to(device=self.device, dtype=torch.long)
 
-        angle = torch.empty(len(env_ids), device=self.device).uniform_(-torch.pi, torch.pi)
+        angle = torch.empty(len(env_ids), device=self.device).uniform_(
+            -torch.pi, torch.pi
+        )
         radius = torch.empty(len(env_ids), device=self.device).uniform_(0.3, 0.75)
         height = torch.empty(len(env_ids), device=self.device).uniform_(0.1, 0.6)
 
-        self.goal_pos_source[env_ids, 0] = self.robot_base_local[0] + radius * torch.cos(angle)
-        self.goal_pos_source[env_ids, 1] = self.robot_base_local[1] + radius * torch.sin(angle)
+        self.goal_pos_source[env_ids, 0] = self.robot_base_local[
+            0
+        ] + radius * torch.cos(angle)
+        self.goal_pos_source[env_ids, 1] = self.robot_base_local[
+            1
+        ] + radius * torch.sin(angle)
         self.goal_pos_source[env_ids, 2] = height
 
         delta_quat = torch.randn(len(env_ids), 4, device=self.device)
@@ -419,11 +451,15 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
         """Visualise the FrameTransformer source-frame offset in world coordinates."""
         try:
             base_idx = self._robot.body_names.index("base_link")
-            src_off = torch.tensor(
-                self.cfg.frame_transformer.source_frame_offset.pos,
-                device=self.device,
-                dtype=torch.float32,
-            ).unsqueeze(0).expand(len(env_ids), -1)
+            src_off = (
+                torch.tensor(
+                    self.cfg.frame_transformer.source_frame_offset.pos,
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+                .unsqueeze(0)
+                .expand(len(env_ids), -1)
+            )
             src_rot = torch.tensor(
                 self.cfg.frame_transformer.source_frame_offset.rot,
                 device=self.device,
@@ -478,7 +514,12 @@ class PoseOrientationSim2RealV1(PoseOrientationSim2RealV0):
 
     cfg: PoseOrientationSim2RealV1Cfg
 
-    def __init__(self, cfg: PoseOrientationSim2RealV1Cfg, render_mode: str | None = None, **kwargs):
+    def __init__(
+        self,
+        cfg: PoseOrientationSim2RealV1Cfg,
+        render_mode: str | None = None,
+        **kwargs,
+    ):
         super().__init__(cfg, render_mode, **kwargs)
         self._debug_step_count = 0
 
@@ -592,10 +633,16 @@ class PoseOrientationSim2RealV1(PoseOrientationSim2RealV0):
         magnitudes = torch.norm(forces, dim=2)
         max_per_env, max_body_idx = magnitudes.max(dim=1)
 
-        if self.cfg.contact_debug_interval > 0 and self._debug_step_count % self.cfg.contact_debug_interval == 0:
+        if (
+            self.cfg.contact_debug_interval > 0
+            and self._debug_step_count % self.cfg.contact_debug_interval == 0
+        ):
             body_names = self._contact_sensor.body_names
             env0_mags = magnitudes[0]
-            parts = [f"{name}: {env0_mags[i].item():.2f}N" for i, name in enumerate(body_names)]
+            parts = [
+                f"{name}: {env0_mags[i].item():.2f}N"
+                for i, name in enumerate(body_names)
+            ]
             top_body = body_names[max_body_idx[0].item()] if body_names else "?"
             print(
                 f"[ContactDebug step={self._debug_step_count}] "
