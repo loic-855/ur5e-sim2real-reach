@@ -12,7 +12,7 @@ from . import agents
 ##
 
 gym.register(
-    id="Template-Grasping-Single-Robot-Direct-v0",
+    id="WWSim-Grasping-Single-Robot-Direct-v0",
     entry_point=f"{__name__}.grasping_single_robot:GraspingSingleRobotV0",
     disable_env_checker=True,
     kwargs={
@@ -22,7 +22,7 @@ gym.register(
 )
 
 gym.register(
-    id="Template-Grasping-Single-Robot-Direct-v1",
+    id="WWSim-Grasping-Single-Robot-Direct-v1",
     entry_point=f"{__name__}.grasping_single_robot:GraspingSingleRobotV1",
     disable_env_checker=True,
     kwargs={

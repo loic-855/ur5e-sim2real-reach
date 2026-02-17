@@ -13,7 +13,7 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24 # Increased from 16 to allow longer horizon per rollout
     max_iterations = 1500
     save_interval = 50
-    experiment_name = "woodworking_pose_orientation_ppo"
+    experiment_name = "pose_orientation_two_robots"
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=True,

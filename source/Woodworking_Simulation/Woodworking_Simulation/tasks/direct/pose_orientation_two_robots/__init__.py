@@ -12,7 +12,7 @@ from . import agents
 ##
 
 gym.register(
-    id="Template-Pose-Orientation-Two-Robots-Direct-v0",
+    id="WWSim-Pose-Orientation-Two-Robots-v0",
     entry_point=f"{__name__}.pose_orientation_two_robots:PoseOrientationTwoRobotsV0",
     disable_env_checker=True,
     kwargs={
