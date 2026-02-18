@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generate sweep_runs.txt from a YAML sweep config and optionally submit to SLURM.
+"""Generate a sweep run file from a YAML sweep config and optionally submit to SLURM.
 
-Output file (sweep_runs.txt) contains a metadata header followed by run lines:
+Output file contains a metadata header followed by run lines:
     # META task_name=...
     # META sequential_per_job=...
     run_name|hydra_override_1 hydra_override_2 ...
@@ -71,13 +71,13 @@ def write_sweep_file(
     sequential_per_job_list: list[int],
     slurm_time: str,
 ) -> None:
-    """Write sweep_runs.txt with metadata header."""
+    """Write sweep run file with metadata header."""
     task_name = cfg["task_name"]
-    seq_per_job = sequential_per_job_list[0] if sequential_per_job_list else cfg.get("sequential_per_job", 3)
+    seq_per_job = sequential_per_job_list[0]
 
     with open(output_path, "w", newline="\n") as f:
         f.write(f"# META task_name={task_name}\n")
-        # write both scalar (first) and full list for compatibility
+        # keep scalar (first) and full list metadata
         f.write(f"# META sequential_per_job={seq_per_job}\n")
         f.write(f"# META sequential_per_job_list={','.join(str(x) for x in sequential_per_job_list)}\n")
         f.write(f"# META slurm_time={slurm_time}\n")
@@ -88,7 +88,7 @@ def write_sweep_file(
             f.write(f"{run_name}|{overrides}\n")
 
 
-def submit_sweep(cfg: dict, num_jobs: int, script_dir: Path, time_override: str | None = None) -> None:
+def submit_sweep(cfg: dict, num_jobs: int, script_dir: Path, time_override: str, sweep_file: str) -> None:
     """Submit sweep_euler.sh via sbatch with SLURM settings from the YAML."""
     slurm = cfg.get("slurm", {})
     sweep_script = script_dir / "sweep_euler.sh"
@@ -100,13 +100,8 @@ def submit_sweep(cfg: dict, num_jobs: int, script_dir: Path, time_override: str 
     array_spec = f"0-{num_jobs - 1}" if num_jobs > 1 else "0"
 
     cmd = ["sbatch", f"--array={array_spec}"]
-    # prefer explicit time_override (computed max); fall back to provided slurm.time or slurm.time_per_task
-    if time_override:
-        cmd.append(f"--time={time_override}")
-    elif "time" in slurm:
-        cmd.append(f"--time={slurm['time']}")
-    elif "time_per_task" in slurm:
-        cmd.append(f"--time={slurm['time_per_task']}")
+    cmd.append(f"--export=SWEEP_FILE={sweep_file}")
+    cmd.append(f"--time={time_override}")
     if "gpus" in slurm:
         cmd.append(f"--gpus={slurm['gpus']}")
     if "cpus_per_task" in slurm:
@@ -154,13 +149,27 @@ def main():
 
     task_name = cfg["task_name"]
     # --- Determine per-node sequential distribution ---
-    slurm = cfg.get("slurm", {})
+    if "slurm" not in cfg:
+        print("Error: Missing required 'slurm' section in YAML.")
+        sys.exit(1)
+    slurm = cfg["slurm"]
     total_runs = len(runs)
-    nodes = int(slurm.get("nodes", 1) or 1)
+    if "nodes" not in slurm:
+        print("Error: Missing required 'slurm.nodes' in YAML.")
+        sys.exit(1)
+    try:
+        nodes = int(slurm["nodes"])
+    except Exception:
+        print("Error: 'slurm.nodes' must be an integer.")
+        sys.exit(1)
     if nodes <= 0:
-        nodes = 1
-    # ensure we don't create more nodes than total runs
-    nodes = min(nodes, total_runs) if total_runs > 0 else 1
+        print("Error: 'slurm.nodes' must be >= 1.")
+        sys.exit(1)
+    if total_runs <= 0:
+        print("Error: Sweep produced zero runs.")
+        sys.exit(1)
+    # do not create more jobs than runs
+    nodes = min(nodes, total_runs)
 
     base = total_runs // nodes
     rem = total_runs % nodes
@@ -173,31 +182,18 @@ def main():
     num_jobs = nodes
 
     # --- Compute per-job times from per-run request (strict) ---
-    # Require either `slurm.time_per_task` (HH:MM:SS) or `slurm.time_per_run_minutes` (numeric minutes).
-    per_run_minutes = None
-    if "time_per_task" in slurm:
-        s = str(slurm["time_per_task"]).strip()
-        parts = s.split(":")
-        try:
-            if len(parts) == 3:
-                h, m, sec = (int(p) for p in parts)
-                per_run_minutes = h * 60 + m + sec / 60.0
-            elif len(parts) == 2:
-                m, sec = (int(p) for p in parts)
-                per_run_minutes = m + sec / 60.0
-            else:
-                raise ValueError("invalid time format")
-        except Exception:
-            print("Error: 'slurm.time_per_task' must be in HH:MM:SS or MM:SS format.")
-            sys.exit(1)
-    elif "time_per_run_minutes" in slurm:
-        try:
-            per_run_minutes = float(slurm["time_per_run_minutes"])
-        except Exception:
-            print("Error: 'slurm.time_per_run_minutes' must be a number (minutes).")
-            sys.exit(1)
-    else:
-        print("Error: Define either 'slurm.time_per_task' (HH:MM:SS) or 'slurm.time_per_run_minutes' in the YAML.")
+    if "time_per_task" not in slurm:
+        print("Error: Missing required 'slurm.time_per_task' in YAML (HH:MM:SS per run).")
+        sys.exit(1)
+    s = str(slurm["time_per_task"]).strip()
+    parts = s.split(":")
+    try:
+        if len(parts) != 3:
+            raise ValueError("invalid time format")
+        h, m, sec = (int(p) for p in parts)
+        per_run_minutes = h * 60 + m + sec / 60.0
+    except Exception:
+        print("Error: 'slurm.time_per_task' must be in HH:MM:SS format.")
         sys.exit(1)
 
     # Add 15 minute safety per run and multiply by sequential count
@@ -221,8 +217,6 @@ def main():
     print(f"  Sequential/job list: {sequential_per_job_list}")
     print(f"  SLURM array jobs (nodes): {num_jobs}  (--array=0-{num_jobs - 1})")
     print(f"  Computed SLURM time (max per-job): {slurm_time}")
-    if "time" in slurm:
-        print(f"  Wall-time/job (explicit in YAML):    {slurm['time']}")
     if "gpus" in slurm:
         print(f"  GPU:              {slurm['gpus']}")
     print()
@@ -250,9 +244,7 @@ def main():
                 pos_in_job = i - cum_starts[j]
                 break
         else:
-            # fallback (shouldn't happen)
-            job_id = i // sequential_per_job_list[0] if sequential_per_job_list else 0
-            pos_in_job = i % (sequential_per_job_list[0] if sequential_per_job_list else 1)
+            raise RuntimeError("Failed to map run index to job index.")
 
         print(f"    [{i:2d}] (job {job_id}, run {pos_in_job}) {run_name}")
         if overrides.strip():
@@ -269,7 +261,7 @@ def main():
         print("=" * 64)
         return
 
-    output_path = config_path.parent / f"sweep_runs_{config_path.name}.txt"
+    output_path = config_path.parent / f"sweep_runs_{config_path.stem}.txt"
     write_sweep_file(output_path, runs, cfg, config_path.name, sequential_per_job_list, slurm_time)
     print(f"  Written: {output_path}")
 
@@ -277,7 +269,7 @@ def main():
     if args.submit:
         print()
         print("  Submitting to SLURM...")
-        submit_sweep(cfg, num_jobs, config_path.parent, time_override=slurm_time)
+        submit_sweep(cfg, num_jobs, config_path.parent, time_override=slurm_time, sweep_file=str(output_path))
     else:
         print(
             f"  To submit:  python euler/generate_sweep.py --config {config_path} --submit"

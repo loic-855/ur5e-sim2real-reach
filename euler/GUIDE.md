@@ -6,8 +6,8 @@ This guide details how to run **Isaac Lab** training jobs on the ETH Euler clust
 ## Quick Commands
 
 ```bash
-# Load python in your session, git lfs
-module load git-lfs/3.5.1 && module load stack/2024-06 python/3.12.8
+# Load python in your session
+module load stack/2024-06 python/3.12.8
 ```
 
 ```bash
@@ -74,7 +74,7 @@ For running a single training job with fixed parameters.
 # 1. SSH into Euler and pull latest code
 ssh username@euler.ethz.ch
 cd Woodworking_Simulation
-module load stack/2025-06 gcc/12.2.0 && module load git-lfs/3.5.1 && git pull
+git pull
 
 # 2. Submit
 sbatch train_euler.sh
@@ -98,9 +98,9 @@ The sweep system runs many training configurations in parallel on the cluster.
 | File | Role |
 |------|------|
 | `euler/sweep_*.yaml` | Sweep config: task name, SLURM settings, dimensions, presets |
-| `euler/generate_sweep.py` | Generates `sweep_runs.txt` from YAML, optionally submits to SLURM |
-| `euler/sweep_euler.sh` | SLURM job script (reads config from `sweep_runs.txt` metadata) |
-| `euler/sweep_runs.txt` | Generated output: metadata header + one line per run |
+| `euler/generate_sweep.py` | Generates `sweep_runs_<config_stem>.txt` from YAML, optionally submits to SLURM |
+| `euler/sweep_euler.sh` | SLURM job script (reads config from `SWEEP_FILE` metadata) |
+| `euler/sweep_runs_<config_stem>.txt` | Generated output: metadata header + one line per run |
 
 ### 4.1 Sweep Config (YAML)
 
@@ -154,16 +154,17 @@ Existing configs:
 # 1. SSH into Euler and pull latest code
 ssh username@euler.ethz.ch
 cd Woodworking_Simulation
-module load stack/2025-06 gcc/12.2.0 && module load git-lfs/3.5.1 && git pull
+module load stack/2024-06 python/3.12.8
+git pull
 
 # 2. Preview the sweep (no files written, no jobs submitted)
 python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --dry-run
 
-# 3. Generate sweep_runs.txt AND submit to SLURM
+# 3. Generate sweep file AND submit to SLURM
 #    The generator computes per-node sequential counts from `slurm.nodes`,
 #    computes per-job walltime from `slurm.time_per_task` (adds 15min safety
 #    per run), writes `sequential_per_job_list` and `slurm_time` to
-#    `sweep_runs.txt`, and submits with `--time` set to the computed max.
+#    `sweep_runs_<config_stem>.txt`, and submits with `--time` set to the computed max.
 python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --submit
 
 # 4. Monitor
@@ -174,7 +175,7 @@ cat logs/sweep_<JOB_ID>_<ARRAY_ID>.out
 ### 4.3 How It Works
 
 1. `generate_sweep.py` computes the Cartesian product of all dimension presets
-2. Writes `sweep_runs.txt` with a metadata header and one line per run:
+2. Writes `sweep_runs_<config_stem>.txt` with a metadata header and one line per run:
    ```
    # META task_name=Template-Pose-Orientation-Sim2Real-Direct-v1-ext
    # META sequential_per_job=6
@@ -183,7 +184,7 @@ cat logs/sweep_<JOB_ID>_<ARRAY_ID>.out
    run_name_2|hydra_override_1 hydra_override_2
    ```
 3. Submits `sweep_euler.sh` as a SLURM array job (`sbatch --array=0-N --time=... --gpus=...`)
-4. Each array task reads its chunk of runs from `sweep_runs.txt` and executes them sequentially
+4. Each array task reads its chunk of runs from the `SWEEP_FILE` provided by `generate_sweep.py` and executes them sequentially
 5. SLURM settings from the YAML override the `#SBATCH` defaults via command-line flags
 
 ### 4.4 Tips
@@ -192,7 +193,7 @@ cat logs/sweep_<JOB_ID>_<ARRAY_ID>.out
 - Failed runs are logged but don't stop the remaining runs in the job
 - Run names are auto-generated from preset names (e.g. `reward_position-moderate_reward_orientation-strong`)
 - `SIF_PATH` in `sweep_euler.sh` must point to your `.sif` container
-- Generate without submitting (omit `--submit`) to inspect `sweep_runs.txt` first
+- Generate without submitting (omit `--submit`) to inspect `sweep_runs_<config_stem>.txt` first
 
 ---
 
