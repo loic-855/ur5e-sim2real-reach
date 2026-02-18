@@ -132,11 +132,11 @@ class PoseOrientationSim2RealCfg(DirectRLEnvCfg):
     dof_velocity_scale = 0.1
 
     # reward weights
-    ee_position_penalty = -0.20
-    ee_position_reward = 0.35
+    ee_position_penalty = -0.30
+    ee_position_reward = 0.50
     tanh_scaling = [0.3, 0.15]
-    ee_orientation_penalty = -0.15
-    ee_orientation_reward = 0.0
+    ee_orientation_penalty = -0.2
+    ee_orientation_reward = 0.40
     ori_tanh_scaling = [0.3, 0.15]
     action_penalty = -0.0008
     action_rate_penalty = -0.005
