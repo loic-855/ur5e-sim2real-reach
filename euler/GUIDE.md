@@ -110,12 +110,15 @@ Create a YAML file in `euler/` defining your sweep. Example:
 task_name: "Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
 
 slurm:
-  time: "06:30:00"
+  # Per-run estimate (HH:MM:SS) — required. Generator adds 15min safety and
+  # multiplies by per-node sequential count to compute per-job time.
+  time_per_task: "00:20:00"
+  # Number of cluster nodes / SLURM array tasks. Generator will distribute
+  # total runs across these nodes automatically.
+  nodes: 4
   gpus: "rtx_4090:1"
   cpus_per_task: 3
   mem_per_cpu: 4000
-
-sequential_per_job: 6    # runs chained per SLURM job
 
 base_overrides:
   - "agent.max_iterations=2500"
@@ -135,8 +138,8 @@ dimensions:
 
 Key fields:
 - **`task_name`**: Registered Isaac Lab task to train
-- **`slurm`**: Resource settings (override `#SBATCH` defaults in `sweep_euler.sh`)
-- **`sequential_per_job`**: How many runs to chain in one SLURM job
+- **`slurm`**: Resource settings (override `#SBATCH` defaults in `sweep_euler.sh`). The generator now requires a per-run time estimate (`time_per_task` in HH:MM:SS or `time_per_run_minutes` numeric) and uses `nodes` to split runs across array tasks.
+- **`nodes`**: Number of cluster nodes (also the SLURM array length). The generator will produce a `sequential_per_job_list` distributing total runs across these nodes (e.g. 16 runs, 5 nodes -> `[3,3,3,3,4]`).
 - **`base_overrides`**: Hydra overrides applied to every run
 - **`dimensions`**: Each dimension has named presets. The sweep is the **Cartesian product** of all dimensions. Use `[]` for "use defaults".
 
@@ -157,6 +160,10 @@ module load stack/2025-06 gcc/12.2.0 && module load git-lfs/3.5.1 && git pull
 python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --dry-run
 
 # 3. Generate sweep_runs.txt AND submit to SLURM
+#    The generator computes per-node sequential counts from `slurm.nodes`,
+#    computes per-job walltime from `slurm.time_per_task` (adds 15min safety
+#    per run), writes `sequential_per_job_list` and `slurm_time` to
+#    `sweep_runs.txt`, and submits with `--time` set to the computed max.
 python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --submit
 
 # 4. Monitor

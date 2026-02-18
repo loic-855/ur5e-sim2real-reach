@@ -271,7 +271,16 @@ def main():
 
     output_path = config_path.parent / "sweep_runs.txt"
     write_sweep_file(output_path, runs, cfg, config_path.name, sequential_per_job_list, slurm_time)
-    print(f"  Written: {output_path}")
+    # Also write a legacy-style copy named after the config file (e.g. sweep_foo.yaml -> sweep_foo.txt)
+    # Legacy format: only run lines (no '# META' header), one entry per line.
+    alt_path = config_path.with_suffix('.txt')
+    try:
+        runs_text = "\n".join(f"{name}|{over}" for name, over in runs) + "\n"
+        alt_path.write_text(runs_text)
+        print(f"  Written: {output_path}")
+        print(f"  Also written (legacy format): {alt_path}")
+    except Exception:
+        print(f"  Written: {output_path} (failed to write alternate file {alt_path})")
 
     # --- Submit ---
     if args.submit:

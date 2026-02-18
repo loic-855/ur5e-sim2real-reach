@@ -1,0 +1,75 @@
+# ============================================================================
+# Hyperparameter Sweep: Anti-Wiggle / Stability Rewards
+# ============================================================================
+# Usage:  python euler/generate_sweep.py --config euler/sweep_stability.yaml
+# Grid:   3 acceleration × 3 stillness × 3 precision = 27 runs
+# ============================================================================
+#
+# New reward terms:
+#   acceleration_penalty  – penalises (joint_vel_t - joint_vel_{t-1})²
+#   stillness_bonus_scale – bonus for being near goal AND having low joint vel
+#   precision_pos_reward  – exp(-pos_error / precision_pos_scale) tight gradient
+#
+# Existing penalties also swept (velocity_penalty) to compare.
+# ============================================================================
+
+task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v1"
+
+# --- SLURM settings ---
+slurm:
+  time_per_task: "00:40:00"
+  gpus: "rtx_4090:1"
+  cpus_per_task: 2
+  mem_per_cpu: 8000
+  nodes: 7
+
+# Overrides applied to EVERY run
+base_overrides:
+  - "agent.max_iterations=2500"
+
+# ============================================================================
+# Sweep Dimensions (Cartesian Product → 3 × 3 × 3 = 27 runs)
+# ============================================================================
+
+dimensions:
+
+  # -------------------------------------------------------------------
+  # Joint acceleration penalty [pre-curriculum, post-curriculum]
+  # Penalises Σ(joint_vel_t - joint_vel_{t-1})²
+  # -------------------------------------------------------------------
+  acceleration:
+    off:
+      - "env.acceleration_penalty=[0.0,0.0]"
+    mild:
+      - "env.acceleration_penalty=[-0.003,-0.01]"
+    strong:
+      - "env.acceleration_penalty=[-0.008,-0.025]"
+
+  # -------------------------------------------------------------------
+  # Stillness bonus (near goal + low velocity)
+  # scale × close_pos × close_ori × (1 - tanh(joint_speed / threshold))
+  # -------------------------------------------------------------------
+  stillness:
+    off:
+      - "env.stillness_bonus_scale=0.0"
+    mild:
+      - "env.stillness_bonus_scale=0.3"
+      - "env.stillness_vel_threshold=0.20"
+    strong:
+      - "env.stillness_bonus_scale=0.6"
+      - "env.stillness_vel_threshold=0.10"
+
+  # -------------------------------------------------------------------
+  # Exponential precision reward (steep gradient near zero error)
+  # precision_pos_reward × exp(-pos_error / precision_pos_scale)
+  # precision_ori_reward × exp(-ori_error / precision_ori_scale)
+  # -------------------------------------------------------------------
+  precision:
+    off:
+      - "env.precision_pos_reward=0.0"
+    mild:
+      - "env.precision_pos_reward=0.10"
+      - "env.precision_pos_scale=0.05"
+    tight:
+      - "env.precision_pos_reward=0.20"
+      - "env.precision_pos_scale=0.03"

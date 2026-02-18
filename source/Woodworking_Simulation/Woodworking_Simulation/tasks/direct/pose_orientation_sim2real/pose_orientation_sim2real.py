@@ -141,7 +141,12 @@ class PoseOrientationSim2RealCfg(DirectRLEnvCfg):
     action_penalty = [-0.0008, -0.005]
     velocity_penalty = [-0.0005, -0.005]
     action_rate_penalty = [-0.005, -0.01]
+    acceleration_penalty = [-0.003, -0.01]
     alignement_bonus_scale = 0.3
+    stillness_bonus_scale = 0.4
+    stillness_vel_threshold = 0.15
+    precision_pos_reward = 0.15
+    precision_pos_scale = 0.03
     curriculum_threshold_step = 18000
 
     # contact penalties (unused in V0, active in V1)
@@ -215,6 +220,13 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
             dtype=torch.float32,
         )
         self.prev_actions = torch.zeros_like(self.actions)
+
+        # previous joint velocities (for acceleration penalty)
+        self.prev_joint_vel = torch.zeros(
+            (self._num_envs, self._robot.num_joints),
+            device=self.device,
+            dtype=torch.float32,
+        )
 
         # visualisation markers (only used when debug_visualization is True)
         if self.cfg.debug:
@@ -314,18 +326,14 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
     # -- Rewards ------------------------------------------------------------
 
     def _get_rewards(self) -> torch.Tensor:
-        if self.common_step_counter > self.cfg.curriculum_threshold_step:
-            tanh_scaling = self.cfg.tanh_scaling[1]
-            ori_tanh_scaling = self.cfg.ori_tanh_scaling[1]
-            action_penalty = self.cfg.action_penalty[1]
-            velocity_penalty = self.cfg.velocity_penalty[1]
-            action_rate_penalty = self.cfg.action_rate_penalty[1]
-        else:
-            tanh_scaling = self.cfg.tanh_scaling[0]
-            ori_tanh_scaling = self.cfg.ori_tanh_scaling[0]
-            action_penalty = self.cfg.action_penalty[0]
-            velocity_penalty = self.cfg.velocity_penalty[0]
-            action_rate_penalty = self.cfg.action_rate_penalty[0]
+        cur = self.common_step_counter > self.cfg.curriculum_threshold_step
+        idx = 1 if cur else 0
+        tanh_scaling = self.cfg.tanh_scaling[idx]
+        ori_tanh_scaling = self.cfg.ori_tanh_scaling[idx]
+        action_penalty = self.cfg.action_penalty[idx]
+        velocity_penalty = self.cfg.velocity_penalty[idx]
+        action_rate_penalty = self.cfg.action_rate_penalty[idx]
+        acceleration_penalty = self.cfg.acceleration_penalty[idx]
 
         frame_data = self._frame_transformer.data
         ee_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
@@ -341,9 +349,22 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
         velocity_cost = torch.sum(self._robot.data.joint_vel**2, dim=1)
         action_rate_cost = torch.sum((self.actions - self.prev_actions) ** 2, dim=1)
 
+        # joint acceleration penalty (finite-difference of joint_vel)
+        joint_accel = self._robot.data.joint_vel - self.prev_joint_vel
+        acceleration_cost = torch.sum(joint_accel ** 2, dim=1)
+        self.prev_joint_vel[:] = self._robot.data.joint_vel
+
         close_pos = (position_error < 0.10).float()  # < 10cm
         close_ori = (orientation_error < 0.15).float()  # quat error < 0.15
         alignment_bonus = self.cfg.alignement_bonus_scale * close_pos * close_ori
+
+        # stillness bonus: reward being near goal AND having low joint velocity
+        joint_speed = torch.norm(self._robot.data.joint_vel, dim=1)
+        stillness = 1.0 - torch.tanh(joint_speed / self.cfg.stillness_vel_threshold)
+        stillness_bonus = self.cfg.stillness_bonus_scale * close_pos * close_ori * stillness
+
+        # exponential precision reward (steep gradient near zero error)
+        precision_pos = self.cfg.precision_pos_reward * torch.exp(-position_error / self.cfg.precision_pos_scale)
 
         # EE marker visualisation (debug only)
         if self.cfg.debug:
@@ -360,7 +381,10 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
             + action_penalty * action_cost
             + velocity_penalty * velocity_cost
             + action_rate_penalty * action_rate_cost
+            + acceleration_penalty * acceleration_cost
             + alignment_bonus
+            + stillness_bonus
+            + precision_pos
         )
 
         if "log" not in self.extras:
@@ -370,7 +394,10 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
                 "action_penalty": (action_penalty * action_cost).mean(),
                 "action_rate_penalty": (action_rate_penalty * action_rate_cost).mean(),
                 "velocity_penalty": (velocity_penalty * velocity_cost).mean(),
+                "acceleration_penalty": (acceleration_penalty * acceleration_cost).mean(),
                 "alignment_bonus": alignment_bonus.mean(),
+                "stillness_bonus": stillness_bonus.mean(),
+                "precision_pos": precision_pos.mean(),
                 "step_counter": self.common_step_counter,
                 "ori_error": orientation_error.mean(),
                 "ori_reward": (self.cfg.ee_orientation_penalty * orientation_error).mean(),
@@ -407,6 +434,7 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
         self._robot.data.joint_vel[env_ids] = 0.0
         self.actions[env_ids] = 0.0
         self.prev_actions[env_ids] = 0.0
+        self.prev_joint_vel[env_ids] = 0.0
 
         self._robot.set_joint_position_target(self.robot_dof_targets)
         self._sample_goal(env_ids)
