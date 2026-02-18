@@ -6,8 +6,8 @@ This guide details how to run **Isaac Lab** training jobs on the ETH Euler clust
 ## Quick Commands
 
 ```bash
-# Load python in your session, git lfs and git desktop.
-module load stack/2025-06 gcc/12.2.0 && module load git-lfs/3.5.1 && git pull
+# Load python in your session, git lfs
+module load git-lfs/3.5.1 && module load stack/2024-06 python/3.12.8
 ```
 
 ```bash

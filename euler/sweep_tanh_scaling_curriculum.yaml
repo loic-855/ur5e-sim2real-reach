@@ -16,14 +16,11 @@ task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v1"
 
 # --- SLURM settings ---
 slurm:
-  time: "03:00:00"
+  time_per_task: "00:30:00"
   gpus: "rtx_4090:1"
   cpus_per_task: 2
   mem_per_cpu: 8000
   nodes: 5
-
-# Number of sequential runs per job (runs will be dispatched across nodes)
-sequential_per_job: 4
 
 # Overrides applied to EVERY run
 base_overrides:

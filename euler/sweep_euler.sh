@@ -37,6 +37,8 @@ fi
 
 # --- Read metadata from sweep_runs.txt header ---
 TASK_NAME=$(grep '^# META task_name=' "$SWEEP_FILE" | head -1 | cut -d'=' -f2-)
+# support a list of sequential counts for uneven distribution
+SEQUENTIAL_LIST_LINE=$(grep '^# META sequential_per_job_list=' "$SWEEP_FILE" | head -1 | cut -d'=' -f2-)
 SEQUENTIAL_PER_JOB=$(grep '^# META sequential_per_job=' "$SWEEP_FILE" | head -1 | cut -d'=' -f2-)
 
 if [ -z "$TASK_NAME" ]; then
@@ -44,9 +46,25 @@ if [ -z "$TASK_NAME" ]; then
     echo "  Regenerate with: python euler/generate_sweep.py --config euler/<your_config>.yaml"
     exit 1
 fi
-if [ -z "$SEQUENTIAL_PER_JOB" ]; then
-    echo "Warning: No '# META sequential_per_job=...' found, defaulting to 3"
-    SEQUENTIAL_PER_JOB=3
+
+if [ -n "$SEQUENTIAL_LIST_LINE" ]; then
+    IFS=',' read -r -a SEQ_ARR <<< "$SEQUENTIAL_LIST_LINE"
+    SEQ_LEN=${#SEQ_ARR[@]}
+    # validate SLURM_ARRAY_TASK_ID is within range
+    if [ -z "$SLURM_ARRAY_TASK_ID" ]; then
+        echo "Error: SLURM_ARRAY_TASK_ID not set, but sequential_per_job_list provided"
+        exit 1
+    fi
+    if [ "$SLURM_ARRAY_TASK_ID" -ge "$SEQ_LEN" ]; then
+        echo "Warning: SLURM_ARRAY_TASK_ID ($SLURM_ARRAY_TASK_ID) >= number of nodes ($SEQ_LEN), some array tasks will be idle"
+    fi
+    # pick this task's sequential count (0-based index)
+    SEQUENTIAL_PER_JOB=${SEQ_ARR[$SLURM_ARRAY_TASK_ID]}
+else
+    if [ -z "$SEQUENTIAL_PER_JOB" ]; then
+        echo "Warning: No '# META sequential_per_job=...' found, defaulting to 3"
+        SEQUENTIAL_PER_JOB=3
+    fi
 fi
 
 # --- WandB API Key ---
@@ -60,8 +78,18 @@ fi
 # --- Compute run range ---
 # Count only non-comment, non-empty lines (actual run entries)
 TOTAL_RUNS=$(grep -cv '^#\|^$' "$SWEEP_FILE")
-START_IDX=$((SLURM_ARRAY_TASK_ID * SEQUENTIAL_PER_JOB))
-END_IDX=$((START_IDX + SEQUENTIAL_PER_JOB - 1))
+
+# Compute START and END indices. If SEQ_ARR exists (parsed above), sum previous entries.
+if [ -n "$SEQUENTIAL_LIST_LINE" ]; then
+    START_IDX=0
+    for ((i=0;i<SLURM_ARRAY_TASK_ID;i++)); do
+        START_IDX=$((START_IDX + SEQ_ARR[i]))
+    done
+    END_IDX=$((START_IDX + SEQUENTIAL_PER_JOB - 1))
+else
+    START_IDX=$((SLURM_ARRAY_TASK_ID * SEQUENTIAL_PER_JOB))
+    END_IDX=$((START_IDX + SEQUENTIAL_PER_JOB - 1))
+fi
 
 # --- CACHE SETUP ---
 JOB_CACHE="/cluster/scratch/$USER/isaac_cache/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
