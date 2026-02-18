@@ -1,12 +1,12 @@
----
 
 # Isaac Lab Training on Euler (ETH Zurich)
 
-This guide details how to run **Isaac Lab** training jobs on the ETH Euler cluster using a custom Apptainer (`.sif`) container.
+This guide details how to run **Isaac Lab** training jobs on the ETH Euler cluster using a custom Apptainer (`.sif`) container and play them back on the workstation.
 
 ## Quick Commands
 
 ```bash
+# Load python in your session, git lfs and git desktop.
 module load stack/2025-06 gcc/12.2.0 && module load git-lfs/3.5.1 && git pull
 ```
 
@@ -17,13 +17,28 @@ sbatch train_euler.sh
 # Sweep: generate + submit
 python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --submit
 ```
-## 1. Prerequisites
+```bash
+#Play the trained sweep
+python scripts/rsl_rl/play.py \
+  --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 \
+  --num_envs 5 \
+  --checkpoint "logs/rsl_rl/2026-02-18_00-32-14_reward_position-default_reward_orientation-default/model_2499.pt" \
+  --sweep_file "euler/sweep_runs.txt" \
+  env.debug=True
+```
+
 
 Before starting, ensure you have:
 
 1. **The SIF Container:** You need the `isaac_euler_salziegl.sif` file (or your own build).
 2. **WandB Account:** For logging training metrics (Weights & Biases).
 3. **ETH VPN:** Connected via Cisco AnyConnect (if outside the university network).
+4. **ETH Euler setup**: The connection between your computer and ETH Euler cluster is setup. Quick test via `ssh username@euler.ethz.ch`.
+
+**(Optional) File transfer**:  Direct connect to Euler file system on Ubuntu for file transfer: 
+
+Start the file explorer, go to `Other Locations`, entre the server adress `sftp://username@euler.ethz.ch/` and connect. Use it for transferring run or the container, but not for you project file, use git for that.
+
 
 ---
 
@@ -188,3 +203,31 @@ scp -r username@euler.ethz.ch:~/Woodworking_Simulation/logs/rsl_rl .
 
 You can view logs with TensorBoard locally if WandB sync didn't work.
 Delete old checkpoints on Euler regularly to avoid running out of space.
+
+## 6. Running the checkpoints
+
+Once the runs are transferred on the local computer, the can be run with the modified play.py script in the repo. The modified variables of the sweep can be directly passed in command line form, it avoids modifiying the base script.
+
+Special arguements need to be used: 
+`--sweep_file <path_to_sweep_file>` to pass the modified variable. The sweep file is a `.txt` file with the structure `run_name | where.variable_name.modified_value `:
+
+ ```
+ reward_position-default_reward_orientation-default|agent.max_iterations=2500
+reward_position-default_reward_orientation-conservative|agent.max_iterations=2500 env.ee_orientation_penalty=-0.10 env.ee_orientation_reward=0.0
+...
+```
+`--checkpoint <path_to_checkpoint>` to give one of the checkpoint of the sweep.
+
+`env.debug=True`to have visualisation if the script supports it. Argument without `--` must be at the end of the command
+
+### Example
+
+```bash
+python scripts/rsl_rl/play.py \
+  --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 \
+  --num_envs 5 \
+  --checkpoint "logs/rsl_rl/2026-02-18_00-32-14_reward_position-default_reward_orientation-default/model_2499.pt" \
+  --sweep_file "euler/sweep_runs.txt" \
+  env.debug=True
+```
+

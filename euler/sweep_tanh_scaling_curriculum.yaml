@@ -1,0 +1,61 @@
+# ============================================================================
+# Hyperparameter Sweep: Position × Orientation Tanh Scaling (Curriculum)
+# ============================================================================
+# Usage:  python euler/generate_sweep.py --config euler/sweep_tanh_scaling_curriculum.yaml --submit
+# Grid:   4 position × 4 orientation = 16 runs (cartésien)
+# Note: each value is a curriculum pair (two entries) as used in `env.yaml`:
+#   tanh_scaling:
+#     - 0.3
+#     - 0.15
+#   ori_tanh_scaling:
+#     - 0.3
+#     - 0.15
+# ============================================================================
+
+task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v1"
+
+# --- SLURM settings ---
+slurm:
+  time: "03:00:00"
+  gpus: "rtx_4090:1"
+  cpus_per_task: 2
+  mem_per_cpu: 8000
+  nodes: 5
+
+# Number of sequential runs per job (runs will be dispatched across nodes)
+sequential_per_job: 4
+
+# Overrides applied to EVERY run
+base_overrides:
+  - "agent.max_iterations=2000"
+
+# ============================================================================
+# Sweep Dimensions (Cartesian Product)
+# Each entry sets the curriculum pair for the corresponding env value.
+# ============================================================================
+
+dimensions:
+
+  # -------------------------------------------------------------------
+  # EE Position Tanh Scaling (curriculum: [easy, hard])
+  # -------------------------------------------------------------------
+  tanh_scaling_position:
+    default: []
+    strict:
+      - "env.tanh_scaling=[0.20,0.10]"
+    stricter:
+      - "env.tanh_scaling=[0.15,0.05]"
+    strictest:
+      - "env.tanh_scaling=[0.15,0.02]"
+
+  # -------------------------------------------------------------------
+  # EE Orientation Tanh Scaling (curriculum: [easy, hard])
+  # -------------------------------------------------------------------
+  tanh_scaling_orientation:
+    default: []
+    strict:
+      - "env.ori_tanh_scaling=[0.20,0.10]"
+    stricter:
+      - "env.ori_tanh_scaling=[0.15,0.05]"
+    strictest:
+      - "env.ori_tanh_scaling=[0.15,0.02]"

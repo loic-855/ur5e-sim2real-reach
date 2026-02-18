@@ -138,9 +138,11 @@ class PoseOrientationSim2RealCfg(DirectRLEnvCfg):
     ee_orientation_penalty = -0.2
     ee_orientation_reward = 0.40
     ori_tanh_scaling = [0.3, 0.15]
-    action_penalty = -0.0008
-    action_rate_penalty = -0.005
+    action_penalty = [-0.0008, -0.005]
+    velocity_penalty = [-0.0005, -0.005]
+    action_rate_penalty = [-0.005, -0.01]
     alignement_bonus_scale = 0.3
+    curriculum_threshold_step = 18000
 
     # contact penalties (unused in V0, active in V1)
     contact_penalty_scale = -0.01
@@ -312,12 +314,18 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
     # -- Rewards ------------------------------------------------------------
 
     def _get_rewards(self) -> torch.Tensor:
-        if self.common_step_counter > 30000:
+        if self.common_step_counter > self.cfg.curriculum_threshold_step:
             tanh_scaling = self.cfg.tanh_scaling[1]
             ori_tanh_scaling = self.cfg.ori_tanh_scaling[1]
+            action_penalty = self.cfg.action_penalty[1]
+            velocity_penalty = self.cfg.velocity_penalty[1]
+            action_rate_penalty = self.cfg.action_rate_penalty[1]
         else:
             tanh_scaling = self.cfg.tanh_scaling[0]
             ori_tanh_scaling = self.cfg.ori_tanh_scaling[0]
+            action_penalty = self.cfg.action_penalty[0]
+            velocity_penalty = self.cfg.velocity_penalty[0]
+            action_rate_penalty = self.cfg.action_rate_penalty[0]
 
         frame_data = self._frame_transformer.data
         ee_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
@@ -328,9 +336,9 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
 
         quat_dot = torch.sum(self.goal_quat_source * ee_quat_source, dim=1)
         orientation_error = 1.0 - torch.abs(quat_dot)
-        # orientation_error = quat_error_magnitude(self.goal_quat_source, ee_quat_source)
         orientation_reward_tanh = 1.0 - torch.tanh(orientation_error / ori_tanh_scaling)
         action_cost = torch.sum(self.actions**2, dim=1)
+        velocity_cost = torch.sum(self._robot.data.joint_vel**2, dim=1)
         action_rate_cost = torch.sum((self.actions - self.prev_actions) ** 2, dim=1)
 
         close_pos = (position_error < 0.10).float()  # < 10cm
@@ -349,8 +357,9 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
             + self.cfg.ee_position_reward * position_reward_tanh
             + self.cfg.ee_orientation_penalty * orientation_error
             + self.cfg.ee_orientation_reward * orientation_reward_tanh
-            + self.cfg.action_penalty * action_cost
-            + self.cfg.action_rate_penalty * action_rate_cost
+            + action_penalty * action_cost
+            + velocity_penalty * velocity_cost
+            + action_rate_penalty * action_rate_cost
             + alignment_bonus
         )
 
@@ -358,16 +367,13 @@ class PoseOrientationSim2RealV0(DirectRLEnv):
             self.extras["log"] = {}
         self.extras["log"].update(
             {
-                "action_penalty": (self.cfg.action_penalty * action_cost).mean(),
-                "action_rate_penalty": (
-                    self.cfg.action_rate_penalty * action_rate_cost
-                ).mean(),
+                "action_penalty": (action_penalty * action_cost).mean(),
+                "action_rate_penalty": (action_rate_penalty * action_rate_cost).mean(),
+                "velocity_penalty": (velocity_penalty * velocity_cost).mean(),
                 "alignment_bonus": alignment_bonus.mean(),
                 "step_counter": self.common_step_counter,
                 "ori_error": orientation_error.mean(),
-                "ori_reward": (
-                    self.cfg.ee_orientation_penalty * orientation_error
-                ).mean(),
+                "ori_reward": (self.cfg.ee_orientation_penalty * orientation_error).mean(),
                 "pos_error": position_error.mean(),
                 "pos_reward": (self.cfg.ee_position_penalty * position_error).mean(),
                 "rewards_mean": reward.mean(),
