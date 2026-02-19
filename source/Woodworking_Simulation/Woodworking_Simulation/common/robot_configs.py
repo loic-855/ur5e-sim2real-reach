@@ -325,7 +325,7 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 usd_path=str(USD_FILES_DIR / "ur5e_gripper_tcp_unactuated.usd"),
                 #usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/UniversalRobots/ur5e/ur5e.usd",
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    disable_gravity=True,
+                    disable_gravity=False,
                     max_depenetration_velocity=5.0,
                 ),
                 articulation_props=sim_utils.ArticulationRootPropertiesCfg(
