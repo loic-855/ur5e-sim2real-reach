@@ -19,13 +19,13 @@ def impedance_control():
     q_filt = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
 
     # Impedance gains
-    kp = [200.0, 200.0, 200.0, 80.0, 80.0, 80.0]
-    kd = [35.0, 35.0, 35.0, 15.0, 15.0, 15.0]
-    max_error = 0.15
+    kp = [250.0, 250.0, 250.0, 60.0, 60.0, 60.0]
+    kd = [30.0, 30.0, 30.0, 15.0, 15.0, 15.0]
+    max_error = 0.20
 
     # First-order filter coefficient
     # alpha = 1 - exp(-dt / tau),  dt = 0.002 s,  tau = 0.02 s
-    alpha = 0.2
+    alpha = 0.95
 
     stop = False
 

@@ -124,7 +124,6 @@ class GoalPublisher(Node):
         quat_y_rot = np.array([0.7071067811865476, 0.0, 0.0, 0.7071067811865475])
         quat_y = self.quaternion_multiply(self.goal_quaternion, quat_y_rot)
         # Z-axis: rotate -90 deg around Y to map +X -> +Z (right-hand rule)
-        # Previous +90deg mapped +X -> -Z, so invert sign to point Z up.
         quat_z_rot = np.array([0.7071067811865476, 0.0, -0.7071067811865475, 0.0])
         quat_z = self.quaternion_multiply(self.goal_quaternion, quat_z_rot)
         
@@ -232,8 +231,8 @@ def main():
     parser.add_argument("--y", type=float, default=None, help="Goal Y position")
     parser.add_argument("--z", type=float, default=None, help="Goal Z position")
     parser.add_argument("--qw", type=float, default=0.0, help="Quaternion W")
-    parser.add_argument("--qx", type=float, default=1.0, help="Quaternion X")
-    parser.add_argument("--qy", type=float, default=0.0, help="Quaternion Y")
+    parser.add_argument("--qx", type=float, default=0.0, help="Quaternion X")
+    parser.add_argument("--qy", type=float, default=1.0, help="Quaternion Y")
     parser.add_argument("--qz", type=float, default=0.0, help="Quaternion Z")
     parser.add_argument("--interactive", action="store_true", help="Interactive mode")
     parser.add_argument("--rate", type=float, default=10.0, help="Publish rate Hz")
@@ -245,9 +244,9 @@ def main():
     
     # Default cycling goals (three positions)
     default_cycling_goals = [
-        (0.1, 0.2, 0.8),
+        (-0.15, 0.15, 0.6),
         (0.0, -0.2, 0.5),
-        (-0.1, -0.1, 0.2),
+        (-0.3, -0.05, 0.3),
     ]
     
     # Determine behavior based on arguments

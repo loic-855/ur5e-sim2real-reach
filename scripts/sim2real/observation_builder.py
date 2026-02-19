@@ -122,27 +122,28 @@ def build_observation(robot_state: RobotState, goal_state: GoalState) -> np.ndar
 
 # Action scaling - REDUCED for real robot safety (IsaacSim uses 7.5)
 # Start with lower value and increase gradually if needed
-ACTION_SCALE = 5.0  # Original: 7.5, reduced to avoid overshooting
+#ACTION_SCALE = 5.0  # Original: 7.5, reduced to avoid overshooting
 DOF_VELOCITY_SCALE = 0.1
+per_joint_scaling = np.array([0.6, 0.6, 0.6, 1.5, 2.0, 2.0], dtype=np.float32)
 
 
 def compute_dof_targets(
     current_targets: np.ndarray,
     actions: np.ndarray,
     dt: float = 1/60,  # 60Hz policy
-    action_scale: float = ACTION_SCALE  # Can be overridden
+    action_scale: float = 5.0  # Can be overridden
 ) -> np.ndarray:
     """Compute new joint position targets from policy actions.
     
     Formula (from IsaacSim):
-        inc = dt * dof_velocity_scale * action_scale * actions
+        inc = dt * dof_velocity_scale * action_scale * actions * per_joint_scaling
         targets = clamp(targets + inc, lower, upper)
     
     Args:
         current_targets: Current joint position targets [6]
         actions: Policy output actions [6] in [-1, 1]
         dt: Timestep (default 1/60 for 60Hz)
-        action_scale: Scaling factor (default ACTION_SCALE, can reduce for safety)
+        action_scale: Scaling factor (is passed from sim2real node)
         
     Returns:
         New joint position targets [6] (clamped to limits)
@@ -151,7 +152,7 @@ def compute_dof_targets(
     actions = np.clip(actions, -1.0, 1.0)
     
     # Compute increment (use provided action_scale)
-    inc = dt * DOF_VELOCITY_SCALE * action_scale * actions
+    inc = dt * DOF_VELOCITY_SCALE * action_scale * actions * per_joint_scaling
     
     # Update targets
     new_targets = current_targets + inc

@@ -130,7 +130,7 @@ class RTDEController:
         primary_port: int = ROBOT_PRIMARY_PORT,
         config_file: str = RTDE_CONFIG_FILE,
         urscript_file: str = URSCRIPT_FILE,
-        rtde_frequency: float = 60.0,
+        rtde_frequency: float = 125.0,
     ):
         self.robot_host = robot_host
         self.robot_port = robot_port
@@ -239,7 +239,7 @@ class RTDEController:
             self.stop_reg.input_bit_register_64 = True
             self.con.send(self.stop_reg)
             time.sleep(2.0)
-            print("[RTDE] Stop signal sent – robot returning to home")
+            print("[RTDE] Stop signal sent - robot returning to home")
         except Exception as e:
             print(f"[RTDE] Error sending stop: {e}")
 
@@ -269,10 +269,8 @@ class Sim2RealNode(Node):
         model_path: Optional[str] = None,
         control_rate: float = 60.0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
-        action_scale: float = 7.0,
+        action_scale: float = 5.0,
         robot_host: str = ROBOT_HOST,
-        log_obs: bool = False,
-        log_dir: Optional[str] = None,
     ):
         super().__init__("sim2real_policy_node")
 
@@ -307,9 +305,6 @@ class Sim2RealNode(Node):
         # Load policy
         # ==================================================================
         self.get_logger().info(f"Loading policy from: {model_path or 'default'}")
-        # keep logging flags for later use / for the policy loader
-        self._log_obs = bool(log_obs)
-        self._log_dir = log_dir
         # pass through logging flags to the policy inference loader
         self.policy = load_policy(model_path=model_path, device=device)
         self.get_logger().info("Policy loaded successfully!")
@@ -344,7 +339,7 @@ class Sim2RealNode(Node):
         )
 
         # ==================================================================
-        # Control timer (60 Hz)
+        # Control timer
         # ==================================================================
         self.callback_group = ReentrantCallbackGroup()
         self.control_timer = self.create_timer(
@@ -374,10 +369,8 @@ class Sim2RealNode(Node):
         # Orientation error: q stored as (w, x, y, z)
         q1 = robot_state.ee_quaternion
         q2 = goal_state.quaternion
-        dot = float(np.abs(np.dot(q1, q2)))
-        if dot > 1.0:
-            dot = 1.0
-        ori_err = float(2.0 * math.acos(dot))
+        quat_dot = np.sum(q1 * q2)
+        ori_err = 1.0 - np.abs(quat_dot)  # in [0, 1]
 
         with self._benchmark_lock:
             self._benchmark_samples.append((time.time(), pos_err, ori_err))
@@ -452,6 +445,10 @@ class Sim2RealNode(Node):
 
         # Shift position from robot-base frame to table-centre frame
         ee_pos_table = ee_pos_base + ROBOT_BASE_LOCAL
+
+        #Rotate the quarternion from the robot-base frame to the table-centre frame
+        # ee_quat = ee_quat * rotvec_to_quat(0, 0, math.radians(90))  # 90 degree rotation around Z-axis
+        # ee_quat = ee_quat / np.linalg.norm(ee_quat)  # Normalize to unit quaternion
 
         with self.lock:
             self.joint_positions = positions
