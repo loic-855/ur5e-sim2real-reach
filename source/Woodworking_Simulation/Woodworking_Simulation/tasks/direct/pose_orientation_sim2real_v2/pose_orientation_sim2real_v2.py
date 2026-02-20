@@ -14,12 +14,12 @@ includes domain-randomisation (V1) and contact sensing
 
   Nouvelle version, chose à implémenter:
 - fusion de v0 et v1
-- observation supplémentaire pour EE (vitesse)
+- observation supplémentaire pour tcp (vitesse)
 - simplification des rewards: action, vitesse, position pénalité et récompense,
 récompense d'alignement, récompense de d'imobilité, pénalité de contact et si les angles des joint sont proches de leur limites
 - observations:
-    joint_pos (6), joint_vel (6), but (goal_pos - ee_pos) (3), orientation error (3),
-    vitesse linéaire et angulaire de l'EE (6). Normaliser le tout.
+    joint_pos (6), joint_vel (6), but (goal_pos - tcp_pos) (3), orientation error (3),
+    vitesse linéaire et angulaire de l'tcp (6). Normaliser le tout.
 - utilisation de obs domain randomisation et logique de buffer pour les obs et actions
 - nouvelle logique de reset: 40% autour de home position, 60% random dans l'espace de travail de joints.
 - découpler le reset de goal du reset de l'env: un goal atteint pop un nouveau goal sans reset de l'env. le resampling du goal en général est plus court que
@@ -44,7 +44,7 @@ from isaaclab.sensors import (
 from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
-from isaaclab.utils.math import sample_uniform, quat_error_magnitude, quat_box_minus
+from isaaclab.utils.math import sample_uniform, quat_error_magnitude, quat_box_minus, quat_apply_yaw, quat_inv
 
 # Shared project helpers
 from Woodworking_Simulation.common.robot_configs import (
@@ -66,6 +66,11 @@ from Woodworking_Simulation.common.robot_configs import (
     get_terrain_cfg,
     setup_dome_light,
 )
+BASE_OFFSET_LOCAL = (-(TABLE_WIDTH / 2 - 0.08), TABLE_DEPTH / 2 - 0.08, -MOUNT_HEIGHT)
+BASE_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)  # Rotation locale en z
+
+TCP_OFFSET_LOCAL = (0.0, 0.0, 0.15)  # position du TCP par rapport au dernier joint (wrist_3_link)
+TCP_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)  # 
 from Woodworking_Simulation.common.domain_randomization import (
     ActionBuffer,
     ActuatorRandomizer,
@@ -86,18 +91,26 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     episode_length_s = 10.0
     decimation = 2
 
-    # spaces  (no EE velocities → 26 obs instead of 32)
+    # spaces
     action_space = 6
-    observation_space = 24  # pos_error (3), ori_error (3), joint_pos (6), joint_vel (6), EE linear vel (3), EE angular vel (3)
+    observation_space = 24  # pos_error (3), ori_error (3), joint_pos (6), joint_vel (6), tcp linear vel (3), tcp angular vel (3)
     state_space = 0
 
     # simulation
-    sim: SimulationCfg = SimulationCfg(
-        dt=1 / 120,
-        render_interval=decimation,
-        physx=PhysxCfg(solver_type=1, enable_external_forces_every_iteration=True),
-    )
-
+    try: 
+        sim: SimulationCfg = SimulationCfg(
+            dt=1 / 120,
+            render_interval=decimation,
+            physx=PhysxCfg(solver_type=1, enable_external_forces_every_iteration=True),
+        )
+    except: 
+        print("This version of Isaac Sim may not support the 'enable_external_forces_every_iteration' option.")
+        sim: SimulationCfg = SimulationCfg(
+            dt=1 / 120,
+            render_interval=decimation,
+            physx=PhysxCfg(solver_type=1),
+        )
+            
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
         num_envs=4092, env_spacing=3.0, replicate_physics=True
@@ -117,16 +130,16 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     frame_transformer = FrameTransformerCfg(
         prim_path="/World/envs/env_.*/ur5e/base_link",
         source_frame_offset=OffsetCfg(
-            pos=(-(TABLE_WIDTH / 2 - 0.08), TABLE_DEPTH / 2 - 0.08, -MOUNT_HEIGHT),
-            rot=(0.0, 0.0, 0.0, 1.0),
+            pos=BASE_OFFSET_LOCAL,
+            rot=BASE_ROTATION_LOCAL,
         ),
         target_frames=[
             FrameTransformerCfg.FrameCfg(
                 prim_path="/World/envs/env_.*/ur5e/wrist_3_link",
                 name="ee_tcp",
                 offset=OffsetCfg(
-                    pos=(0.0, 0.0, 0.15),
-                    rot=(0.0, 0.0, 0.0, 1.0),
+                    pos=TCP_OFFSET_LOCAL,
+                    rot=TCP_ROTATION_LOCAL,
                 ),
             )
         ],
@@ -222,6 +235,10 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)
 
         self.robot_dof_targets = self._robot.data.joint_pos.clone()
+
+        #Cache joint idx
+        self.wrist_3_link_idx = self._robot.find_joints("wrist_3_joint")
+
 
         # goal tensors (source frame = table-relative)
         self.robot_base_local = torch.tensor([-0.52, 0.32, 0.0], device=self.device)
@@ -322,13 +339,13 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
         frame_data = self._frame_transformer.data
-        ee_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
-        ee_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
+        tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
+        tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
 
         # Observation are normalized
-        to_target_norm = (self.goal_pos_source - ee_pos_source) / MAX_REACH  # (N, 3)
+        to_target_norm = (self.goal_pos_source - tcp_pos_source) / MAX_REACH  # (N, 3)
         orientation_error_norm = (
-            quat_box_minus(self.goal_quat_source, ee_quat_source) / torch.pi
+            quat_box_minus(self.goal_quat_source, tcp_quat_source) / torch.pi
         )  # (N, 3)
         self.joint_pos_norm = (
             2
@@ -337,12 +354,9 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             - 1.0
         )
         joint_vel_norm = self._robot.data.joint_vel / MAX_JOINT_VEL
-        ee_linear_vel_norm = frame_data.target_linear_vel_source[
-            :, self._ee_frame_idx, :
-        ]  # scale by 1 m/s
-        ee_angular_vel_norm = (
-            frame_data.target_angular_vel_source[:, self._ee_frame_idx, :] / torch.pi
-        )
+        tcp_angular_vel, tcp_linear_vel = self.compute_tcp_states()
+        tcp_linear_vel_norm = tcp_linear_vel # Assuming max TCP speed of ~2 m/s for normalization
+        tcp_angular_vel_norm = tcp_angular_vel / torch.pi  # Assuming max angular velocity of ~180 deg/s for normalization
 
         obs = torch.cat(
             [
@@ -350,14 +364,14 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
                 orientation_error_norm,  # 3
                 self.joint_pos_norm,  # 6
                 joint_vel_norm,  # 6
-                ee_linear_vel_norm,  # 3
-                ee_angular_vel_norm,  # 3
+                tcp_linear_vel_norm,  # 3
+                tcp_angular_vel_norm,  # 3
             ],
             dim=1,
         )
         if self.cfg.debug and self.common_step_counter % 1000 == 0:
             print(
-                f"Observations: ee_pos_source={ee_pos_source[0].cpu().numpy()}, ee_quat_source={ee_quat_source[0].cpu().numpy()}, "
+                f"Observations: tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, tcp_quat_source={tcp_quat_source[0].cpu().numpy()}, "
             )
         return {"policy": obs}
 
@@ -369,15 +383,15 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         # idx = 1 if cur else 0
 
         frame_data = self._frame_transformer.data
-        ee_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
-        ee_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
+        tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
+        tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
 
         # Position and orientation error/reward
-        position_error = torch.norm(self.goal_pos_source - ee_pos_source, dim=1)  # m
+        position_error = torch.norm(self.goal_pos_source - tcp_pos_source, dim=1)  # m
         position_exp_error = torch.exp(-position_error / self.cfg.position_exp_scale)
 
         orientation_error = quat_error_magnitude(
-            self.goal_quat_source, ee_quat_source
+            self.goal_quat_source, tcp_quat_source
         )  # rad
         orientation_exp_error = torch.exp(
             -orientation_error / self.cfg.rotation_exp_scale
@@ -429,7 +443,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         )
         reward_joint_limits = penalty_val.sum(dim=-1)
 
-        # EE marker visualisation (debug only)
+        # tcp marker visualisation (debug only)
         if self.cfg.debug:
             self.ee_marker.visualize(
                 frame_data.target_pos_w[:, self._ee_frame_idx, :],
@@ -647,3 +661,30 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         self.robot_dof_targets[env_ids] = joint_pos
         self._robot.data.joint_pos[env_ids] = joint_pos
         self._robot.data.joint_vel[env_ids] = 0.0
+
+    def compute_tcp_states(self):
+        # 1. Récupérer les données mondiales du poignet (wrist)
+        wrist_quat_w = self.robot.data.body_link_quat_w[:, self.wrist_3_link_idx]
+        wrist_vel_w = self.robot.data.body_link_vel_w[:, self.wrist_3_link_idx] # [lin_x, lin_y, lin_z, ang_x, ang_y, ang_z]
+
+        lin_vel_wrist_w = wrist_vel_w[:, :3]
+        ang_vel_wrist_w = wrist_vel_w[:, 3:]
+
+        # 2. Transformer l'offset local en vecteur mondial
+        # self.tcp_offset_local est un torch.Tensor [0, 0, offset_z]
+        r_offset_w = quat_apply_yaw(wrist_quat_w, TCP_OFFSET_LOCAL)
+
+        # 3. Vitesse linéaire du TCP (Formule du transport des vitesses)
+        # v_tcp = v_wrist + omega x r
+        v_tcp_w = lin_vel_wrist_w + torch.cross(ang_vel_wrist_w, r_offset_w, dim=-1)
+
+        # 4. (Optionnel) Rotation vers le repère du driver réel
+        # Si le driver ROS est décalé par rapport au monde Isaac
+        if True:
+            v_tcp_final = quat_apply_yaw(quat_inv(BASE_ROTATION_LOCAL), v_tcp_w)
+            ang_vel_final = quat_apply_yaw(quat_inv(BASE_ROTATION_LOCAL), ang_vel_wrist_w)
+        else:
+            v_tcp_final = v_tcp_w
+            ang_vel_final = ang_vel_wrist_w
+
+        return v_tcp_final, ang_vel_final
