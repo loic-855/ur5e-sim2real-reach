@@ -207,6 +207,8 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         self.dt = self.cfg.sim.dt * self.cfg.decimation
         self._num_envs = self.scene.cfg.num_envs
+        # reward buffer (initialized here to ensure availability before first step)
+        self.reward_buf = torch.zeros(self._num_envs, device=self.device, dtype=torch.float32)
         self._debug_step_count = 0
 
         # env origins with global offset
@@ -235,9 +237,6 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)
 
         self.robot_dof_targets = self._robot.data.joint_pos.clone()
-
-        #Cache joint idx
-        self.wrist_3_link_idx = self._robot.find_joints("wrist_3_joint")
 
 
         # goal tensors (source frame = table-relative)
@@ -664,15 +663,20 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
     def compute_tcp_states(self):
         # 1. Récupérer les données mondiales du poignet (wrist)
-        wrist_quat_w = self.robot.data.body_link_quat_w[:, self.wrist_3_link_idx]
-        wrist_vel_w = self.robot.data.body_link_vel_w[:, self.wrist_3_link_idx] # [lin_x, lin_y, lin_z, ang_x, ang_y, ang_z]
+        wrist_quat_w = self._robot.data.body_link_quat_w[:, 6]
+        wrist_vel_w = self._robot.data.body_link_vel_w[:, 6] # [lin_x, lin_y, lin_z, ang_x, ang_y, ang_z]
 
         lin_vel_wrist_w = wrist_vel_w[:, :3]
         ang_vel_wrist_w = wrist_vel_w[:, 3:]
 
         # 2. Transformer l'offset local en vecteur mondial
-        # self.tcp_offset_local est un torch.Tensor [0, 0, offset_z]
-        r_offset_w = quat_apply_yaw(wrist_quat_w, TCP_OFFSET_LOCAL)
+        # Batch-expand the local TCP offset to match number of envs (avoid shape mismatch)
+        tcp_offset = (
+            torch.tensor(TCP_OFFSET_LOCAL, device=self.device, dtype=torch.float32)
+            .unsqueeze(0)
+            .expand(wrist_quat_w.shape[0], -1)
+        )
+        r_offset_w = quat_apply_yaw(wrist_quat_w, tcp_offset)
 
         # 3. Vitesse linéaire du TCP (Formule du transport des vitesses)
         # v_tcp = v_wrist + omega x r
@@ -681,8 +685,14 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         # 4. (Optionnel) Rotation vers le repère du driver réel
         # Si le driver ROS est décalé par rapport au monde Isaac
         if True:
-            v_tcp_final = quat_apply_yaw(quat_inv(BASE_ROTATION_LOCAL), v_tcp_w)
-            ang_vel_final = quat_apply_yaw(quat_inv(BASE_ROTATION_LOCAL), ang_vel_wrist_w)
+            base_rot = (
+                torch.tensor(BASE_ROTATION_LOCAL, device=self.device, dtype=torch.float32)
+                .unsqueeze(0)
+                .expand(wrist_quat_w.shape[0], -1)
+            )
+            inv_base = quat_inv(base_rot)
+            v_tcp_final = quat_apply_yaw(inv_base, v_tcp_w)
+            ang_vel_final = quat_apply_yaw(inv_base, ang_vel_wrist_w)
         else:
             v_tcp_final = v_tcp_w
             ang_vel_final = ang_vel_wrist_w
