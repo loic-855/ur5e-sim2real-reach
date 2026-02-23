@@ -79,10 +79,6 @@ apptainer exec --nv \
             --headless \
             agent.algorithm.entropy_coef=0.04 \
             agent.algorithm.desired_kl=0.013 \
-            env.ee_position_reward=1.2 \
-            env.ee_orientation_reward=0.6 \
-            env.position_exp_scale=0.2 \
-            env.orientation_exp_scale=0.4 \
     "
 
 # Cleanup Cache
