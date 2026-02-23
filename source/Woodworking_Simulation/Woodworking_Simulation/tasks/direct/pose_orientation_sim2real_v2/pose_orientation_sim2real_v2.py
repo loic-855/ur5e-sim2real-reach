@@ -158,24 +158,24 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
 
     # action and coef scaling
     action_scale = 7.0
-    dof_velocity_scale = 0.1
+    dof_velocity_scale = 0.4
     env_reset = 1.0  # % of episodes that reset to home position vs fully random
-    position_exp_scale = 0.7  # low value favor precision
-    orientation_exp_scale = 0.5  # low value favor precision
-    curriculum_threshold_step = 18000
+    position_exp_scale = [0.7, 0.4, 0.2]  
+    orientation_exp_scale = 0.7  
+    curric = [5000, 10000, 15000]  # curriculum thresholds (steps)
 
     # reward weights
     ee_position_penalty = -0.30
-    ee_position_reward = 0.80
+    ee_position_reward = 1.2
     ee_orientation_penalty = -0.20
-    ee_orientation_reward = 0.40
+    ee_orientation_reward = 0.60
 
     # penalty weights
-    action_penalty_scale = -0.001
-    velocity_penalty_scale = -0.001
-    contact_penalty_scale = -0.01
+    action_penalty_scale = [-0.001, -0.005]
+    velocity_penalty_scale = [-0.001, -0.005]
+    contact_penalty_scale = [-0.01, -0.1]
     contact_force_threshold_penalty = 5.0
-    joint_limit_penalty_scale = -0.1
+    joint_limit_penalty_scale = [-0.01, -0.1] 
 
     # TCP velocity normalization (m/s)
     tcp_max_speed = 2.0
@@ -216,6 +216,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         # reward buffer (initialized here to ensure availability before first step)
         self.reward_buf = torch.zeros(self._num_envs, device=self.device, dtype=torch.float32)
         self._debug_step_count = 0
+        self.c_idx = 0 #curriculum index for rewards
 
         # env origins with global offset
         self.env_origins = (
@@ -350,6 +351,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
                     f"Action(clamped) sample: {clamped_sample}\n"
                     f"Increments sample: {inc_sample}\n"
                     f"Targets sample (pre-clamp): {targ_sample}\n"
+                    f"Targets sample (post-clamp): {self.robot_dof_targets[0].cpu().numpy()}\n"
                     f"Action min: {mins}\nAction max: {maxs}"
                 )
             except Exception:
@@ -456,8 +458,13 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
     def _get_rewards(self) -> torch.Tensor:
         self._debug_step_count += 1
-        # cur = self.common_step_counter > self.cfg.curriculum_threshold_step
-        # idx = 1 if cur else 0
+        if self.common_step_counter > self.cfg.curric[2]:
+            self.c_idx = 2
+        elif self.common_step_counter > self.cfg.curric[1]:
+            self.c_idx = 1
+        else:
+            self.c_idx = 0
+
 
         frame_data = self._frame_transformer.data
         tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
@@ -465,7 +472,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         # Position and orientation error/reward
         position_error = torch.norm(self.goal_pos_source - tcp_pos_source, dim=1)  # m
-        position_exp_error = torch.exp(-position_error / self.cfg.position_exp_scale)
+        position_exp_error = torch.exp(-position_error / self.cfg.position_exp_scale[self.c_idx])
 
         orientation_error = quat_error_magnitude(
             self.goal_quat_source, tcp_quat_source
@@ -510,7 +517,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         # Contact penalty
         contact_forces = self._compute_contact_metric()
         excess = torch.relu(contact_forces - self.cfg.contact_force_threshold_penalty)
-        contact_penalty = self.cfg.contact_penalty_scale * excess
+        contact_penalty = self.cfg.contact_penalty_scale[self.c_idx] * excess
 
         # Joint limit penalty
         threshold = 0.9
@@ -532,10 +539,10 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             + self.cfg.ee_position_reward * position_exp_error
             + self.cfg.ee_orientation_penalty * orientation_error
             + self.cfg.ee_orientation_reward * orientation_exp_error
-            + self.cfg.action_penalty_scale * action_cost
-            + self.cfg.velocity_penalty_scale * velocity_cost
+            + self.cfg.action_penalty_scale[self.c_idx] * action_cost
+            + self.cfg.velocity_penalty_scale[self.c_idx] * velocity_cost
             + self.cfg.goal_success_bonus * reward_success
-            + self.cfg.joint_limit_penalty_scale * reward_joint_limits
+            + self.cfg.joint_limit_penalty_scale[self.c_idx] * reward_joint_limits
             + contact_penalty
         )
 
@@ -543,7 +550,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             self.extras["log"] = {}
         self.extras["log"].update(
             {
-                "action_penalty": (self.cfg.action_penalty_scale * action_cost).mean(),
+                "action_penalty": (self.cfg.action_penalty_scale[self.c_idx] * action_cost).mean(),
                 "contact_force_max": contact_forces.max(),
                 "contact_force_mean": contact_forces.mean(),
                 "contact_penalty_mean": contact_penalty.mean(),
