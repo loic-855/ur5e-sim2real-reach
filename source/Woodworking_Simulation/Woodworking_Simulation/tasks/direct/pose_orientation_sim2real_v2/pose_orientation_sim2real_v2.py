@@ -71,7 +71,7 @@ BASE_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)  # Rotation locale en z
 
 TCP_OFFSET_LOCAL = (0.0, 0.0, 0.15)  # position du TCP par rapport au dernier joint (wrist_3_link)
 TCP_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)  # 
-from Woodworking_Simulation.common.domain_randomization import (
+from Woodworking_Simulation.common.domain_randomization_v2 import (
     ActionBuffer,
     ActuatorRandomizer,
     DomainRandomizationCfg,
@@ -192,6 +192,9 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     # If False, return raw (unnormalized) observations from the environment
     norm_obs: bool = True
 
+    # --- Domain Randomization (active in curriculum phase 3: step > 15000) ---
+    domain_rand: DomainRandomizationCfg = DomainRandomizationCfg()
+
 
 # ---------------------------------------------------------------------------
 # V2
@@ -279,6 +282,23 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         self._sample_goal()
 
+        # --- Domain Randomization helpers (active only in curriculum phase 3) ---
+        self._action_buffer = ActionBuffer(
+            num_envs=self._num_envs,
+            action_dim=self.cfg.action_space,
+            cfg=self.cfg.domain_rand,
+            device=self.device,
+        )
+        self._obs_buffer = ObservationBuffer(
+            num_envs=self._num_envs,
+            obs_dim=self.cfg.observation_space,
+            num_joints=6,
+            cfg=self.cfg.domain_rand,
+            device=self.device,
+        )
+        # ActuatorRandomizer is initialised after scene setup, defer to first _reset_idx
+        self._actuator_randomizer: ActuatorRandomizer | None = None
+
     # -- Scene setup --------------------------------------------------------
 
     def _setup_scene(self):
@@ -324,11 +344,16 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         self.prev_actions[:] = self.actions
         self.actions = actions.clone().clamp(-1.0, 1.0)
 
+        # Apply domain-randomised action delay/noise only in curriculum phase 3
+        effective_actions = self.actions
+        if self.c_idx >= 2:
+            effective_actions = self._action_buffer.push(self.actions)
+
         increments = (
             self.robot_dof_speed_scales.unsqueeze(0)
             * self.dt
             * self.cfg.dof_velocity_scale
-            * self.actions
+            * effective_actions
             * self.cfg.action_scale
         )
         targets = self.robot_dof_targets + increments
@@ -399,6 +424,8 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             ],
             dim=1,
         )
+        # Domain randomisation on observations (curriculum phase 3 only)
+        obs = self._apply_domain_rand_obs(obs)
         if self.cfg.debug and self.common_step_counter % 100 == 0:
             sample = obs[0].cpu().numpy()
             print(
@@ -411,48 +438,54 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             print(f"Obs min: {mins}\nObs max: {maxs}")
         return {"policy": obs}
 
-    def _get_observations_v3(self) -> dict[str, torch.Tensor]:
-        """Return raw (unnormalized) observations.
+    def _apply_domain_rand_obs(self, obs: torch.Tensor) -> torch.Tensor:
+        """Apply observation domain randomisation (delay + noise) when in curriculum phase 3."""
+        if self.c_idx >= 2:
+            return self._obs_buffer.append_and_get(obs)
+        return obs
 
-        Order preserved: to_target (m), orientation_error (3 raw components),
-        joint_pos (rad), joint_vel (rad/s), tcp_linear_vel (m/s), tcp_angular_vel (rad/s)
-        """
-        frame_data = self._frame_transformer.data
-        tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
-        tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
+    # def _get_observations_v3(self) -> dict[str, torch.Tensor]:
+    #     """Return raw (unnormalized) observations.
 
-        to_target = self.goal_pos_source - tcp_pos_source  # meters (unnormalized)
-        # quat_box_minus returns a 3-vector 'box' error; keep raw (not divided by pi)
-        orientation_error = quat_box_minus(self.goal_quat_source, tcp_quat_source)
+    #     Order preserved: to_target (m), orientation_error (3 raw components),
+    #     joint_pos (rad), joint_vel (rad/s), tcp_linear_vel (m/s), tcp_angular_vel (rad/s)
+    #     """
+    #     frame_data = self._frame_transformer.data
+    #     tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
+    #     tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
 
-        joint_pos = self._robot.data.joint_pos
-        joint_vel = self._robot.data.joint_vel
+    #     to_target = self.goal_pos_source - tcp_pos_source  # meters (unnormalized)
+    #     # quat_box_minus returns a 3-vector 'box' error; keep raw (not divided by pi)
+    #     orientation_error = quat_box_minus(self.goal_quat_source, tcp_quat_source)
 
-        tcp_angular_vel, tcp_linear_vel = self.compute_tcp_states()
+    #     joint_pos = self._robot.data.joint_pos
+    #     joint_vel = self._robot.data.joint_vel
 
-        obs = torch.cat(
-            [
-                to_target,  # 3
-                orientation_error,  # 3
-                joint_pos,  # 6
-                joint_vel,  # 6
-                tcp_linear_vel,  # 3
-                tcp_angular_vel,  # 3
-            ],
-            dim=1,
-        )
+    #     tcp_angular_vel, tcp_linear_vel = self.compute_tcp_states()
 
-        if self.cfg.debug and self.common_step_counter % 100 == 0:
-            sample = obs[0].cpu().numpy()
-            print(
-                f"[V3 Observations] tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, tcp_quat_source={tcp_quat_source[0].cpu().numpy()}, "
-                f"Observation vector sample: {sample}"
-            )
-            mins = obs.min(dim=0).values.cpu().numpy()
-            maxs = obs.max(dim=0).values.cpu().numpy()
-            print(f"[V3 Obs min]: {mins}\n[V3 Obs max]: {maxs}")
+    #     obs = torch.cat(
+    #         [
+    #             to_target,  # 3
+    #             orientation_error,  # 3
+    #             joint_pos,  # 6
+    #             joint_vel,  # 6
+    #             tcp_linear_vel,  # 3
+    #             tcp_angular_vel,  # 3
+    #         ],
+    #         dim=1,
+    #     )
 
-        return {"policy": obs}
+    #     if self.cfg.debug and self.common_step_counter % 100 == 0:
+    #         sample = obs[0].cpu().numpy()
+    #         print(
+    #             f"[V3 Observations] tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, tcp_quat_source={tcp_quat_source[0].cpu().numpy()}, "
+    #             f"Observation vector sample: {sample}"
+    #         )
+    #         mins = obs.min(dim=0).values.cpu().numpy()
+    #         maxs = obs.max(dim=0).values.cpu().numpy()
+    #         print(f"[V3 Obs min]: {mins}\n[V3 Obs max]: {maxs}")
+
+    #     return {"policy": obs}
 
     # -- Rewards ------------------------------------------------------------
 
@@ -589,6 +622,14 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
     def _reset_idx(self, env_ids: torch.Tensor):  # type: ignore
         super()._reset_idx(env_ids)  # type: ignore
 
+        # Lazily create the actuator randomizer (needs robot to be initialised)
+        if self._actuator_randomizer is None:
+            self._actuator_randomizer = ActuatorRandomizer(
+                robot=self._robot,
+                cfg=self.cfg.domain_rand,
+                device=self.device,
+            )
+
         # Split envs: some reset to home, others fully random
         mask = torch.rand(len(env_ids), device=self.device) < self.cfg.env_reset
         home_ids = env_ids[mask]
@@ -608,6 +649,12 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         self.actions[env_ids] = 0.0
         self.prev_actions[env_ids] = 0.0
         self.success_frames_count[env_ids] = 0
+
+        # Reset DR buffers & apply actuator randomisation in curriculum phase 3
+        self._action_buffer.reset(env_ids)
+        self._obs_buffer.reset(env_ids)
+        if self.c_idx >= 2:
+            self._actuator_randomizer.sample_and_apply(env_ids)
 
         self._sample_goal(env_ids)
 
@@ -720,7 +767,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             ]
             top_body = body_names[max_body_idx[0].item()] if body_names else "?"
             print(
-                f"[ContactDebug step={self._debug_step_count}] "
+                f"[Contact Debug step={self._debug_step_count}] "
                 f"env0 max={max_per_env[0].item():.2f}N ({top_body}) | "
                 f"all_envs max={max_per_env.max().item():.2f}N mean={max_per_env.mean().item():.2f}N\n"
                 f"  per-body: {', '.join(parts)}"
