@@ -180,7 +180,7 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     # TCP velocity normalization (m/s)
     tcp_max_speed = 2.0
 
-    # Bonus reward setup
+    # Bonus reward setup_sim2real_v2
     pos_threshold = 0.02  # 2 cm
     rot_threshold = 0.1  # ~5.7 degrés (en radians)
     required_frames = 60  # 1 seconde à 60Hz
