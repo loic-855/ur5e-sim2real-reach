@@ -559,7 +559,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
                 ).mean(),
                 "goal_reached_mean": reward_success.mean(),
                 "joint_limit_penalty_mean": (
-                    self.cfg.joint_limit_penalty_scale * reward_joint_limits
+                    self.cfg.joint_limit_penalty_scale[self.c_idx] * reward_joint_limits
                 ).mean(),
                 "ori_error": orientation_error.mean(),
                 "ori_reward": (
@@ -571,7 +571,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
                 "rewards_std": reward.std(),
                 "step_counter": self.common_step_counter,
                 "velocity_penalty": (
-                    self.cfg.velocity_penalty_scale * velocity_cost
+                    self.cfg.velocity_penalty_scale[self.c_idx] * velocity_cost
                 ).mean(),
             }
         )
