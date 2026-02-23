@@ -3,16 +3,16 @@
 #   euler/launch_sweep.sh  (generates & submits SLURM array jobs)
 
 #SBATCH -n 1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=2
 #SBATCH --gpus=rtx_4090:1
-#SBATCH --time=04:00:00
-#SBATCH --mem-per-cpu=6000
-#SBATCH --job-name="ur5e_train"
+#SBATCH --time=01:00:00
+#SBATCH --mem-per-cpu=8000
+#SBATCH --job-name="WWSim-Pose-Orientation-Sim2Real-Direct-v2"
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
 
 # --- CONFIGURATION ---
-TASK_NAME="Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
+TASK_NAME="WWSim-Pose-Orientation-Sim2Real-Direct-v2"
 # UPDATE THIS PATH to where you uploaded your .sif file
 SIF_PATH="/cluster/scratch/$USER/isaac_euler_salziegl.sif"
 
@@ -75,8 +75,14 @@ apptainer exec --nv \
         # 2. Run Training
         echo 'Starting Training...'
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
-            --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 agent.experiment_name=actuators-high_domain_rand-high_network-ext4_action_rate-current_v2 \
-            --headless
+            --task $TASK_NAME\
+            --headless \
+            agent.algorithm.entropy_coef=0.04 \
+            agent.algorithm.desired_kl=0.013 \
+            env.ee_position_reward=1.2 \
+            env.ee_orientation_reward=0.6 \
+            env.position_exp_scale=0.2 \
+            env.orientation_exp_scale=0.4 \
     "
 
 # Cleanup Cache

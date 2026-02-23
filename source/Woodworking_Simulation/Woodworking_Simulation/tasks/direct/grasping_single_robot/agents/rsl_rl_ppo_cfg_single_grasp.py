@@ -36,3 +36,7 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.013, #0.008
         max_grad_norm=1.0,
     )
+
+    logger = "wandb"
+    wandb_project = "isaaclab_euler_grasping"
+    monitor_gym = True

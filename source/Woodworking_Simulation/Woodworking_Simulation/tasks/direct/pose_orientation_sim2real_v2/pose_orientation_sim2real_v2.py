@@ -161,7 +161,7 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     dof_velocity_scale = 0.1
     env_reset = 1.0  # % of episodes that reset to home position vs fully random
     position_exp_scale = 0.7  # low value favor precision
-    rotation_exp_scale = 0.5  # low value favor precision
+    orientation_exp_scale = 0.5  # low value favor precision
     curriculum_threshold_step = 18000
 
     # reward weights
@@ -471,7 +471,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             self.goal_quat_source, tcp_quat_source
         )  # rad
         orientation_exp_error = torch.exp(
-            -orientation_error / self.cfg.rotation_exp_scale
+            -orientation_error / self.cfg.orientation_exp_scale
         )
         # Penalities
         action_cost = torch.sum(self.actions**2, dim=1)
