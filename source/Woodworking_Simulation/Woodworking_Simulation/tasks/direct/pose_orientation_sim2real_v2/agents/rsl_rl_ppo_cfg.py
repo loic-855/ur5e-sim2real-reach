@@ -21,8 +21,8 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     experiment_name = "pose_orientation_sim2real_v2"
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
-        actor_obs_normalization=True,
-        critic_obs_normalization=True,
+        actor_obs_normalization=False,
+        critic_obs_normalization=False,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation="elu",

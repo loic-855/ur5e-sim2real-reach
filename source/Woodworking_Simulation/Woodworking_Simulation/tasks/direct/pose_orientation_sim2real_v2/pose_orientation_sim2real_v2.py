@@ -159,7 +159,7 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     # action and coef scaling
     action_scale = 7.0
     dof_velocity_scale = 0.1
-    env_reset = 0.4  # % of episodes that reset to home position vs fully random
+    env_reset = 1.0  # % of episodes that reset to home position vs fully random
     position_exp_scale = 0.7  # low value favor precision
     rotation_exp_scale = 0.5  # low value favor precision
     curriculum_threshold_step = 18000
@@ -167,6 +167,7 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     # reward weights
     ee_position_penalty = -0.30
     ee_position_reward = 0.80
+    ee_orientation_penalty = -0.20
     ee_orientation_reward = 0.40
 
     # penalty weights
@@ -175,6 +176,9 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     contact_penalty_scale = -0.01
     contact_force_threshold_penalty = 5.0
     joint_limit_penalty_scale = -0.1
+
+    # TCP velocity normalization (m/s)
+    tcp_max_speed = 2.0
 
     # Bonus reward setup
     pos_threshold = 0.02  # 2 cm
@@ -185,6 +189,8 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     # --- Debug general toggle (set True to see markers and print statements) -----------
     debug = False
     contact_debug_interval: int = 0
+    # If False, return raw (unnormalized) observations from the environment
+    norm_obs: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +336,24 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             self.robot_dof_lower_limits.unsqueeze(0),
             self.robot_dof_upper_limits.unsqueeze(0),
         )
+        # Debug: print actions and resulting targets (sample + min/max)
+        if self.cfg.debug and self.common_step_counter % 100 == 0:
+            try:
+                raw_sample = actions[0].cpu().numpy()
+                clamped_sample = self.actions[0].cpu().numpy()
+                inc_sample = increments[0].cpu().numpy()
+                targ_sample = targets[0].cpu().numpy()
+                mins = self.actions.min(dim=0).values.cpu().numpy()
+                maxs = self.actions.max(dim=0).values.cpu().numpy()
+                print(
+                    f"Action(raw) sample: {raw_sample}\n"
+                    f"Action(clamped) sample: {clamped_sample}\n"
+                    f"Increments sample: {inc_sample}\n"
+                    f"Targets sample (pre-clamp): {targ_sample}\n"
+                    f"Action min: {mins}\nAction max: {maxs}"
+                )
+            except Exception:
+                pass
 
     def _apply_action(self):
         self._robot.set_joint_position_target(self.robot_dof_targets)
@@ -337,6 +361,10 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
     # -- Observations -------------------------------------------------------
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
+        # Allow switching to a raw (non-normalized) observation mode
+        if not getattr(self.cfg, "norm_obs", True):
+            return self._get_observations_v3()
+
         frame_data = self._frame_transformer.data
         tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
         tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
@@ -354,7 +382,8 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         )
         joint_vel_norm = self._robot.data.joint_vel / MAX_JOINT_VEL
         tcp_angular_vel, tcp_linear_vel = self.compute_tcp_states()
-        tcp_linear_vel_norm = tcp_linear_vel # Assuming max TCP speed of ~2 m/s for normalization
+        # Normalize linear velocity by configured max speed to keep values on similar scale
+        tcp_linear_vel_norm = tcp_linear_vel / self.cfg.tcp_max_speed
         tcp_angular_vel_norm = tcp_angular_vel / torch.pi  # Assuming max angular velocity of ~180 deg/s for normalization
 
         obs = torch.cat(
@@ -368,10 +397,59 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             ],
             dim=1,
         )
-        if self.cfg.debug and self.common_step_counter % 1000 == 0:
+        if self.cfg.debug and self.common_step_counter % 100 == 0:
+            sample = obs[0].cpu().numpy()
             print(
                 f"Observations: tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, tcp_quat_source={tcp_quat_source[0].cpu().numpy()}, "
+                f"Observation vector sample: {sample}"
             )
+            # additional debug: per-component min/max for the batch
+            mins = obs.min(dim=0).values.cpu().numpy()
+            maxs = obs.max(dim=0).values.cpu().numpy()
+            print(f"Obs min: {mins}\nObs max: {maxs}")
+        return {"policy": obs}
+
+    def _get_observations_v3(self) -> dict[str, torch.Tensor]:
+        """Return raw (unnormalized) observations.
+
+        Order preserved: to_target (m), orientation_error (3 raw components),
+        joint_pos (rad), joint_vel (rad/s), tcp_linear_vel (m/s), tcp_angular_vel (rad/s)
+        """
+        frame_data = self._frame_transformer.data
+        tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
+        tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
+
+        to_target = self.goal_pos_source - tcp_pos_source  # meters (unnormalized)
+        # quat_box_minus returns a 3-vector 'box' error; keep raw (not divided by pi)
+        orientation_error = quat_box_minus(self.goal_quat_source, tcp_quat_source)
+
+        joint_pos = self._robot.data.joint_pos
+        joint_vel = self._robot.data.joint_vel
+
+        tcp_angular_vel, tcp_linear_vel = self.compute_tcp_states()
+
+        obs = torch.cat(
+            [
+                to_target,  # 3
+                orientation_error,  # 3
+                joint_pos,  # 6
+                joint_vel,  # 6
+                tcp_linear_vel,  # 3
+                tcp_angular_vel,  # 3
+            ],
+            dim=1,
+        )
+
+        if self.cfg.debug and self.common_step_counter % 100 == 0:
+            sample = obs[0].cpu().numpy()
+            print(
+                f"[V3 Observations] tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, tcp_quat_source={tcp_quat_source[0].cpu().numpy()}, "
+                f"Observation vector sample: {sample}"
+            )
+            mins = obs.min(dim=0).values.cpu().numpy()
+            maxs = obs.max(dim=0).values.cpu().numpy()
+            print(f"[V3 Obs min]: {mins}\n[V3 Obs max]: {maxs}")
+
         return {"policy": obs}
 
     # -- Rewards ------------------------------------------------------------
@@ -452,6 +530,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         reward = (
             self.cfg.ee_position_penalty * position_error
             + self.cfg.ee_position_reward * position_exp_error
+            + self.cfg.ee_orientation_penalty * orientation_error
             + self.cfg.ee_orientation_reward * orientation_exp_error
             + self.cfg.action_penalty_scale * action_cost
             + self.cfg.velocity_penalty_scale * velocity_cost
@@ -530,11 +609,6 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             marker_idx = torch.zeros(
                 len(env_ids), dtype=torch.int64, device=self.device
             )
-            self.goal_marker.visualize(
-                self.goal_pos_source[env_ids] + self.env_origins[env_ids],
-                self.goal_quat_source[env_ids],
-                marker_indices=marker_idx,
-            )
             self.origin_marker.visualize(self.env_origins, marker_indices=marker_idx)
             self._visualize_source_frame(env_ids, marker_idx)
 
@@ -567,6 +641,16 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         # Reset goal timer for resampled envs
         self.goal_steps_elapsed[env_ids] = 0
+
+        if self.cfg.debug:
+            marker_idx = torch.zeros(
+                len(env_ids), dtype=torch.int64, device=self.device
+            )
+            self.goal_marker.visualize(
+                    self.goal_pos_source[env_ids] + self.env_origins[env_ids],
+                    self.goal_quat_source[env_ids],
+                    marker_indices=marker_idx,
+                )
 
     # -- Debug helpers ------------------------------------------------------
 
