@@ -171,16 +171,16 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     ee_orientation_reward = 0.60
 
     # penalty weights
-    action_penalty_scale = [-0.001, -0.005]
-    velocity_penalty_scale = [-0.001, -0.005]
-    contact_penalty_scale = [-0.01, -0.1]
+    action_penalty_scale = [-0.001, -0.005, -0.005]
+    velocity_penalty_scale = [-0.001, -0.005, -0.005]
+    contact_penalty_scale = [-0.01, -0.1, -0.1]
     contact_force_threshold_penalty = 5.0
-    joint_limit_penalty_scale = [-0.01, -0.1] 
+    joint_limit_penalty_scale = [-0.01, -0.1, -0.1] 
 
     # TCP velocity normalization (m/s)
     tcp_max_speed = 2.0
 
-    # Bonus reward setup
+    # Bonus reward setup_sim2real_v2
     pos_threshold = 0.02  # 2 cm
     rot_threshold = 0.1  # ~5.7 degrés (en radians)
     required_frames = 60  # 1 seconde à 60Hz
