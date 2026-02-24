@@ -160,6 +160,8 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     action_scale = 7.0
     dof_velocity_scale = 0.4
     env_reset = 1.0  # % of episodes that reset to home position vs fully random
+    progressive_reset: bool = True  # gradually expand reset range from home to full joint limits
+    progressive_reset_steps: int = 25000  # steps to go from ±0.125 rad around home to full joint range
     position_exp_scale = 0.4
     orientation_exp_scale = 0.7  
     curric = [5000, 10000, 15000]  # curriculum thresholds (steps)
@@ -774,15 +776,41 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         return max_per_env
 
     def _reset_to_home(self, env_ids: torch.Tensor):
-        """Reset to a fixed home pose (for easier curriculum learning)."""
-        home_joint_pos = self._robot.data.default_joint_pos[env_ids] + sample_uniform(
-            -0.125,
-            0.125,
-            (len(env_ids), self._robot.num_joints),
-            self.device,
-        )
-        self.robot_dof_targets[env_ids] = home_joint_pos
-        self._robot.data.joint_pos[env_ids] = home_joint_pos
+        """Reset around the home pose.
+
+        When ``progressive_reset`` is enabled the sampling range grows linearly
+        from ±0.125 rad around home to the full joint limits over
+        ``progressive_reset_steps`` training steps.  The bounds are asymmetric
+        per joint because the home position is not centred in joint space.
+        """
+        home = self._robot.data.default_joint_pos[env_ids]  # (N, nj)
+
+        if self.cfg.progressive_reset:
+            progress = min(1.0, self.common_step_counter / self.cfg.progressive_reset_steps)
+
+            # Tight initial bounds clamped to stay inside joint limits
+            initial_half = 0.125
+            tight_low = (home - initial_half).clamp(min=self.robot_dof_lower_limits)
+            tight_high = (home + initial_half).clamp(max=self.robot_dof_upper_limits)
+
+            # Linearly interpolate toward full joint limits
+            low = tight_low + progress * (self.robot_dof_lower_limits - tight_low)
+            high = tight_high + progress * (self.robot_dof_upper_limits - tight_high)
+
+            joint_pos = sample_uniform(
+                low, high,
+                (len(env_ids), self._robot.num_joints),
+                self.device,
+            )
+        else:
+            joint_pos = home + sample_uniform(
+                -0.125, 0.125,
+                (len(env_ids), self._robot.num_joints),
+                self.device,
+            )
+
+        self.robot_dof_targets[env_ids] = joint_pos
+        self._robot.data.joint_pos[env_ids] = joint_pos
         self._robot.data.joint_vel[env_ids] = 0.0
 
     def _reset_random(self, env_ids: torch.Tensor):
