@@ -4,9 +4,9 @@
 # Task: WWSim-Pose-Orientation-Sim2Real-Direct-v2
 # Sweep: position_exp_scale orientation_exp_scale x dof_velocity_scale
 # Grid: 3 × 3 x3 = 27 runs
-# WandB: project=sim2real_v2_exp_scale, experiment_name=sim2real_v2_exp_scale
+# WandB: project=sim2real_v2_exp_scale_2, experiment_name=sim2real_v2_exp_scale_2
 #
-# Usage:  python euler/generate_sweep.py --config euler/sweep_sim2real_v2_base_opti.yaml --submit
+# Usage:  python euler/generate_sweep.py --config euler/sweep_sim2real_v2_exp_scale.yaml --submit
 # ============================================================================
 
 task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v2"
@@ -17,13 +17,13 @@ slurm:
   gpus: "rtx_4090:1"
   cpus_per_task: 2
   mem_per_cpu: 8000
-  nodes: 4  
+  nodes: 2  
 
 # Overrides applied to EVERY run
 base_overrides:
   - "agent.max_iterations=2500"
-  - "agent.wandb_project=sim2real_v2_exp_scale"
-  - "agent.experiment_name=sim2real_v2_exp_scale"
+  - "agent.wandb_project=sim2real_v2_exp_scale_2"
+  - "agent.experiment_name=sim2real_v2_exp_scale_2"
 
 # ============================================================================
 # Sweep Dimensions (Cartesian Product → 3 × 3 x 3 = 27 runs)
