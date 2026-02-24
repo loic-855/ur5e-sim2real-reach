@@ -160,9 +160,10 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     action_scale = 7.0
     dof_velocity_scale = 0.4
     env_reset = 1.0  # % of episodes that reset to home position vs fully random
-    position_exp_scale = [0.7, 0.4, 0.2]  
+    position_exp_scale = 0.4
     orientation_exp_scale = 0.7  
     curric = [5000, 10000, 15000]  # curriculum thresholds (steps)
+    curric_active = False  # whether to use curriculum learning (curric thresholds and reward scaling)
 
     # reward weights
     ee_position_penalty = -0.30
@@ -171,11 +172,11 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     ee_orientation_reward = 0.60
 
     # penalty weights
-    action_penalty_scale = [-0.001, -0.001, -0.001]
-    velocity_penalty_scale = [-0.001, -0.001, -0.001]
-    contact_penalty_scale = [-0.01, -0.1, -0.1]
+    action_penalty_scale = -0.001
+    velocity_penalty_scale = -0.001
+    contact_penalty_scale = -0.01
     contact_force_threshold_penalty = 5.0
-    joint_limit_penalty_scale = [-0.01, -0.01, -0.05] 
+    joint_limit_penalty_scale = -0.01
 
     # TCP velocity normalization (m/s)
     tcp_max_speed = 2.0
@@ -193,7 +194,9 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     norm_obs: bool = True
 
     # --- Domain Randomization (active in curriculum phase 3: step > 15000) ---
-    domain_rand: DomainRandomizationCfg = DomainRandomizationCfg()
+    domain_rand: DomainRandomizationCfg = DomainRandomizationCfg(
+        enabled=True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +285,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         self._sample_goal()
 
-        # --- Domain Randomization helpers (active only in curriculum phase 3) ---
+        # --- Domain Randomization helpers ---
         self._action_buffer = ActionBuffer(
             num_envs=self._num_envs,
             action_dim=self.cfg.action_space,
@@ -346,7 +349,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         # Apply domain-randomised action delay/noise only in curriculum phase 3
         effective_actions = self.actions
-        if self.c_idx >= 2:
+        if self.cfg.domain_rand.enabled:
             effective_actions = self._action_buffer.push(self.actions)
 
         increments = (
@@ -425,7 +428,9 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             dim=1,
         )
         # Domain randomisation on observations (curriculum phase 3 only)
-        obs = self._apply_domain_rand_obs(obs)
+        if self.cfg.domain_rand.enabled:
+            obs = self._obs_buffer.append_and_get(obs)
+
         if self.cfg.debug and self.common_step_counter % 100 == 0:
             sample = obs[0].cpu().numpy()
             print(
@@ -437,12 +442,6 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             maxs = obs.max(dim=0).values.cpu().numpy()
             print(f"Obs min: {mins}\nObs max: {maxs}")
         return {"policy": obs}
-
-    def _apply_domain_rand_obs(self, obs: torch.Tensor) -> torch.Tensor:
-        """Apply observation domain randomisation (delay + noise) when in curriculum phase 3."""
-        if self.c_idx >= 2:
-            return self._obs_buffer.append_and_get(obs)
-        return obs
 
     # def _get_observations_v3(self) -> dict[str, torch.Tensor]:
     #     """Return raw (unnormalized) observations.
@@ -491,13 +490,12 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
     def _get_rewards(self) -> torch.Tensor:
         self._debug_step_count += 1
-        if self.common_step_counter > self.cfg.curric[2]:
-            self.c_idx = 2
-        elif self.common_step_counter > self.cfg.curric[1]:
-            self.c_idx = 1
-        else:
-            self.c_idx = 0
-
+        # if self.common_step_counter > self.cfg.curric[2] and self.cfg.curric_active:
+        #     self.c_idx = 2
+        # elif self.common_step_counter > self.cfg.curric[1] and self.cfg.curric_active:
+        #     self.c_idx = 1
+        # else:
+        #     self.c_idx = 0
 
         frame_data = self._frame_transformer.data
         tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
@@ -505,7 +503,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         # Position and orientation error/reward
         position_error = torch.norm(self.goal_pos_source - tcp_pos_source, dim=1)  # m
-        position_exp_error = torch.exp(-position_error / self.cfg.position_exp_scale[self.c_idx])
+        position_exp_error = torch.exp(-position_error / self.cfg.position_exp_scale)
 
         orientation_error = quat_error_magnitude(
             self.goal_quat_source, tcp_quat_source
@@ -550,7 +548,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         # Contact penalty
         contact_forces = self._compute_contact_metric()
         excess = torch.relu(contact_forces - self.cfg.contact_force_threshold_penalty)
-        contact_penalty = self.cfg.contact_penalty_scale[self.c_idx] * excess
+        contact_penalty = self.cfg.contact_penalty_scale * excess
 
         # Joint limit penalty
         threshold = 0.9
@@ -572,10 +570,10 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             + self.cfg.ee_position_reward * position_exp_error
             + self.cfg.ee_orientation_penalty * orientation_error
             + self.cfg.ee_orientation_reward * orientation_exp_error
-            + self.cfg.action_penalty_scale[self.c_idx] * action_cost
-            + self.cfg.velocity_penalty_scale[self.c_idx] * velocity_cost
+            + self.cfg.action_penalty_scale * action_cost
+            + self.cfg.velocity_penalty_scale * velocity_cost
             + self.cfg.goal_success_bonus * reward_success
-            + self.cfg.joint_limit_penalty_scale[self.c_idx] * reward_joint_limits
+            + self.cfg.joint_limit_penalty_scale * reward_joint_limits
             + contact_penalty
         )
 
@@ -583,7 +581,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             self.extras["log"] = {}
         self.extras["log"].update(
             {
-                "action_penalty": (self.cfg.action_penalty_scale[self.c_idx] * action_cost).mean(),
+                "action_penalty": (self.cfg.action_penalty_scale * action_cost).mean(),
                 "contact_force_max": contact_forces.max(),
                 "contact_force_mean": contact_forces.mean(),
                 "contact_penalty_mean": contact_penalty.mean(),
@@ -592,7 +590,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
                 ).mean(),
                 "goal_reached_mean": reward_success.mean(),
                 "joint_limit_penalty_mean": (
-                    self.cfg.joint_limit_penalty_scale[self.c_idx] * reward_joint_limits
+                    self.cfg.joint_limit_penalty_scale * reward_joint_limits
                 ).mean(),
                 "ori_error": orientation_error.mean(),
                 "ori_reward": (
@@ -604,7 +602,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
                 "rewards_std": reward.std(),
                 "step_counter": self.common_step_counter,
                 "velocity_penalty": (
-                    self.cfg.velocity_penalty_scale[self.c_idx] * velocity_cost
+                    self.cfg.velocity_penalty_scale * velocity_cost
                 ).mean(),
             }
         )
@@ -653,7 +651,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         # Reset DR buffers & apply actuator randomisation in curriculum phase 3
         self._action_buffer.reset(env_ids)
         self._obs_buffer.reset(env_ids)
-        if self.c_idx >= 2:
+        if self.cfg.domain_rand.enabled:
             self._actuator_randomizer.sample_and_apply(env_ids)
 
         self._sample_goal(env_ids)
