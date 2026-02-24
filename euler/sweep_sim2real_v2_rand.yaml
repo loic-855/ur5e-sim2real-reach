@@ -1,0 +1,103 @@
+# ============================================================================
+# Hyperparameter Sweep: Domain Randomization Ablation Study
+# ============================================================================
+# Task: WWSim-Pose-Orientation-Sim2Real-Direct-v2
+# Sweep: 5 binary dimensions of domain randomization
+# Grid: 2 × 2 × 2 × 2 × 2 = 32 runs
+# WandB: project=sim2real, experiment_name=sim2real_v2_rand
+#
+# Tests all combinations of:
+#   - action_delay (enabled/disabled)
+#   - action_noise (enabled/disabled)
+#   - observation_delay (enabled/disabled)
+#   - observation_noise (enabled/disabled)
+#   - actuator_randomization (stiffness/damping/friction, enabled/disabled)
+#
+# Usage:  python euler/generate_sweep.py --config euler/sweep_sim2real_v2_rand.yaml --submit
+# ============================================================================
+
+task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v2"
+
+# --- SLURM settings ---
+slurm:
+  time_per_task: "00:35:00"  # ~30-35 min per run
+  gpus: "rtx_4090:1"
+  cpus_per_task: 2
+  mem_per_cpu: 8000
+  nodes: 4  # 32 runs on 4 nodes (8 + 8 + 8 + 8)
+
+# Overrides applied to EVERY run
+base_overrides:
+  - "agent.max_iterations=2500"
+  - "agent.wandb_project=sim2real_v2_rand"
+  - "agent.experiment_name=sim2real_v2_rand"
+
+# ============================================================================
+# Sweep Dimensions (Cartesian Product → 2 × 2 × 2 × 2 × 2 = 32 runs)
+# ============================================================================
+
+dimensions:
+
+  # -------------------------------------------------------------------
+  # Action Delay Randomization
+  # Controls action_delay_range in domain randomization
+  # -------------------------------------------------------------------
+  action_delay:
+    off:
+      - "env.domain_rand.action_delay_range=[0,0]"
+    on:
+      - "env.domain_rand.action_delay_range=[0,3]"
+
+  # -------------------------------------------------------------------
+  # Action Noise Randomization
+  # Controls action_noise_std in domain randomization
+  # -------------------------------------------------------------------
+  action_noise:
+    off:
+      - "env.domain_rand.action_noise_std=0.0"
+    on:
+      - "env.domain_rand.action_noise_std=0.025"
+
+  # -------------------------------------------------------------------
+  # Observation Delay Randomization
+  # Controls obs_delay_range independently
+  # -------------------------------------------------------------------
+  observation_delay:
+    off:
+      - "env.domain_rand.obs_delay_range=[0,0]"
+    on:
+      - "env.domain_rand.obs_delay_range=[0,3]"
+
+  # -------------------------------------------------------------------
+  # Observation Noise Randomization
+  # Disables all observation noise components (pos, quat, joint, tcp)
+  # -------------------------------------------------------------------
+  observation_noise:
+    off:
+      - "env.domain_rand.obs_noise_std_pos=0.0"
+      - "env.domain_rand.obs_noise_std_quat=0.0"
+      - "env.domain_rand.obs_noise_std_joint_pos=0.0"
+      - "env.domain_rand.obs_noise_std_joint_vel=0.0"
+      - "env.domain_rand.obs_noise_std_tcp_lin_vel=0.0"
+      - "env.domain_rand.obs_noise_std_tcp_ang_vel=0.0"
+    on:
+      - "env.domain_rand.obs_noise_std_pos=0.005"
+      - "env.domain_rand.obs_noise_std_quat=0.025"
+      - "env.domain_rand.obs_noise_std_joint_pos=0.012"
+      - "env.domain_rand.obs_noise_std_joint_vel=0.025"
+      - "env.domain_rand.obs_noise_std_tcp_lin_vel=0.02"
+      - "env.domain_rand.obs_noise_std_tcp_ang_vel=0.02"
+
+  # -------------------------------------------------------------------
+  # Actuator Randomization (stiffness, damping, friction)
+  # Disables randomization by setting scale ranges to (1.0, 1.0)
+  # -------------------------------------------------------------------
+  actuator_randomization:
+    off:
+      - "env.domain_rand.stiffness_scale_range=[1.0,1.0]"
+      - "env.domain_rand.damping_scale_range=[1.0,1.0]"
+      - "env.domain_rand.friction_variation=0.0"
+    on:
+      - "env.domain_rand.stiffness_scale_range=[0.8,1.2]"
+      - "env.domain_rand.damping_scale_range=[0.8,1.2]"
+      - "env.domain_rand.friction_variation=0.35"
