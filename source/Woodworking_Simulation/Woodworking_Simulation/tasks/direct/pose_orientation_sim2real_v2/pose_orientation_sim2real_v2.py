@@ -160,7 +160,7 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     action_scale = 7.0
     dof_velocity_scale = 0.4
     env_reset = 1.0  # % of episodes that reset to home position vs fully random
-    progressive_reset: bool = True  # gradually expand reset range from home to full joint limits
+    progressive_reset: bool = False  # gradually expand reset range from home to full joint limits
     progressive_reset_steps: int = 25000  # steps to go from ±0.125 rad around home to full joint range
     position_exp_scale = 0.4
     orientation_exp_scale = 0.7  
@@ -197,7 +197,7 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
 
     # --- Domain Randomization (active in curriculum phase 3: step > 15000) ---
     domain_rand: DomainRandomizationCfg = DomainRandomizationCfg(
-        enabled=True
+        enabled=False
     )
 
 
