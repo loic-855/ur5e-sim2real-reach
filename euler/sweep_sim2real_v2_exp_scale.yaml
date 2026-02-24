@@ -1,0 +1,74 @@
+# ============================================================================
+# Hyperparameter Sweep: Sim2Real v2 Base Optimization
+# ============================================================================
+# Task: WWSim-Pose-Orientation-Sim2Real-Direct-v2
+# Sweep: position_exp_scale orientation_exp_scale x dof_velocity_scale
+# Grid: 3 × 3 x3 = 27 runs
+# WandB: project=sim2real_v2_exp_scale, experiment_name=sim2real_v2_exp_scale
+#
+# Usage:  python euler/generate_sweep.py --config euler/sweep_sim2real_v2_base_opti.yaml --submit
+# ============================================================================
+
+task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v2"
+
+# --- SLURM settings ---
+slurm:
+  time_per_task: "00:35:00"  # ~30-35 min per run
+  gpus: "rtx_4090:1"
+  cpus_per_task: 2
+  mem_per_cpu: 8000
+  nodes: 4  
+
+# Overrides applied to EVERY run
+base_overrides:
+  - "agent.max_iterations=2500"
+  - "agent.wandb_project=sim2real_v2_exp_scale"
+  - "agent.experiment_name=sim2real_v2_exp_scale"
+
+# ============================================================================
+# Sweep Dimensions (Cartesian Product → 3 × 3 x 3 = 27 runs)
+# ============================================================================
+
+dimensions:
+
+  # -------------------------------------------------------------------
+  # Position Exponential Scale
+  # Controls the exponential decay factor in position reward
+  # Lower values (0.2) = tighter tolerance, stronger reward gradient
+  # Higher values (0.7) = looser tolerance, softer gradient
+  # -------------------------------------------------------------------
+  position_exp_scale:
+    low:
+      - "env.position_exp_scale=0.2"
+    medium:
+      - "env.position_exp_scale=0.4"
+    high:
+      - "env.position_exp_scale=0.7"
+
+  # -------------------------------------------------------------------
+  # Orientation Exponential Scale
+  # Controls the exponential decay factor in orientation reward
+  # Lower values (0.2) = tighter tolerance, stronger reward gradient
+  # Higher values (0.7) = looser tolerance, softer gradient
+  # -------------------------------------------------------------------
+  orientation_exp_scale:
+    low:
+      - "env.orientation_exp_scale=0.2"
+    medium:
+      - "env.orientation_exp_scale=0.4"
+    high:
+      - "env.orientation_exp_scale=0.7"
+
+  # -------------------------------------------------------------------
+  # DOF Velocity Scale
+  # Controls the velocity scaling factor for joint velocity in rewards
+  # Lower values (0.3) = less emphasis on smooth motion
+  # Higher values (0.5) = stronger emphasis on smooth, controlled motion
+  # -------------------------------------------------------------------
+  dof_vel_scale:
+    conservative:
+      - "env.dof_velocity_scale=0.3"
+    balanced:
+      - "env.dof_velocity_scale=0.4"
+    aggressive:
+      - "env.dof_velocity_scale=0.5"
