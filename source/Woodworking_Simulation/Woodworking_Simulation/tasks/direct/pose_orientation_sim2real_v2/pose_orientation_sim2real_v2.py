@@ -187,7 +187,7 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     pos_threshold = 0.02  # 2 cm
     rot_threshold = 0.1  # ~5.7 degrés (en radians)
     required_frames = 60  # 1 seconde à 60Hz
-    goal_success_bonus = 5.0
+    goal_success_bonus = 15.0
 
     # --- Debug general toggle (set True to see markers and print statements) -----------
     debug = False
@@ -591,7 +591,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
                 "goal_success_bonus_mean": (
                     self.cfg.goal_success_bonus * reward_success
                 ).mean(),
-                "goal_reached_mean": reward_success.mean(),
+                "goal_reached_number": reward_success.sum(),
                 "joint_limit_penalty_mean": (
                     self.cfg.joint_limit_penalty_scale * reward_joint_limits
                 ).mean(),
