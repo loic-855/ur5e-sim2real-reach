@@ -548,7 +548,8 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             self.success_frames_count[timeout_ids] = 0
 
         # Contact penalty
-        contact_forces = self._compute_contact_metric()
+        contact_forces = torch.clamp_max(self._compute_contact_metric(), 1000.0)
+        
         excess = torch.relu(contact_forces - self.cfg.contact_force_threshold_penalty)
         contact_penalty = self.cfg.contact_penalty_scale * excess
 

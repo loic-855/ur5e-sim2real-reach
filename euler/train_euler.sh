@@ -77,10 +77,12 @@ apptainer exec --nv \
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task $TASK_NAME\
             --headless \
-            --max_iter 2500 \
+            --max_iter 5000 \
             agent.algorithm.entropy_coef=0.04 \
             agent.algorithm.desired_kl=0.013 \
-            env.env_reset=0.0
+            env.env_reset=0.0 \
+            env.progressive_reset_steps=40000 \
+            env.contact_penalty_scale=-0.005
     "
 
 # Cleanup Cache
