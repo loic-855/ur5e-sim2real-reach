@@ -24,13 +24,14 @@ slurm:
   gpus: "rtx_4090:1"
   cpus_per_task: 2
   mem_per_cpu: 8000
-  nodes: 4  # 32 runs on 4 nodes (8 + 8 + 8 + 8)
+  nodes: 8  
 
 # Overrides applied to EVERY run
 base_overrides:
   - "agent.max_iterations=2500"
-  - "agent.wandb_project=sim2real_v2_rand"
-  - "agent.experiment_name=sim2real_v2_rand"
+  - "agent.wandb_project=sim2real_v2_rand_v2"
+  - "agent.experiment_name=sim2real_v2_rand_v2"
+  - "env.domain_rand.enabled=True" 
 
 # ============================================================================
 # Sweep Dimensions (Cartesian Product → 2 × 2 × 2 × 2 × 2 = 32 runs)
