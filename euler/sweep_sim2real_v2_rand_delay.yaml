@@ -76,8 +76,8 @@ dimensions:
   # -------------------------------------------------------------------
   action_scale :
     low:
-    - "env.action:scale=0.2"
+    - "env.action_scale=0.2"
     medium:
-    - "env.action:scale=0.4"
+    - "env.action_scale=0.4"
     high:
-    - "env.action:scale=0.7"
+    - "env.action_scale=0.7"
