@@ -69,7 +69,7 @@ from Woodworking_Simulation.common.robot_configs import (
 BASE_OFFSET_LOCAL = (-(TABLE_WIDTH / 2 - 0.08), TABLE_DEPTH / 2 - 0.08, -MOUNT_HEIGHT)
 BASE_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)  # Rotation locale en z
 
-TCP_OFFSET_LOCAL = (0.0, 0.0, 0.15)  # position du TCP par rapport au dernier joint (wrist_3_link)
+TCP_OFFSET_LOCAL = (0.0, 0.0, 0.14)  # position du TCP par rapport au dernier joint (wrist_3_link)
 TCP_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)  # 
 from Woodworking_Simulation.common.domain_randomization_v2 import (
     ActionBuffer,
