@@ -25,7 +25,7 @@ def impedance_control():
 
     # First-order filter coefficient
     # alpha = 1 - exp(-dt / tau),  dt = 0.002 s,  tau = 0.02 s
-    alpha = 0.95
+    alpha = 0.095
 
     stop = False
 

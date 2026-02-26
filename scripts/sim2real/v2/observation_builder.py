@@ -206,14 +206,12 @@ def build_observation(robot_state: RobotState, goal_state: GoalState) -> np.ndar
 # Action → DOF targets  (matches v2 _pre_physics_step)
 # ============================================================================
 
-DOF_VELOCITY_SCALE = 0.4  # cfg.dof_velocity_scale in v2
-
 
 def compute_dof_targets(
     current_targets: np.ndarray,
     actions: np.ndarray,
     dt: float = 1 / 60,
-    action_scale: float = 7.0,
+    action_scale: float = 3.0,
 ) -> np.ndarray:
     """Compute new joint position targets from policy actions.
 
@@ -227,14 +225,14 @@ def compute_dof_targets(
         current_targets: Current joint position targets [6]
         actions: Policy output actions [6] in [-1, 1]
         dt: Timestep (default 1/60 for 60 Hz)
-        action_scale: Scaling factor (default 7.0 as in sim)
+        action_scale: Scaling factor (default 3.0 as in sim)
 
     Returns:
         New joint position targets [6] (clamped to limits)
     """
     actions = np.clip(actions, -1.0, 1.0)
 
-    inc = dt * DOF_VELOCITY_SCALE * action_scale * actions  # speed_scales=1
+    inc = dt * action_scale * actions  # speed_scales=1
     new_targets = current_targets + inc
     new_targets = np.clip(new_targets, JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER)
 

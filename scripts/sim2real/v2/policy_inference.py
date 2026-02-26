@@ -121,7 +121,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test policy inference (v2)")
     parser.add_argument("--model", type=str, default=None, help="Path to .pt model")
     parser.add_argument(
-        "--device", type=str, default="cuda", choices=["cpu", "cuda"]
+        "--device", type=str, default="cpu", choices=["cpu", "cuda"]
     )
     args = parser.parse_args()
 
