@@ -3,14 +3,19 @@
 Sim2Real Node for UR5e pose control via RTDE – **V2** (normalised observations).
 
 This node:
-1. Connects to the UR5e robot via RTDE to read joint states (actual_q, actual_qd),
-   TCP pose (actual_TCP_pose) and TCP velocity (actual_TCP_speed)
+1. Connects to the UR5e robot via RTDE and runs a **dedicated reader
+   thread at 125 Hz** that continuously caches the latest robot state
+   (actual_q, actual_qd, actual_TCP_pose, actual_TCP_speed)
 2. Subscribes to /goal_pose (ROS2) for target end-effector pose
-3. Builds 24-dim normalised observations matching IsaacSim v2
-4. Runs policy inference at a configurable rate (default 60 Hz)
-5. Sends q_des via RTDE input registers (continuous stream)
-6. URScript on the robot runs an impedance controller with first-order
+3. The **control loop runs at 60 Hz**, reads the most recent cached
+   state, builds 24-dim normalised observations matching IsaacSim v2,
+   and runs policy inference
+4. Sends q_des via RTDE input registers (continuous stream)
+5. URScript on the robot runs an impedance controller with first-order
    interpolation filter at 500 Hz for smooth motion
+
+Decoupling the RTDE reader (125 Hz) from the policy loop (60 Hz)
+ensures observations are at most ~8 ms stale instead of ~16.7 ms.
 
 Frame convention:
   - RTDE TCP pose / velocity are in **robot-base** frame.
@@ -21,7 +26,7 @@ Frame convention:
 Usage:
     source ~/wwro_ws/install/local_setup.bash
     python3 sim2real_node.py --robot gripper
-    python3 sim2real_node.py --robot gripper --rate 60 --action-scale 7.0
+    python3 sim2real_node.py --robot gripper --rate 60 --rtde-rate 125 --action-scale 3.0 --model path/to/policy.pt
 """
 
 import math
@@ -73,7 +78,7 @@ ROBOT_PORT = 30004
 ROBOT_PRIMARY_PORT = 30001
 
 # Paths relative to repo root
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 RTDE_CONFIG_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "rtde_input_v2.xml")
 URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control.script")
 
@@ -151,7 +156,8 @@ def rotate_velocity_to_source(vel: np.ndarray, source_quat: np.ndarray) -> np.nd
 # ============================================================================
 
 class RTDEController:
-    """Manages RTDE connection, URScript upload, and q_des streaming."""
+    """Manages RTDE connection, URScript upload, q_des streaming,
+    and a background reader thread that caches robot state at 125 Hz."""
 
     def __init__(
         self,
@@ -173,6 +179,16 @@ class RTDEController:
         self.setp = None
         self.stop_reg = None
         self.connected = False
+
+        # --- Cached robot state (updated by reader thread) -----------------
+        self._state_lock = Lock()
+        self._cached_q: Optional[np.ndarray] = None
+        self._cached_qd: Optional[np.ndarray] = None
+        self._cached_tcp_pose: Optional[list] = None   # 6 floats
+        self._cached_tcp_speed: Optional[list] = None   # 6 floats
+        self._state_seq: int = 0          # monotonic counter
+        self._reader_running = False
+        self._reader_thread: Optional[Thread] = None
 
     # -- connection ---------------------------------------------------------
 
@@ -240,16 +256,74 @@ class RTDEController:
         self._write_q_des(q_des.tolist())
 
     def receive_state(self):
-        """Receive the latest robot state from RTDE.
+        """Receive the latest robot state from RTDE (synchronous).
 
         Returns:
-            RTDE state object with ``actual_q``, ``actual_qd``,
-            ``actual_TCP_pose`` and ``actual_TCP_speed`` fields,
-            or None on failure.
+            RTDE state object, or None on failure.
         """
         if self.con is None:
             return None
         return self.con.receive()
+
+    # -- Background reader thread -------------------------------------------
+
+    def start_reader(self):
+        """Start the background thread that polls RTDE at ``rtde_frequency``
+        and caches the latest robot state."""
+        if self._reader_thread is not None:
+            return
+        self._reader_running = True
+        self._reader_thread = Thread(
+            target=self._reader_loop, daemon=True, name="rtde_reader"
+        )
+        self._reader_thread.start()
+        print(f"[RTDE] Reader thread started at {self.rtde_frequency} Hz")
+
+    def stop_reader(self):
+        """Signal the reader thread to stop."""
+        self._reader_running = False
+        if self._reader_thread is not None:
+            self._reader_thread.join(timeout=2.0)
+            self._reader_thread = None
+
+    def _reader_loop(self):
+        """Continuously read RTDE state and cache it under a lock."""
+        period = 1.0 / self.rtde_frequency
+        while self._reader_running and self.connected:
+            t0 = time.monotonic()
+            try:
+                state = self.con.receive()
+                if state is not None:
+                    with self._state_lock:
+                        self._cached_q = np.array(state.actual_q, dtype=np.float32)
+                        self._cached_qd = np.array(state.actual_qd, dtype=np.float32)
+                        self._cached_tcp_pose = list(state.actual_TCP_pose)
+                        self._cached_tcp_speed = list(state.actual_TCP_speed)
+                        self._state_seq += 1
+            except Exception:
+                pass  # transient RTDE error; next iteration will retry
+            # Sleep for the remainder of the period
+            elapsed = time.monotonic() - t0
+            sleep_time = period - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    def get_cached_state(self):
+        """Return the latest cached state as a tuple, or None if not yet available.
+
+        Returns:
+            (q, qd, tcp_pose, tcp_speed, seq) or None.
+        """
+        with self._state_lock:
+            if self._cached_q is None:
+                return None
+            return (
+                self._cached_q.copy(),
+                self._cached_qd.copy(),
+                list(self._cached_tcp_pose),
+                list(self._cached_tcp_speed),
+                self._state_seq,
+            )
 
     # -- shutdown -----------------------------------------------------------
 
@@ -266,6 +340,7 @@ class RTDEController:
             print(f"[RTDE] Error sending stop: {e}")
 
     def disconnect(self):
+        self.stop_reader()
         if self.con is None:
             return
         try:
@@ -289,6 +364,7 @@ class Sim2RealNode(Node):
         robot_prefix: str = "gripper",
         model_path: Optional[str] = None,
         control_rate: float = 60.0,
+        rtde_rate: float = 125.0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         action_scale: float = 7.0,
         robot_host: str = ROBOT_HOST,
@@ -331,17 +407,22 @@ class Sim2RealNode(Node):
         self.get_logger().info("Policy loaded successfully!")
 
         # ==================================================================
-        # RTDE controller
+        # RTDE controller  (reader runs at rtde_rate, decoupled from policy)
         # ==================================================================
         self.rtde = RTDEController(
             robot_host=robot_host,
-            rtde_frequency=control_rate,
+            rtde_frequency=rtde_rate,
         )
         self.get_logger().info("Connecting to robot via RTDE...")
         self.rtde.connect()
         self.get_logger().info("Uploading URScript (impedance + first-order filter)...")
         self.rtde.send_urscript()
-        self.get_logger().info("RTDE ready!")
+        self.get_logger().info("Starting RTDE reader thread...")
+        self.rtde.start_reader()
+        self.get_logger().info(
+            f"RTDE ready!  reader={rtde_rate} Hz  policy={control_rate} Hz"
+        )
+        self._last_state_seq = 0  # track if we got new data
 
         # ==================================================================
         # ROS2 Subscribers (goal pose)
@@ -420,11 +501,11 @@ class Sim2RealNode(Node):
 
         return results
 
-    # -- RTDE state reading -------------------------------------------------
+    # -- RTDE state reading (from cached reader thread) ---------------------
 
-    def update_robot_state_from_rtde(self) -> bool:
-        """Read actual_q, actual_qd, actual_TCP_pose and actual_TCP_speed
-        from RTDE and convert to the source (table-centre) frame.
+    def update_robot_state_from_cache(self) -> bool:
+        """Fetch the latest cached RTDE state (written by the 125 Hz reader
+        thread) and convert to the source (table-centre) frame.
 
         The FrameTransformer in IsaacSim computes:
           T_{source→tcp} = T_{source→base}^{-1} · T_{base→tcp}
@@ -435,36 +516,40 @@ class Sim2RealNode(Node):
 
         For velocities, the sim does:
           v_source = quat_apply(quat_inv(SOURCE_QUAT), v_base)
+
+        Returns:
+            True if state was updated successfully.
         """
-        state = self.rtde.receive_state()
-        if state is None:
-            self.get_logger().warn("RTDE receive failed", throttle_duration_sec=1.0)
+        cached = self.rtde.get_cached_state()
+        if cached is None:
+            self.get_logger().warn(
+                "RTDE cache empty (reader not producing data yet)",
+                throttle_duration_sec=1.0,
+            )
             return False
 
-        positions = np.array(state.actual_q, dtype=np.float32)
-        velocities = np.array(state.actual_qd, dtype=np.float32)
+        positions, velocities, tcp, tcp_speed, seq = cached
+
+        # Skip if we already consumed this exact sample
+        if seq == self._last_state_seq:
+            return True  # state unchanged but still valid
+        self._last_state_seq = seq
 
         # TCP pose: (x, y, z, rx, ry, rz) in robot-base frame
-        tcp = state.actual_TCP_pose
         ee_pos_base = np.array([tcp[0], tcp[1], tcp[2]], dtype=np.float32)
         ee_quat_base = rotvec_to_quat(tcp[3], tcp[4], tcp[5])
 
         # TCP velocity: (vx, vy, vz, wx, wy, wz) in robot-base frame
-        tcp_speed = state.actual_TCP_speed
         tcp_lin_vel_base = np.array([tcp_speed[0], tcp_speed[1], tcp_speed[2]], dtype=np.float32)
         tcp_ang_vel_base = np.array([tcp_speed[3], tcp_speed[4], tcp_speed[5]], dtype=np.float32)
 
         # Transform TCP pose from base frame to source frame
-        # T_source_tcp = T_source_base^{-1} · T_base_tcp
-        # Where T_source_base is (SOURCE_POS, SOURCE_QUAT) in base frame
         ee_pos_source, ee_quat_source = subtract_frame_transforms(
-            SOURCE_POS, SOURCE_QUAT,  # frame 1 (source) w.r.t. frame 0 (base)
-            ee_pos_base, ee_quat_base,  # frame 2 (tcp) w.r.t. frame 0 (base)
+            SOURCE_POS, SOURCE_QUAT,
+            ee_pos_base, ee_quat_base,
         )
 
         # Transform velocities from base frame to source frame
-        # The sim applies quat_apply(quat_inv(BASE_ROTATION_LOCAL), vel)
-        # which rotates from base to source frame
         tcp_lin_vel_source = rotate_velocity_to_source(tcp_lin_vel_base, SOURCE_QUAT)
         tcp_ang_vel_source = rotate_velocity_to_source(tcp_ang_vel_base, SOURCE_QUAT)
 
@@ -513,8 +598,8 @@ class Sim2RealNode(Node):
         if not self.is_running:
             return
 
-        # 1. Read joint state + TCP pose + TCP velocity from RTDE
-        if not self.update_robot_state_from_rtde():
+        # 1. Read latest cached state (updated by 125 Hz reader thread)
+        if not self.update_robot_state_from_cache():
             return
 
         # 2. Check that all data is available
@@ -620,6 +705,10 @@ def main():
         help="Action scaling factor (sim v2 uses 7.0)",
     )
     parser.add_argument(
+        "--rtde-rate", type=float, default=125.0,
+        help="RTDE reader thread rate in Hz (default 125, UR native)",
+    )
+    parser.add_argument(
         "--robot-ip", type=str, default=ROBOT_HOST,
         help=f"Robot IP address (default {ROBOT_HOST})",
     )
@@ -637,6 +726,7 @@ def main():
             robot_prefix=args.robot,
             model_path=args.model,
             control_rate=args.rate,
+            rtde_rate=args.rtde_rate,
             device=args.device,
             action_scale=args.action_scale,
             robot_host=args.robot_ip,

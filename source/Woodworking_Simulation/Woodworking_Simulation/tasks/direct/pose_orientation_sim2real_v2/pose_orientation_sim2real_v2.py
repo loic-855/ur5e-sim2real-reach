@@ -157,8 +157,7 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     camera_pole_spawn_cfg = get_camera_pole_cfg()
 
     # action and coef scaling
-    action_scale = 7.0
-    dof_velocity_scale = 0.4
+    action_scale = 3.0
     env_reset = 1.0  # % of episodes that reset to home position vs fully random
     progressive_reset: bool = False  # gradually expand reset range from home to full joint limits
     progressive_reset_steps: int = 25000  # steps to go from ±0.125 rad around home to full joint range
@@ -357,7 +356,6 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         increments = (
             self.robot_dof_speed_scales.unsqueeze(0)
             * self.dt
-            * self.cfg.dof_velocity_scale
             * effective_actions
             * self.cfg.action_scale
         )
