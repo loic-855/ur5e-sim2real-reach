@@ -19,9 +19,10 @@ ensures observations are at most ~8 ms stale instead of ~16.7 ms.
 
 Frame convention:
   - RTDE TCP pose / velocity are in **robot-base** frame.
-  - The policy expects everything in the **source** (table-centre) frame.
-  - Conversion uses ``subtract_frame_transforms`` logic identical to
-    IsaacLab's FrameTransformer with ``source_frame_offset``.
+  - The policy expects everything in the **table-centre** frame.
+  - Position conversion: simple offset ``ee_pos_table = ee_pos_base + ROBOT_BASE_LOCAL``
+  - Quaternion and velocities are used as-is (no rotation between frames).
+  - This matches the v1 sim2real_node convention (validated on real robot).
 
 Usage:
     source ~/wwro_ws/install/local_setup.bash
@@ -61,9 +62,6 @@ from observation_builder import (
     build_observation,
     compute_dof_targets,
     quat_box_minus,
-    quat_conjugate,
-    quat_multiply,
-    quat_rotate_inverse,
     JOINT_NAMES_SIM,
     JOINT_LIMITS_LOWER,
     JOINT_LIMITS_UPPER,
@@ -86,14 +84,12 @@ URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance
 HOME_Q = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
 
 # ============================================================================
-# Source frame offset (table-centre frame relative to robot base)
-# Must match the FrameTransformerCfg.source_frame_offset in the sim:
-#   pos  = (-(TABLE_WIDTH/2 - 0.08), TABLE_DEPTH/2 - 0.08, -MOUNT_HEIGHT)
-#        = (-0.52, 0.32, -0.02)
-#   rot  = (0, 0, 0, 1)  → 180° around Z
+# Robot base position relative to TABLE CENTRE (table frame origin).
+# actual_TCP_pose from RTDE is in the robot-base frame; we add this offset
+# to convert to the table-centre frame used by the policy / goal publisher.
+# Matches v1 sim2real_node (validated on real robot).
 # ============================================================================
-SOURCE_POS = np.array([-0.52, 0.32, -0.02], dtype=np.float32)
-SOURCE_QUAT = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)  # (w,x,y,z) = 180° Z
+ROBOT_BASE_LOCAL = np.array([-0.52, 0.32, 0.02], dtype=np.float32)
 
 
 # ============================================================================
@@ -108,47 +104,6 @@ def rotvec_to_quat(rx: float, ry: float, rz: float) -> np.ndarray:
     half = angle / 2.0
     s = math.sin(half) / angle
     return np.array([math.cos(half), rx * s, ry * s, rz * s], dtype=np.float32)
-
-
-# ============================================================================
-# Frame transform helpers  (numpy, single-sample)
-# ============================================================================
-
-def subtract_frame_transforms(
-    t01: np.ndarray,
-    q01: np.ndarray,
-    t02: np.ndarray,
-    q02: np.ndarray,
-) -> tuple:
-    """T_{12} = T_{01}^{-1} · T_{02}.
-
-    Converts a pose expressed in frame 0 into frame 1.
-    Matches ``isaaclab.utils.math.subtract_frame_transforms`` exactly.
-
-    Args:
-        t01: Position of frame 1 w.r.t. frame 0 (3,).
-        q01: Orientation of frame 1 w.r.t. frame 0 (w,x,y,z) (4,).
-        t02: Position of frame 2 w.r.t. frame 0 (3,).
-        q02: Orientation of frame 2 w.r.t. frame 0 (w,x,y,z) (4,).
-
-    Returns:
-        (t12, q12): Pose of frame 2 in frame 1.
-    """
-    q10 = quat_conjugate(q01)                        # q01^{-1}
-    q12 = quat_multiply(q10, q02)                    # rotation
-    t12 = quat_rotate_inverse(q01, t02 - t01)        # quat_apply(q10, t02 - t01)
-    # Normalise quaternion
-    q12 = q12 / np.linalg.norm(q12)
-    return t12.astype(np.float32), q12.astype(np.float32)
-
-
-def rotate_velocity_to_source(vel: np.ndarray, source_quat: np.ndarray) -> np.ndarray:
-    """Rotate a 3-vector from robot-base frame to source frame.
-
-    Equivalent to ``quat_apply(quat_inv(source_quat), vel)``.
-    Since source_quat represents source→base, we need base→source = inv(source_quat).
-    """
-    return quat_rotate_inverse(source_quat, vel)
 
 
 # ============================================================================
@@ -505,17 +460,11 @@ class Sim2RealNode(Node):
 
     def update_robot_state_from_cache(self) -> bool:
         """Fetch the latest cached RTDE state (written by the 125 Hz reader
-        thread) and convert to the source (table-centre) frame.
+        thread) and convert to the table-centre frame.
 
-        The FrameTransformer in IsaacSim computes:
-          T_{source→tcp} = T_{source→base}^{-1} · T_{base→tcp}
-
-        Here ``source`` is the table-centre frame whose offset from
-        the robot base is given by SOURCE_POS / SOURCE_QUAT.
-        We replicate this with ``subtract_frame_transforms``.
-
-        For velocities, the sim does:
-          v_source = quat_apply(quat_inv(SOURCE_QUAT), v_base)
+        Position: simple offset ``ee_pos = ee_pos_base + ROBOT_BASE_LOCAL``
+        Quaternion / velocities: used as-is (no rotation between frames).
+        This matches the v1 sim2real_node (validated on real robot).
 
         Returns:
             True if state was updated successfully.
@@ -537,29 +486,23 @@ class Sim2RealNode(Node):
 
         # TCP pose: (x, y, z, rx, ry, rz) in robot-base frame
         ee_pos_base = np.array([tcp[0], tcp[1], tcp[2]], dtype=np.float32)
-        ee_quat_base = rotvec_to_quat(tcp[3], tcp[4], tcp[5])
+        ee_quat = rotvec_to_quat(tcp[3], tcp[4], tcp[5])
 
-        # TCP velocity: (vx, vy, vz, wx, wy, wz) in robot-base frame
-        tcp_lin_vel_base = np.array([tcp_speed[0], tcp_speed[1], tcp_speed[2]], dtype=np.float32)
-        tcp_ang_vel_base = np.array([tcp_speed[3], tcp_speed[4], tcp_speed[5]], dtype=np.float32)
+        # Shift position from robot-base frame to table-centre frame
+        # (same as v1 – no rotation, just translation)
+        ee_pos_table = ee_pos_base + ROBOT_BASE_LOCAL
 
-        # Transform TCP pose from base frame to source frame
-        ee_pos_source, ee_quat_source = subtract_frame_transforms(
-            SOURCE_POS, SOURCE_QUAT,
-            ee_pos_base, ee_quat_base,
-        )
-
-        # Transform velocities from base frame to source frame
-        tcp_lin_vel_source = rotate_velocity_to_source(tcp_lin_vel_base, SOURCE_QUAT)
-        tcp_ang_vel_source = rotate_velocity_to_source(tcp_ang_vel_base, SOURCE_QUAT)
+        # TCP velocity: (vx, vy, vz, wx, wy, wz) – used as-is (no rotation)
+        tcp_lin_vel = np.array([tcp_speed[0], tcp_speed[1], tcp_speed[2]], dtype=np.float32)
+        tcp_ang_vel = np.array([tcp_speed[3], tcp_speed[4], tcp_speed[5]], dtype=np.float32)
 
         with self.lock:
             self.joint_positions = positions
             self.joint_velocities = velocities
-            self.ee_position = ee_pos_source
-            self.ee_quaternion = ee_quat_source
-            self.tcp_linear_vel = tcp_lin_vel_source
-            self.tcp_angular_vel = tcp_ang_vel_source
+            self.ee_position = ee_pos_table
+            self.ee_quaternion = ee_quat
+            self.tcp_linear_vel = tcp_lin_vel
+            self.tcp_angular_vel = tcp_ang_vel
 
             if self.dof_targets is None:
                 self.dof_targets = positions.copy()
