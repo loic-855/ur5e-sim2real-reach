@@ -17,4 +17,7 @@
   <recipe key="stop">
     <field name="input_bit_register_64" type="BOOL"/>
 </recipe>
+<recipe key="control_rate_info">
+    <field name="input_int_register_30" type="INT32"/>
+</recipe>
 </rtde_config>

@@ -122,6 +122,7 @@ class RTDEController:
         config_file: str = RTDE_CONFIG_FILE,
         urscript_file: str = URSCRIPT_FILE,
         rtde_frequency: float = 125.0,
+        control_rate: float = 60.0,
     ):
         self.robot_host = robot_host
         self.robot_port = robot_port
@@ -129,10 +130,11 @@ class RTDEController:
         self.config_file = config_file
         self.urscript_file = urscript_file
         self.rtde_frequency = rtde_frequency
-
+        self.control_rate = control_rate
         self.con: Optional[rtde.RTDE] = None
         self.setp = None
         self.stop_reg = None
+        self.control_rate_reg = None
         self.connected = False
 
         # --- Cached robot state (updated by reader thread) -----------------
@@ -153,6 +155,7 @@ class RTDEController:
         output_names, output_types = conf.get_recipe("out")
         q_des_names, q_des_types = conf.get_recipe("q_des")
         stop_name, stop_type = conf.get_recipe("stop")
+        control_rate_info, control_rate_type = conf.get_recipe("control_rate_info")
 
         self.con = rtde.RTDE(self.robot_host, self.robot_port)
         self.con.connect()
@@ -168,6 +171,10 @@ class RTDEController:
         self.stop_reg = self.con.send_input_setup(stop_name, stop_type)
         if self.stop_reg is None:
             raise RuntimeError("RTDE: unable to configure stop signal")
+        
+        self.control_rate_reg = self.con.send_input_setup(control_rate_info, control_rate_type)
+        if self.control_rate_reg is None:
+            raise RuntimeError("RTDE: unable to configure control rate info input")
 
         if not self.con.send_start():
             raise RuntimeError("RTDE: unable to start synchronisation")
@@ -181,6 +188,8 @@ class RTDEController:
         """Upload and start the URScript impedance controller on the robot."""
         self.stop_reg.input_bit_register_64 = False
         self.con.send(self.stop_reg)
+        self.control_rate_reg.input_int_register_30 = int(self.control_rate)
+        self.con.send(self.control_rate_reg)
 
         self._write_q_des(HOME_Q)
 
@@ -367,6 +376,7 @@ class Sim2RealNode(Node):
         self.rtde = RTDEController(
             robot_host=robot_host,
             rtde_frequency=rtde_rate,
+            control_rate=control_rate,
         )
         self.get_logger().info("Connecting to robot via RTDE...")
         self.rtde.connect()

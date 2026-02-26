@@ -25,10 +25,14 @@ def impedance_control():
 
     # First-order filter coefficient
     # alpha = 1 - exp(-dt / tau),  dt = 0.002 s,  tau = 0.02 s
-    alpha = 0.095
+    alpha = 0.05
+
+    policy_rate = read_input_integer_register(30)  # handshake: wait for policy to write something to register 0
+    textmsg("Policy control rate (Hz): ", policy_rate)
+    N = floor(500 / policy_rate)  # number of control steps per policy step
 
     stop = False
-
+    j = 0
     while True:
         # ----- Read q_des from RTDE input registers 24-29 -----
         q_des[0] = read_input_float_register(24)
@@ -39,6 +43,8 @@ def impedance_control():
         q_des[5] = read_input_float_register(29)
         stop = read_input_boolean_register(64)
 
+        
+
         # ----- First-order filter: smooth interpolation -----
         i = 0
         while i < 6:
@@ -46,7 +52,16 @@ def impedance_control():
             i = i + 1
         end
 
-        # ----- Impedance control on the filtered target -----
+        # ----- Linear filter: simple interpolation ----- make acutator vibrate not good.
+        # if j % N == 0:
+        #     q_start = get_actual_joint_positions()
+        # end
+        
+        # alpha = (j % N) / N
+        # q_filt = q_start + alpha * (q_des - q_start)
+        
+
+        # ----- Read current joint states -----
         q = get_actual_joint_positions()
         q_dot = get_actual_joint_speeds()
 
@@ -71,6 +86,7 @@ def impedance_control():
             movej([-0.0, -1.57, 0.0, -1.57, 0, 0], a=0.7, v=0.6, t=0, r=0)
             break
         end
+        j = j + 1
     end
     stopj(2)
 end

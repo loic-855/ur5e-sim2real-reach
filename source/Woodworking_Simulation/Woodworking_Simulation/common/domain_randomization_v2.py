@@ -33,7 +33,7 @@ class DomainRandomizationCfg:
     """Master switch – when ``False`` every helper is a transparent pass-through."""
 
     # -- Action buffer ---------------------------------------------------------
-    action_delay_range: tuple[int, int] = (0, 3)
+    action_delay_range: tuple[int, int] = (0, 0)
     """Uniform int range [lo, hi] for per-env action delay (in *decimated* steps)."""
     action_noise_std: float = 0.025
     """Std-dev of additive Gaussian noise on the (normalised) actions."""
@@ -41,7 +41,7 @@ class DomainRandomizationCfg:
     """Probability that an action packet is dropped (replaced by the previous one)."""
 
     # -- Observation buffer ----------------------------------------------------
-    obs_delay_range: tuple[int, int] = (0, 3)
+    obs_delay_range: tuple[int, int] = (0, 0)
     """Uniform int range [lo, hi] for per-env observation delay (in *decimated* steps)."""
     obs_noise_std_pos: float = 0.005
     """Observation noise on EE position (m)."""
