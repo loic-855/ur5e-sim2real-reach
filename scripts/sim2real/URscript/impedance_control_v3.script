@@ -4,44 +4,46 @@ def impedance_control_v3():
     #
     # The policy sends q_des (registers 24-29) and qdot_des (registers
     # 30-35) via RTDE at 60 Hz.
-    # This controller runs at 500 Hz and uses a first-order low-pass
-    # filter on q_des for smooth position interpolation.
+    # This controller runs at 500 Hz.
     #
     # Torque law:
-    #   tau = Kp * (q_filt - q) + Kd * (qdot_des - q_dot)
+    #   tau = Kp * (q_filt - q) + Kd * (qdot_filt - q_dot)
     #
-    # The velocity feedforward qdot_des is NOT filtered — it is applied
-    # directly so the policy has instantaneous control over the damping
-    # contribution.
+    # Both q_des and qdot_des are low-pass filtered for smooth 60→500 Hz
+    # interpolation, but with different time constants:
+    #   - Position:  alpha_pos = 0.05  (tau ≈ 0.04 s, conservative)
+    #   - Velocity:  alpha_vel = 0.15  (tau ≈ 0.012 s, faster response)
     #
-    # Filter on position:
-    #   q_filt(k+1) = alpha * q_des + (1 - alpha) * q_filt(k)
-    #   alpha = 1 - exp(-dt_ctrl / tau_filt)
-    #
-    # With dt_ctrl = 1/500 = 0.002 s and tau_filt = 0.02 s
-    #   => alpha ≈ 0.095
+    # Safety:
+    #   - Position error saturation: |e| ≤ max_error per joint
+    #   - Torque saturation: |tau| ≤ max_tau per joint
     # ===================================================================
 
     # Default / initial position and velocity
-    q_des     = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
-    q_filt    = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
-    qdot_des  = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    q_des      = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+    q_filt     = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+    qdot_des   = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    qdot_filt  = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
     # Impedance gains
     kp = [250.0, 250.0, 250.0, 60.0, 60.0, 60.0]
     kd = [30.0, 30.0, 30.0, 15.0, 15.0, 15.0]
     max_error = 0.20
 
-    # First-order filter coefficient
-    # alpha = 1 - exp(-dt / tau),  dt = 0.002 s,  tau = 0.02 s
-    alpha = 0.05
+    # Torque limits (Nm) – UR5e specs: 120 shoulder, 60 wrist
+    max_tau = [120.0, 120.0, 120.0, 60.0, 60.0, 60.0]
 
-    policy_rate = read_input_integer_register(36)  # handshake: wait for policy to write control rate
+    # First-order filter coefficients
+    alpha_pos = 0.05       # position: slow filter → smooth path
+    alpha_vel = 0.15       # velocity: faster filter → responsive feedforward
+
+    policy_rate = read_input_integer_register(36)
     textmsg("Policy control rate (Hz): ", policy_rate)
-    N = floor(500 / policy_rate)  # number of control steps per policy step
+    textmsg("Torque limits: shoulder=120 Nm, wrist=60 Nm")
 
     stop = False
     j = 0
+
     while True:
         # ----- Read q_des from RTDE input registers 24-29 -----
         q_des[0] = read_input_float_register(24)
@@ -61,18 +63,25 @@ def impedance_control_v3():
 
         stop = read_input_boolean_register(64)
 
-        # ----- First-order filter on position: smooth interpolation -----
-        i = 0
-        while i < 6:
-            q_filt[i] = alpha * q_des[i] + (1.0 - alpha) * q_filt[i]
-            i = i + 1
-        end
+        # ===============================================================
+        # 1. First-order filter on POSITION
+        #    q_filt = alpha * q_des + (1 - alpha) * q_filt
+        # ===============================================================
+        q_filt = alpha_pos * q_des + (1.0 - alpha_pos) * q_filt
+
+        # ===============================================================
+        # 2. First-order filter on VELOCITY
+        #    qdot_filt = alpha * qdot_des + (1 - alpha) * qdot_filt
+        # ===============================================================
+        qdot_filt = alpha_vel * qdot_des + (1.0 - alpha_vel) * qdot_filt
 
         # ----- Read current joint states -----
         q = get_actual_joint_positions()
         q_dot = get_actual_joint_speeds()
 
-        # Compute position error (use filtered target) and saturate
+        # ===============================================================
+        # 3. Position error (filtered target) with saturation
+        # ===============================================================
         e = q_filt - q
         i = 0
         while i < 6:
@@ -84,8 +93,24 @@ def impedance_control_v3():
             i = i + 1
         end
 
-        # Compute torque: τ = Kp * e + Kd * (qdot_des - q_dot)
-        tau = kp * e + kd * (qdot_des - q_dot)
+        # ===============================================================
+        # 4. Compute torque: τ = Kp * e + Kd * (qdot_filt - q_dot)
+        # ===============================================================
+        tau = kp * e + kd * (qdot_filt - q_dot)
+
+        # ===============================================================
+        # 5. Torque saturation
+        # ===============================================================
+        i = 0
+        while i < 6:
+            if tau[i] > max_tau[i]:
+                tau[i] = max_tau[i]
+            elif tau[i] < -max_tau[i]:
+                tau[i] = -max_tau[i]
+            end
+            i = i + 1
+        end
+
         direct_torque(tau)
 
         if stop:

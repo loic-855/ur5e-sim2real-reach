@@ -692,7 +692,7 @@ def main():
         node.start()
 
         if args.benchmark:
-            BENCHMARK_DURATION = 90.0
+            BENCHMARK_DURATION = 20.0
             node.get_logger().info(f"Starting benchmark for {BENCHMARK_DURATION}s...")
             node._benchmark = True
 
