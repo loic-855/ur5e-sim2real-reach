@@ -1,0 +1,99 @@
+def impedance_control_v3():
+    # ===================================================================
+    # Impedance controller with velocity feedforward (V3)
+    #
+    # The policy sends q_des (registers 24-29) and qdot_des (registers
+    # 30-35) via RTDE at 60 Hz.
+    # This controller runs at 500 Hz and uses a first-order low-pass
+    # filter on q_des for smooth position interpolation.
+    #
+    # Torque law:
+    #   tau = Kp * (q_filt - q) + Kd * (qdot_des - q_dot)
+    #
+    # The velocity feedforward qdot_des is NOT filtered — it is applied
+    # directly so the policy has instantaneous control over the damping
+    # contribution.
+    #
+    # Filter on position:
+    #   q_filt(k+1) = alpha * q_des + (1 - alpha) * q_filt(k)
+    #   alpha = 1 - exp(-dt_ctrl / tau_filt)
+    #
+    # With dt_ctrl = 1/500 = 0.002 s and tau_filt = 0.02 s
+    #   => alpha ≈ 0.095
+    # ===================================================================
+
+    # Default / initial position and velocity
+    q_des     = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+    q_filt    = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+    qdot_des  = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    # Impedance gains
+    kp = [250.0, 250.0, 250.0, 60.0, 60.0, 60.0]
+    kd = [30.0, 30.0, 30.0, 15.0, 15.0, 15.0]
+    max_error = 0.20
+
+    # First-order filter coefficient
+    # alpha = 1 - exp(-dt / tau),  dt = 0.002 s,  tau = 0.02 s
+    alpha = 0.05
+
+    policy_rate = read_input_integer_register(36)  # handshake: wait for policy to write control rate
+    textmsg("Policy control rate (Hz): ", policy_rate)
+    N = floor(500 / policy_rate)  # number of control steps per policy step
+
+    stop = False
+    j = 0
+    while True:
+        # ----- Read q_des from RTDE input registers 24-29 -----
+        q_des[0] = read_input_float_register(24)
+        q_des[1] = read_input_float_register(25)
+        q_des[2] = read_input_float_register(26)
+        q_des[3] = read_input_float_register(27)
+        q_des[4] = read_input_float_register(28)
+        q_des[5] = read_input_float_register(29)
+
+        # ----- Read qdot_des from RTDE input registers 30-35 -----
+        qdot_des[0] = read_input_float_register(30)
+        qdot_des[1] = read_input_float_register(31)
+        qdot_des[2] = read_input_float_register(32)
+        qdot_des[3] = read_input_float_register(33)
+        qdot_des[4] = read_input_float_register(34)
+        qdot_des[5] = read_input_float_register(35)
+
+        stop = read_input_boolean_register(64)
+
+        # ----- First-order filter on position: smooth interpolation -----
+        i = 0
+        while i < 6:
+            q_filt[i] = alpha * q_des[i] + (1.0 - alpha) * q_filt[i]
+            i = i + 1
+        end
+
+        # ----- Read current joint states -----
+        q = get_actual_joint_positions()
+        q_dot = get_actual_joint_speeds()
+
+        # Compute position error (use filtered target) and saturate
+        e = q_filt - q
+        i = 0
+        while i < 6:
+            if e[i] > max_error:
+                e[i] = max_error
+            elif e[i] < -max_error:
+                e[i] = -max_error
+            end
+            i = i + 1
+        end
+
+        # Compute torque: τ = Kp * e + Kd * (qdot_des - q_dot)
+        tau = kp * e + kd * (qdot_des - q_dot)
+        direct_torque(tau)
+
+        if stop:
+            textmsg("Back to home position...")
+            movej([-0.0, -1.57, 0.0, -1.57, 0, 0], a=0.7, v=0.6, t=0, r=0)
+            break
+        end
+        j = j + 1
+    end
+    stopj(2)
+end
