@@ -1,7 +1,7 @@
 # ============================================================================
-# Hyperparameter Sweep: Sim2Real v2 Base Optimization
+# Hyperparameter Sweep: Sim2Real v3 Base Optimization
 # ============================================================================
-# Task: WWSim-Pose-Orientation-Sim2Real-Direct-v2
+# Task: WWSim-Pose-Orientation-Sim2Real-Direct-v3
 # Sweep: position_exp_scale orientation_exp_scale x dof_velocity_scale
 # Grid: 3 × 3 x3 = 27 runs
 # WandB: project=sim2real_v3_action_vel_scale, experiment_name=sim2real_v3_action_vel_scale
@@ -9,7 +9,7 @@
 # Usage:  python euler/generate_sweep.py --config euler/sweep_sim2real_v3_action_vel_scale.yaml --submit
 # ============================================================================
 
-task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v2"
+task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v3"
 
 # --- SLURM settings ---
 slurm:

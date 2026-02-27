@@ -4,7 +4,7 @@
 # META slurm_time=14:10:00
 # META total_runs=49
 # META config=sweep_sim2real_v3_rand_delay.yaml
-# META generated=2026-02-27T16:50:39
+# META generated=2026-02-27T16:58:34
 action_delay-False_observation_delay-False|agent.max_iterations=2500 agent.wandb_project=sim2real_v3_rand_delay agent.experiment_name=sim2real_v3_rand_delay env.domain_rand.enabled=True env.position_exp_scale=0.2 env.orientation_exp_scale=0.4 env.domain_rand.action_delay_range=[0,0] env.domain_rand.obs_delay_range=[0,0]
 action_delay-False_observation_delay-low|agent.max_iterations=2500 agent.wandb_project=sim2real_v3_rand_delay agent.experiment_name=sim2real_v3_rand_delay env.domain_rand.enabled=True env.position_exp_scale=0.2 env.orientation_exp_scale=0.4 env.domain_rand.action_delay_range=[0,0] env.domain_rand.obs_delay_range=[1,1]
 action_delay-False_observation_delay-mid|agent.max_iterations=2500 agent.wandb_project=sim2real_v3_rand_delay agent.experiment_name=sim2real_v3_rand_delay env.domain_rand.enabled=True env.position_exp_scale=0.2 env.orientation_exp_scale=0.4 env.domain_rand.action_delay_range=[0,0] env.domain_rand.obs_delay_range=[2,2]
