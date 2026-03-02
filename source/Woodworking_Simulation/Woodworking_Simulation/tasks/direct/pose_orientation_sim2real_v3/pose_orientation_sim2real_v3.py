@@ -152,6 +152,7 @@ class PoseOrientationSim2RealV3Cfg(DirectRLEnvCfg):
     progressive_reset: bool = False  # gradually expand reset range from home to full joint limits
     progressive_reset_steps: int = 25000  # steps to go from ±0.125 rad around home to full joint range
     position_exp_scale = 0.2
+    stability_reward_scale = 0.3
     orientation_exp_scale = 0.4  
     curric = [5000, 10000, 15000]  # curriculum thresholds (steps)
     curric_active = False  # whether to use curriculum learning (curric thresholds and reward scaling)
@@ -518,27 +519,27 @@ class PoseOrientationSim2RealV3(DirectRLEnv):
         vel_action_cost = torch.sum(self.actions[:, 6:]**2, dim=1)
         velocity_cost = torch.sum(self._robot.data.joint_vel**2, dim=1)
 
-        # Goal logic handling
-        within_pos = position_error < self.cfg.pos_threshold
-        within_rot = orientation_error < self.cfg.rot_threshold
-        is_stable = torch.logical_and(within_pos, within_rot)
-        self.success_frames_count = torch.where(
-            is_stable,
-            self.success_frames_count + 1,
-            torch.zeros_like(self.success_frames_count),
-        )
-        goal_reached = self.success_frames_count >= self.cfg.required_frames
-        reward_success = torch.where(
-            goal_reached,
-            torch.ones_like(self.reward_buf),
-            torch.zeros_like(self.reward_buf),
-        )
+        # # Goal logic handling
+        # within_pos = position_error < self.cfg.pos_threshold
+        # within_rot = orientation_error < self.cfg.rot_threshold
+        # is_stable = torch.logical_and(within_pos, within_rot)
+        # self.success_frames_count = torch.where(
+        #     is_stable,
+        #     self.success_frames_count + 1,
+        #     torch.zeros_like(self.success_frames_count),
+        # )
+        # goal_reached = self.success_frames_count >= self.cfg.required_frames
+        # reward_success = torch.where(
+        #     goal_reached,
+        #     torch.ones_like(self.reward_buf),
+        #     torch.zeros_like(self.reward_buf),
+        # )
 
-        # Resample goals: on success
-        if torch.any(goal_reached):
-            env_ids = goal_reached.nonzero(as_tuple=False).flatten()
-            self._sample_goal(env_ids)
-            self.success_frames_count[env_ids] = 0
+        # # Resample goals: on success
+        # if torch.any(goal_reached):
+        #     env_ids = goal_reached.nonzero(as_tuple=False).flatten()
+        #     self._sample_goal(env_ids)
+        #     self.success_frames_count[env_ids] = 0
 
         # Resample goals: timeout (5s without reaching)
         self.goal_steps_elapsed += 1
@@ -562,6 +563,11 @@ class PoseOrientationSim2RealV3(DirectRLEnv):
         )
         reward_joint_limits = penalty_val.sum(dim=-1)
 
+        # Continuous stability reward: high when close to goal AND low joint velocity
+        closeness = torch.exp(-position_error / self.cfg.position_exp_scale)
+        stillness = torch.exp(-velocity_cost / 10.0)
+        stability_reward = self.cfg.stability_reward_scale * closeness * stillness
+
         # tcp marker visualisation (debug only)
         if self.cfg.debug:
             self.ee_marker.visualize(
@@ -577,9 +583,10 @@ class PoseOrientationSim2RealV3(DirectRLEnv):
             + self.cfg.action_penalty_scale * pos_action_cost
             + self.cfg.velocity_action_penalty_scale * vel_action_cost
             + self.cfg.velocity_penalty_scale * velocity_cost
-            + self.cfg.goal_success_bonus * reward_success
+            #+ self.cfg.goal_success_bonus * reward_success
             + self.cfg.joint_limit_penalty_scale * reward_joint_limits
             + contact_penalty
+            + stability_reward
         )
 
         if "log" not in self.extras:
@@ -588,13 +595,14 @@ class PoseOrientationSim2RealV3(DirectRLEnv):
             {
                 "pos_action_penalty": (self.cfg.action_penalty_scale * pos_action_cost).mean(),
                 "vel_action_penalty": (self.cfg.velocity_action_penalty_scale * vel_action_cost).mean(),
+                "stability_reward_mean": stability_reward.mean(),
                 "contact_force_max": contact_forces.max(),
                 "contact_force_mean": contact_forces.mean(),
                 "contact_penalty_mean": contact_penalty.mean(),
-                "goal_success_bonus_mean": (
-                    self.cfg.goal_success_bonus * reward_success
-                ).mean(),
-                "goal_reached_number": reward_success.sum(),
+               # "goal_success_bonus_mean": (
+               #     self.cfg.goal_success_bonus * reward_success
+               # ).mean(),
+               # "goal_reached_number": reward_success.sum(),
                 "joint_limit_penalty_mean": (
                     self.cfg.joint_limit_penalty_scale * reward_joint_limits
                 ).mean(),
