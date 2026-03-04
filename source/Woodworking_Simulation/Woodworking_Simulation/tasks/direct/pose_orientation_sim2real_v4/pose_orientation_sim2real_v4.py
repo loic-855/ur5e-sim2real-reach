@@ -70,10 +70,11 @@ BASE_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)
 TCP_OFFSET_LOCAL = (0.0, 0.0, 0.14)
 TCP_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)
 
-from Woodworking_Simulation.common.domain_randomization_v3 import (
+from Woodworking_Simulation.common.domain_randomization_v4 import (
     ActionBufferV3,
     ActuatorRandomizer,
-    DomainRandomizationV3Cfg,
+    DomainRandomizationV4Cfg,
+    MassComRandomizer,
     ObservationBuffer,
 )
 
@@ -166,9 +167,9 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     env_reset = 1.0
     progressive_reset: bool = False
     progressive_reset_steps: int = 25000
-    position_exp_scale = 0.2
+    position_exp_scale = 0.05
     stability_reward_scale = 0.3
-    orientation_exp_scale = 0.4
+    orientation_exp_scale = 0.2
     curric = [5000, 10000, 15000]
     curric_active = False
 
@@ -179,9 +180,9 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     ee_orientation_reward = 0.60
 
     # penalty weights
-    action_penalty_scale = -0.001
-    velocity_action_penalty_scale = -0.001
-    velocity_penalty_scale = -0.001
+    action_penalty_scale = -0.01
+    velocity_action_penalty_scale = -0.05
+    velocity_penalty_scale = -0.01
     contact_penalty_scale = -0.01
     contact_force_threshold_penalty = 5.0
     joint_limit_penalty_scale = -0.01
@@ -201,7 +202,7 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     norm_obs: bool = True
 
     # --- Domain Randomization ---
-    domain_rand: DomainRandomizationV3Cfg = DomainRandomizationV3Cfg(
+    domain_rand: DomainRandomizationV4Cfg = DomainRandomizationV4Cfg(
         enabled=True
     )
 
@@ -322,6 +323,7 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             device=self.device,
         )
         self._actuator_randomizer: ActuatorRandomizer | None = None
+        self._mass_com_randomizer: MassComRandomizer | None = None
 
     # -- Scene setup --------------------------------------------------------
 
@@ -649,6 +651,13 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
                 cfg=self.cfg.domain_rand,
                 device=self.device,
             )
+        # Lazily create the mass/CoM randomizer
+        if self._mass_com_randomizer is None:
+            self._mass_com_randomizer = MassComRandomizer(
+                robot=self._robot,
+                cfg=self.cfg.domain_rand,
+                device=self.device,
+            )
 
         # Split envs: some reset to home, others fully random
         mask = torch.rand(len(env_ids), device=self.device) < self.cfg.env_reset
@@ -676,6 +685,7 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         self._obs_buffer.reset(env_ids)
         if self.cfg.domain_rand.enabled:
             self._actuator_randomizer.sample_and_apply(env_ids)
+            self._mass_com_randomizer.sample_and_apply(env_ids)
 
         self._sample_goal(env_ids)
 
