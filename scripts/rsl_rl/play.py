@@ -132,8 +132,8 @@ import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from obs_logger import ObsLogger  
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from scripts.utils.obs_logger import ObsLogger
 
 import Woodworking_Simulation.tasks  # noqa: F401
 
