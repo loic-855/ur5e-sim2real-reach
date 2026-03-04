@@ -188,7 +188,7 @@ class PoseOrientationSim2RealV3Cfg(DirectRLEnvCfg):
 
     # --- Domain Randomization (active in curriculum phase 3: step > 15000) ---
     domain_rand: DomainRandomizationV3Cfg = DomainRandomizationV3Cfg(
-        enabled=False
+        enabled=True
     )
 
 
