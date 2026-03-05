@@ -26,16 +26,16 @@ def impedance_control_v3():
     qdot_filt  = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
     # Impedance gains
-    kp = [250.0, 250.0, 250.0, 60.0, 60.0, 60.0]
-    kd = [30.0, 30.0, 30.0, 15.0, 15.0, 15.0]
+    kp = [150.0, 150.0, 150.0, 40.0, 40.0, 40.0]
+    kd = [18.0, 18.0, 18.0, 10.0, 10.0, 10.0]
     max_error = 0.20
 
     # Torque limits (Nm) – UR5e specs: 120 shoulder, 60 wrist
     max_tau = [120.0, 120.0, 120.0, 60.0, 60.0, 60.0]
 
     # First-order filter coefficients
-    alpha_pos = 0.05       # position: slow filter → smooth path
-    alpha_vel = 0.15       # velocity: faster filter → responsive feedforward
+    alpha_pos = 0.12       # position: faster filter → reduced phase lag
+    alpha_vel = 0.20       # velocity: faster filter → responsive feedforward
 
     policy_rate = read_input_integer_register(36)
     textmsg("Policy control rate (Hz): ", policy_rate)
