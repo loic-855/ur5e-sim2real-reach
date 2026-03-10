@@ -1,22 +1,19 @@
-def impedance_control_v3():
+def impedance_control_tuning():
     # ===================================================================
-    # Impedance controller with velocity feedforward (V3)
+    # Impedance controller for AUTOMATIC GAIN TUNING
     #
-    # The policy sends q_des (registers 24-29) and qdot_des (registers
-    # 30-35) via RTDE at 60 Hz.
-    # This controller runs at 500 Hz.
-    #
-    # Torque law:
+    # Same torque law as V3:
     #   tau = Kp * (q_filt - q) + Kd * (qdot_filt - q_dot)
     #
-    # Both q_des and qdot_des are low-pass filtered for smooth 60→500 Hz
-    # interpolation, but with different time constants:
-    #   - Position:  alpha_pos = 0.05  (tau ≈ 0.04 s, conservative)
-    #   - Velocity:  alpha_vel = 0.15  (tau ≈ 0.012 s, faster response)
+    # Key difference: Kp is read from RTDE registers 37-42 every tick.
+    # Damping ratio zeta is read from register 43.
+    # Kd is computed as:  Kd = 2 * zeta * sqrt(Kp)
+    #   zeta = 1.0 → critical damping
+    #   zeta < 1.0 → under-damped (faster, allows overshoot)
+    #   zeta > 1.0 → over-damped (slower, no overshoot)
     #
-    # Safety:
-    #   - Position error saturation: |e| ≤ max_error per joint
-    #   - Torque saturation: |tau| ≤ max_tau per joint
+    # This allows the Python auto-tuner to sweep Kp and zeta values
+    # without re-uploading the URScript.
     # ===================================================================
 
     # Default / initial position and velocity
@@ -25,24 +22,27 @@ def impedance_control_v3():
     qdot_des   = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     qdot_filt  = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-    # Impedance gains
+    # Gains (initial defaults, overwritten by RTDE each tick)
     kp = [200.0, 800.0, 200.0, 40.0, 40.0, 40.0]
-    kd = [25.0, 60.0, 25.0, 10.0, 10.0, 10.0]
+    kd = [28.3, 56.6, 28.3, 12.6, 12.6, 12.6]
     max_error = 0.20
 
-    # Torque limits (Nm) – UR5e specs: 120 shoulder, 60 wrist
+    # Torque limits (Nm) – UR5e specs
     max_tau = [120.0, 120.0, 120.0, 60.0, 60.0, 60.0]
 
-    # First-order filter coefficients
-    alpha_pos = 0.12       # position: faster filter → reduced phase lag
-    alpha_vel = 0.20       # velocity: faster filter → responsive feedforward
+    # First-order filter coefficients (same as tuned V3)
+    alpha_pos = 0.12
+    alpha_vel = 0.20
+
+    # Damping ratio (read from RTDE register 43, default 1.0 = critical)
+    zeta = 1.0
 
     policy_rate = read_input_integer_register(36)
-    textmsg("Policy control rate (Hz): ", policy_rate)
-    textmsg("Torque limits: shoulder=120 Nm, wrist=60 Nm")
+    textmsg("Tuning mode – Policy rate (Hz): ", policy_rate)
+    textmsg("Kd = 2*zeta*sqrt(Kp) – Kp from regs 37-42, zeta from reg 43")
 
     stop = False
-    j = 0
+    go_home = False
 
     while True:
         # ----- Read q_des from RTDE input registers 24-29 -----
@@ -61,17 +61,53 @@ def impedance_control_v3():
         qdot_des[4] = read_input_float_register(34)
         qdot_des[5] = read_input_float_register(35)
 
+        # ----- Read Kp from RTDE input registers 37-42 -----
+        kp[0] = read_input_float_register(37)
+        kp[1] = read_input_float_register(38)
+        kp[2] = read_input_float_register(39)
+        kp[3] = read_input_float_register(40)
+        kp[4] = read_input_float_register(41)
+        kp[5] = read_input_float_register(42)
+
+        # ----- Read damping ratio from RTDE register 43 -----
+        zeta = read_input_float_register(43)
+
+        # ----- Compute Kd = 2 * zeta * sqrt(Kp) -----
+        kd[0] = 2.0 * zeta * sqrt(kp[0])
+        kd[1] = 2.0 * zeta * sqrt(kp[1])
+        kd[2] = 2.0 * zeta * sqrt(kp[2])
+        kd[3] = 2.0 * zeta * sqrt(kp[3])
+        kd[4] = 2.0 * zeta * sqrt(kp[4])
+        kd[5] = 2.0 * zeta * sqrt(kp[5])
+
         stop = read_input_boolean_register(64)
+        go_home = read_input_boolean_register(65)
+
+        # ===============================================================
+        # 0. Go-home request: movej to home, reset filters, then resume
+        # ===============================================================
+        if go_home:
+            textmsg("Go-home requested – moving to home...")
+            stopj(2)
+            movej([-0.0, -1.57, 0.0, -1.57, 0, 0], a=0.7, v=0.6, t=0, r=0)
+            # Reset filter states to home position
+            q_filt  = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+            qdot_filt = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            textmsg("Go-home done – waiting for flag clear...")
+            # Wait until Python clears the go_home flag
+            while read_input_boolean_register(65):
+                sync()
+            end
+            textmsg("Resuming impedance control")
+        end
 
         # ===============================================================
         # 1. First-order filter on POSITION
-        #    q_filt = alpha * q_des + (1 - alpha) * q_filt
         # ===============================================================
         q_filt = alpha_pos * q_des + (1.0 - alpha_pos) * q_filt
 
         # ===============================================================
         # 2. First-order filter on VELOCITY
-        #    qdot_filt = alpha * qdot_des + (1 - alpha) * qdot_filt
         # ===============================================================
         qdot_filt = alpha_vel * qdot_des + (1.0 - alpha_vel) * qdot_filt
 
@@ -80,7 +116,7 @@ def impedance_control_v3():
         q_dot = get_actual_joint_speeds()
 
         # ===============================================================
-        # 3. Position error (filtered target) with saturation
+        # 3. Position error with saturation
         # ===============================================================
         e = q_filt - q
         i = 0
@@ -118,7 +154,6 @@ def impedance_control_v3():
             movej([-0.0, -1.57, 0.0, -1.57, 0, 0], a=0.7, v=0.6, t=0, r=0)
             break
         end
-        j = j + 1
     end
     stopj(2)
 end
