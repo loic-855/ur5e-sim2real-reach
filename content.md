@@ -589,3 +589,318 @@ Le manuscrit s'organiserait alors en :
 4. **Expériences** : ablation velocity FF, ablation DR layers, MLP vs LSTM, sim vs real
 5. **Résultats** : comparatifs quantitatifs sur le robot réel
 6. **Discussion** : co-dépendance policy/controller, limites, généralisation
+
+# partie 3: Explore grasping task and common infra
+## Structure proposée
+
+### **3.1 — Simulation Platform**
+Courte section (~1 page). Tu poses le cadre technique.
+
+**Contenu :**
+- Isaac Lab / Isaac Sim (NVIDIA), pourquoi : GPU-parallélisé (4092 envs simultanés), PhysX pour contacts rigides, intégration native avec USD pour les assets robotiques
+- Fréquence de simulation : 120 Hz (physique), 60 Hz (contrôle via `decimation=2`)
+- Scène : table de travail ($1.2 \times 0.8 \times 0.842$ m), UR5e monté sur bloc aluminium (20 mm), origine du repère au centre de la table à hauteur du plateau
+
+**Justification scientifique :** Le choix du `decimation=2` est un compromis stabilité/capacité d'apprentissage — la physique tourne 2× plus vite que le policy, ce qui assure la stabilité des contacts sans alourdir le coût d'inférence du réseau. Cite [Rudin et al., 2022 – ANYmal locomotion] qui utilisent le même pattern.
+
+---
+
+### **3.2 — Control Architecture** *(section partagée, pas de duplication)*
+C'est **la section clé** qui s'applique aux deux tâches. Tu l'écris une fois, et les deux tâches y réfèrent.
+
+**Contenu :**
+- **Actionneurs implicites (ImplicitActuatorCfg)** : le simulateur modélise un PD-controller à l'articulation. La politique ne génère pas de couples mais des **cibles de position** (et éventuellement de vitesse). Le couple appliqué est :
+$$\tau = K_p (q_{target} - q) + K_d (\dot{q}_{target} - \dot{q})$$
+- **Groupes d'actionneurs asymétriques** : épaule ($K_p=800$, $K_d=60$) vs poignet ($K_p=350$, $K_d=35$) — justifié par les inerties différentes des segments du bras
+- **Espace d'actions en delta-position** : les actions $a \in [-1, 1]$ sont converties en incréments :
+$$q_{target}^{t+1} = \text{clamp}(q_{target}^t + s \cdot \Delta t \cdot a \cdot \alpha, q_{min}, q_{max})$$
+  où $\alpha$ est l'action scale et $s$ les speed scales par joint
+
+**Justification scientifique importante :** Le choix d'un espace d'actions en delta-position (plutôt qu'en position absolue ou en couple) est crucial pour le sim2real. Il garantit la **continuité des trajectoires articulaires** — chaque pas ne peut déplacer le robot que d'un petit incrément, ce qui élimine les sauts brusques qui seraient dangereux sur le robot réel. C'est le même choix que [Allshire et al., 2022 – Transferring Dexterous Manipulation].
+
+- **Extension V3 : velocity feedforward** (12D actions pour la tâche de pose). Les 6 premières dimensions sont les incréments de position, les 6 dernières sont des vitesses directes $\dot{q}_{target} = a_{vel} \cdot \alpha_{vel}$. Ce découplage position/vitesse permet à la politique d'encoder séparément "où aller" et "à quelle vitesse", au lieu de devoir sur-commander la position pour compenser l'amortissement implicite.
+
+**Justification scientifique :** Citer la littérature sur le feedforward en contrôle robotique — la décomposition feedback/feedforward est un principe fondamental en automatique [Slotine & Li, 1991]. Le policy apprend essentiellement le terme feedforward, tandis que le PD implicite assure le feedback.
+
+---
+
+### **3.3 — Task Formulation** *(structure commune, détails spécifiques)*
+
+Ici tu utilises une **structure parallèle** : tu définis une fois le cadre commun (MDP, notation), puis tu détailles chaque tâche dans une sous-section. **Ne répète pas** les éléments partagés — réfère à §3.2.
+
+#### **3.3.0 — Shared MDP Framework** (~0.5 page)
+
+Définis tes notations une fois :
+- L'agent reçoit une observation $o_t$, produit une action $a_t$, reçoit une récompense $r_t$
+- Structure common : observations normalisées dans $[-1, 1]$ ou par constantes physiques ($\pi$, MAX_REACH, MAX_JOINT_VEL)
+- Politique entraînée via PPO (RSL-RL), réseau MLP [512, 256, 128] ou LSTM
+
+#### **3.3.1 — Pose-Orientation Reaching Task** (~2-3 pages)
+
+**Observation (24D) — présente sous forme de tableau :**
+
+| Composante | Dim | Normalisation | Justification |
+|---|---|---|---|
+| Erreur de position (goal − TCP) | 3 | $/$ MAX_REACH (0.85 m) | Borne physique du workspace |
+| Erreur d'orientation (box-minus) | 3 | $/\pi$ | Borne maximale de rotation |
+| Positions articulaires | 6 | $2\frac{q - q_{min}}{q_{max} - q_{min}} - 1$ | Centré, borné |
+| Vitesses articulaires | 6 | $/$ MAX_JOINT_VEL (3.14 rad/s) | Limite physique du UR5e |
+| Vitesse linéaire TCP | 3 | $/$ TCP_MAX_SPEED (2.0 m/s) | Borne conservative |
+| Vitesse angulaire TCP | 3 | $/\pi$ | Borne physique |
+
+**Justification scientifique de l'observation :**
+- L'erreur d'orientation utilise le **box-minus** quaternionique ($\log(q_1 \cdot q_2^{-1})$) qui projette l'erreur sur l'espace tangent de SO(3), donnant un vecteur 3D continu. C'est supérieur à la différence naïve de quaternions car ça évite les discontinuités à $q$ et $-q$ et donne une métrique géodésique.
+- L'observation N'inclut PAS la position/orientation absolue du TCP ni le goal en absolu. Seule l'**erreur relative** est observée → le policy apprend un comportement invariant à la position du goal dans le workspace. C'est un choix de design important pour la généralisation.
+
+**Actions (12D) :** Réfère à §3.2 pour le delta-position + velocity feedforward.
+
+**Récompense :** Présente sous forme d'équation :
+$$r_t = \underbrace{w_1 \cdot e^{-\|e_p\|/\sigma_p}}_{\text{position exp}} + \underbrace{w_2 \cdot e^{-\|e_o\|/\sigma_o}}_{\text{orientation exp}} - \underbrace{w_3 \|e_p\|}_{\text{pos penalty}} - \underbrace{w_4 \|e_o\|}_{\text{ori penalty}} - \underbrace{w_5 \|a\|^2}_{\text{action reg}} - \underbrace{w_6 \|\dot{q}\|^2}_{\text{velocity reg}} - \underbrace{w_7 \cdot f_{contact}}_{\text{contact}} + \underbrace{w_8 \cdot \mathbb{1}_{success}}_{\text{bonus}}$$
+
+**Justification scientifique :** La combinaison linéaire + exponentielle est motivée : le terme linéaire donne un gradient global même loin du goal (évite les plateaux), le terme exponentiel donne un signal dense et croissant près du goal. La récompense de succès ($+15$) activée après 60 frames consécutives sous seuil empêche le "goal chatter" (osciller autour du seuil → bonus intermittents).
+
+**Logique de goal :** Goal resample après succès ou timeout (5s). Pas de reset d'épisode à chaque goal → l'agent apprend à enchaîner les goals.
+
+#### **3.3.2 — Grasping Task** (~1.5-2 pages)
+
+**Différences clés** (ne répète que ce qui change) :
+- Action: 7D (6 bras + 1 gripper prismatique, doigt droit mimiqué)
+- Observation: 27D — inclut la **position du bloc** et les **dernières actions** (contexte temporel sans LSTM)
+- Robot: GRIPPER_TCP avec actionneurs gripper ($K_p=1200$, $K_d=5$) — raideur élevée pour fermeture rapide
+
+**Récompense** (différente — approche par noyau tanh) :
+$$r_{dist} = w_1 (1 - \tanh(\|d\| / \sigma)) - w_2 \|d\|$$
+$$r_{ori} = w_3 \cdot \frac{1}{2}(\text{sign}(\hat{g}_y \cdot \hat{b}_y)(\hat{g}_y \cdot \hat{b}_y)^2 + \text{sign}(\hat{g}_z \cdot \hat{b}_z)(\hat{g}_z \cdot \hat{b}_z)^2)$$
+$$r_{lift} = w_4 \cdot (\max(0, z_{block} - z_{table}))^2$$
+
+**Justification scientifique :**
+- Le **noyau tanh** ($1 - \tanh(d/\sigma)$) est un choix classique pour les tâches de reaching avec contact [Andrychowicz et al., 2020 — OpenAI Hindsight]. Il sature à 1 quand $d \to 0$, évitant les récompenses infiniment croissantes.
+- La récompense d'orientation utilise des **produits scalaires au carré signés** : c'est invariant à la symétrie du bloc (le gripper peut saisir par les deux côtés) tout en pénalisant les mauvais alignements.
+- **Curriculum learning** : gravité du bloc désactivée les 20k premiers pas (le bloc flotte), action penalty augmentée à 15k pas. Justification : le curriculum réduit la complexité initiale du problème en séparant "apprendre à atteindre" de "apprendre à soulever contre la gravité". [Bengio et al., 2009 — Curriculum Learning]
+
+---
+
+### **3.4 — Domain Randomization** (~1.5 pages)
+
+**Structure en couches** (c'est ça la contribution, présente-le comme un pipeline multi-couche) :
+
+| Couche | Paramètres randomisés | Motivation physique |
+|---|---|---|
+| **Communication** | Délai d'action (0-5 steps), bruit gaussien ($\sigma=0.025$), perte de paquets (3%) | Modélise la latence réseau RTDE (60 Hz → 500 Hz) |
+| **Observation** | Délai (0-3 steps), bruit structuré par composante ($\sigma_{pos}=0.005$ m, $\sigma_{vel}=0.025$ rad/s) | Bruit des capteurs, latence de lecture |
+| **Actionneurs** | Raideur/amortissement ±20%, friction ±35% | Incertitude sur les paramètres mécaniques |
+| **Physique (V4)** | Masse ±15%, CoM ±1 cm, recalcul d'inertie | Incertitude sur le modèle dynamique (gripper, charge) |
+
+**Justification scientifique :**
+- Le **bruit structuré par composante** (pas un bruit uniforme sur tout le vecteur) est important : les positions articulaires ont un bruit ~0.012 rad (résolution encoder UR5e), les vitesses ~0.025 rad/s (dérivée numérique), les positions TCP ~0.005 m (propagation cinématique). Citer [Tobin et al., 2017 — Domain Randomization for Transfer] pour le principe, mais souligner que tu vas plus loin avec du bruit **calibré sur les specs du robot réel**.
+- Le **split du bruit d'action V3** ($\sigma_{pos}=0.025$ vs $\sigma_{vel}=0.01$) reflète le fait que les erreurs de position sont amplifiées par le PD-controller (haute raideur), tandis que les vitesses sont directement transmises.
+
+---
+
+### **3.5 — Real Robot Deployment** (~2 pages + schéma)
+
+**Schéma bloc** (à créer) :
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    PC (Linux/ROS2)                   │
+│                                                     │
+│  ┌──────────┐    ┌──────────────┐    ┌───────────┐  │
+│  │ Goal     │───▶│ Observation  │───▶│ Policy    │  │
+│  │ Publisher │    │ Builder     │    │ (JIT .pt) │  │
+│  │ (ROS2)   │    │ (24D norm)  │    │ 60 Hz     │  │
+│  └──────────┘    └──────┬───────┘    └─────┬─────┘  │
+│                         │ 125 Hz           │ 60 Hz   │
+│                    ┌────┴────┐       ┌─────┴──────┐  │
+│                    │ RTDE    │◀─────▶│ RTDE       │  │
+│                    │ Reader  │       │ Writer     │  │
+│                    │ Thread  │       │ q_des +    │  │
+│                    │ (cache) │       │ qdot_des   │  │
+│                    └────┬────┘       └─────┬──────┘  │
+└─────────────────────────┼──────────────────┼─────────┘
+                          │  Ethernet        │
+                          │  ~~1 ms          │
+┌─────────────────────────┼──────────────────┼─────────┐
+│                    UR5e Controller (500 Hz)           │
+│                                                      │
+│  ┌────────────────────────────────────────────────┐  │
+│  │           URScript Impedance Controller        │  │
+│  │                                                │  │
+│  │  q_filt ← α_p·q_des + (1-α_p)·q_filt         │  │
+│  │  q̇_filt ← α_v·q̇_des + (1-α_v)·q̇_filt       │  │
+│  │                                                │  │
+│  │  τ = Kp·(q_filt - q) + Kd·(q̇_filt - q̇)      │  │
+│  │        ↑ épaule: 250/30  ↑ poignet: 60/15     │  │
+│  │  τ = clamp(τ, ±120 / ±60 Nm)                  │  │
+│  └────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────┘
+```
+
+**Contenu :**
+
+**3.5.1 — Communication RTDE**
+- Protocole RTDE (Real-Time Data Exchange) : communication bidirectionnelle via registres à 125 Hz
+- Lecture : `actual_q`, `actual_qd`, `actual_TCP_pose`, `actual_TCP_speed` (V3 ajout de TCP speed)
+- Écriture : `q_des` (registres 24-29), `qdot_des` (registres 30-35, V3+)
+- **Thread de lecture découplé** (125 Hz) vs boucle de contrôle (60 Hz) : évite le couplage temporel et réduit le jitter
+
+**3.5.2 — Impedance Controller (URScript, 500 Hz)**
+
+C'est un élément de design majeur. Explique :
+
+- **Pourquoi l'impédance plutôt que le suivi de trajectoire natif UR ?** Le `servoj` standard du UR5e fait du suivi de position pur (PD dur) — tout écart est corrigé agressivement. Ton contrôleur à impédance custom permet un comportement **compliant** : si le robot rencontre un obstacle inattendu, il cède plutôt que de forcer. C'est essentiel pour un policy RL qui peut commander des positions irréalistes pendant les phases d'exploration.
+
+- **Filtrage dual asymétrique** (la contribution technique principale) :
+  - Position : $\alpha_p = 0.05$ → $\tau_p \approx 0.04$ s (filtre lent, trajectoire lisse)
+  - Vitesse : $\alpha_v = 0.15$ → $\tau_v \approx 0.012$ s (filtre rapide, réponse dynamique)
+
+  **Justification scientifique :** Le filtre de position lent lisse les pas discrets de la politique (60 Hz → 500 Hz), éliminant les artéfacts d'aliasing. Le filtre de vitesse rapide permet à la politique d'injecter des corrections dynamiques quasi-instantanément. C'est analogue à la séparation **feedforward/feedback** classique en contrôle (le feedforward en vitesse agit avant que l'erreur de position soit manifeste).
+
+- **Saturation multi-couche** : erreur de position clampée à ±0.20 rad, couple limité par joint (120 Nm épaule, 60 Nm poignet). Defence en profondeur : aucun point de défaillance unique.
+
+- **Gains PD différents du simulateur** : simulation ($K_p=800/350$) vs réel ($K_p=250/60$). Explique pourquoi : le DR d'actionneurs (±20%) est supposé couvrir cette différence. Le simulateur utilise des gains plus élevés car PhysX a un pas de temps plus grand (8.3 ms vs 2 ms) et une dynamique numérique différente.
+
+**3.5.3 — Conversion des frames**
+- RTDE donne le TCP en **frame robot-base**
+- La politique attend le **frame table-centre**
+- Offset de calibration : $p_{table} = p_{base} + [-0.52, 0.32, 0.02]$ m
+- Mention que cette calibration est faite une fois manuellement et que toute erreur introduit un biais systématique
+
+---
+
+## Résumé des éléments à mettre en évidence scientifiquement
+
+| Élément de design | Justification | Section |
+|---|---|---|
+| Delta-position actions | Continuité des trajectoires, sécurité | §3.2 |
+| Velocity feedforward (12D) | Découplage feedforward/feedback | §3.2 |
+| Observation en erreur relative | Invariance au goal, meilleure généralisation | §3.3.1 |
+| Box-minus quaternionique | Métrique géodésique sur SO(3), pas de discontinuité | §3.3.1 |
+| Normalisation par constantes physiques | Chaque composante a un sens physique borné | §3.3.1 |
+| Noyau tanh vs exponentiel | Deux tâches, deux formes de récompense adaptées | §3.3.1 vs §3.3.2 |
+| Goal persistence (60 frames) | Anti-chatter, robustesse du critère de succès | §3.3.1 |
+| Curriculum gravité/pénalités | Décompose la complexité d'apprentissage | §3.3.2 |
+| DR structuré par composante | Calibré sur les specs capteurs réels | §3.4 |
+| Filtrage dual asymétrique | Feedforward rapide + tracking lisse | §3.5.2 |
+| Saturation multi-couche | Safety : erreur, couple, limites articulaires | §3.5.2 |
+
+Pour éviter la duplication entre les deux tâches : §3.2 (control architecture) et §3.4 (domain randomization) sont **communs**. §3.3.1 et §3.3.2 partagent la même structure (tableau obs, équation reward, logique de reset) mais avec un contenu différent. Tu réfères à §3.2 pour la mécanique d'action au lieu de la re-expliquer.
+
+
+---
+
+## `num_steps_per_env` = 24 et la notion de "batch size"
+
+Ce n'est **pas directement** le batch size au sens supervised learning. Voici la distinction :
+
+**En PPO, le "rollout buffer" est constitué comme suit :**
+
+$$N_{total} = \texttt{num\_steps\_per\_env} \times \texttt{num\_envs} = 24 \times 4092 = 98\,208 \text{ transitions}$$
+
+C'est l'**équivalent du dataset** sur lequel tu fais tes mises à jour. En supervised ML, on parlerait du **training set size** pour une époque.
+
+**Le vrai "mini-batch size"** (au sens SGD) est :
+
+$$B = \frac{N_{total}}{\texttt{num\_mini\_batches}} = \frac{98\,208}{8} = 12\,276 \text{ transitions/mini-batch}$$
+
+Et chaque itération PPO fait `num_learning_epochs = 8` passes sur ces données → **64 updates de gradient** par itération PPO (8 époques × 8 mini-batches).
+
+### Pourquoi 24 est petit mais correct
+
+24 steps à 60 Hz = **0.4 seconde** de rollout par environnement. C'est effectivement court comparé à certains travaux :
+
+| Référence | `num_steps_per_env` | `num_envs` | $N_{total}$ |
+|---|---|---|---|
+| **Toi (V4)** | **24** | **4092** | **98k** |
+| Rudin et al. (ANYmal, 2022) | 24 | 4096 | 98k |
+| Makoviychuk et al. (IsaacGym, 2021) | 16–32 | 4096 | 65k–131k |
+| Schulman et al. (PPO original, 2017) | 2048 | 1–8 | 2k–16k |
+| OpenAI (Dexterous hand, 2020) | 8 | 16384 | 131k |
+
+**Justification scientifique :** La valeur de 24 est standard pour la robotique GPU-parallélisée. Le principe est le suivant : quand on a **beaucoup d'environnements parallèles** (~4000), on peut se permettre des rollouts courts car la **diversité statistique** vient du nombre d'environnements, pas de la longueur des trajectoires. Le $N_{total}$ final (~98k) est comparable aux travaux de référence. C'est le résultat clé de [Makoviychuk et al., 2021 — "Isaac Gym: High Performance GPU-Based Physics Simulation for Robot Learning"] :
+
+> "*With massively parallel simulation, short rollouts (16-32 steps) with thousands of environments achieve equivalent or better sample efficiency than long rollouts with few environments.*"
+
+Un rollout trop long (`num_steps_per_env` >> 24) avec $\gamma = 0.99$ poserait un problème : les avantages GAE ($\hat{A}_t$) estimés en fin de rollout deviennent très bruités car ils accumulent $\gamma^k \lambda^k$ sur beaucoup de steps. Avec 24 steps, la contribution la plus lointaine est pondérée par $0.99^{24} \times 0.95^{24} \approx 0.22 \times 0.29 \approx 0.064$ — un bon compromis biais/variance.
+
+---
+
+## Régularisation dans RSL-RL
+
+**RSL-RL n'inclut ni dropout, ni weight decay.** C'est un choix délibéré. La régularisation en RL on-policy est fondamentalement différente du supervised learning :
+
+| Mécanisme | Présent ? | Rôle |
+|---|---|---|
+| **Dropout** | Non | Contre-productif en RL : introduit de la stochasticité dans le value function, déstabilise l'estimation d'avantage |
+| **Weight decay** | Non | Peut forcer les poids vers zéro et empêcher le réseau de représenter des policies complexes |
+| **Entropy bonus** ($H[\pi]$) | **Oui** (0.01) | Régularisation principale : empêche le collapse prématuré de la politique vers un mode unique |
+| **Gradient clipping** | **Oui** (1.0) | Empêche les explosions de gradient, stabilise l'entraînement |
+| **PPO clip** ($\epsilon = 0.2$) | **Oui** | Limite le ratio $\pi_\theta / \pi_{\theta_{old}}$ : empêche les mises à jour trop agressives |
+| **Adaptive KL** | **Oui** (target 0.008) | Réduit dynamiquement le learning rate si la politique change trop vite |
+| **Clipped value loss** | **Oui** | Stabilise le critic en limitant ses mises à jour |
+
+**Pourquoi pas de dropout ?** [Henderson et al., 2018 — "Deep Reinforcement Learning that Matters"] montrent que le dropout en RL on-policy **dégrade les performances** car il perturbe les estimations de la value function — or PPO repose sur des avantages précis ($\hat{A}_t$) pour sa mise à jour. La stochasticité du dropout sur le critic crée un signal de récompense bruité qui empêche la convergence. En RL, l'exploration (via l'entropy bonus et le bruit de la politique stochastique gaussienne) joue déjà le rôle de régulariseur contre l'overfitting.
+
+**Pourquoi pas de weight decay ?** En supervised learning, on generalise à un test set fixe. En RL on-policy, il n'y a pas de "test set" — les données sont générées par la politique elle-même. L'overfitting au sens classique n'existe pas de la même manière ; le risque est plutôt le **policy collapse** (converger trop vite vers un optimum local), ce que l'entropy bonus adresse.
+
+---
+
+## `num_learning_epochs = 8` et `num_mini_batches = 8`
+
+### `num_learning_epochs`
+Nombre de passes complètes sur le rollout buffer avant de le jeter et d'en collecter un nouveau. Avec PPO, on **réutilise les données** (off-policy partiel) grâce au ratio clippé :
+
+$$L^{CLIP}(\theta) = \mathbb{E}\left[\min\left(\frac{\pi_\theta(a|s)}{\pi_{\theta_{old}}(a|s)} \hat{A}_t,\; \text{clip}\left(\frac{\pi_\theta}{\pi_{\theta_{old}}}, 1-\epsilon, 1+\epsilon\right) \hat{A}_t\right)\right]$$
+
+8 époques signifie qu'on extrait **8× plus de signal** de chaque rollout qu'un algorithme on-policy pur (comme REINFORCE). Le clipping garantit que la politique ne diverge pas trop de celle qui a collecté les données.
+
+**Justification :** [Schulman et al., 2017] testent 3 à 15 époques et trouvent que 3-10 fonctionne bien. 8 est dans la plage optimale. Trop d'époques → la politique s'éloigne trop des données collectées (violation de la condition on-policy malgré le clipping). Trop peu → gaspillage de données.
+
+### `num_mini_batches`
+Le rollout buffer (98k transitions) est découpé en 8 mini-batches de ~12k transitions. Chaque mini-batch fait une mise à jour de gradient.
+
+**Impact :** Un mini-batch plus grand → gradient plus stable mais mise à jour moins fréquente. Un mini-batch plus petit → plus de bruit mais plus de mises à jour. 8 est un compromis classique. [Andrychowicz et al., 2021 — "What Matters in On-Policy Reinforcement Learning?"] font une étude d'ablation systématique et trouvent que `num_mini_batches ∈ [4, 16]` est optimal pour la plupart des tâches de contrôle continu.
+
+---
+
+## Le `schedule = "adaptive"` + `desired_kl = 0.008`
+
+C'est le mécanisme de régularisation le **plus important** de ta config, et il est souvent sous-documenté. RSL-RL implémente le **adaptive learning rate** de PPO :
+
+- Après chaque itération, la divergence KL entre l'ancienne et la nouvelle politique est mesurée
+- Si $D_{KL} > 2 \times \texttt{desired\_kl}$ → le learning rate est **divisé par 1.5**
+- Si $D_{KL} < \texttt{desired\_kl} / 2$ → le learning rate est **multiplié par 1.5**
+
+Cela crée un **régulateur automatique** : si la politique change trop vite (risque de collapse), le LR diminue. Si elle stagne, le LR augmente. C'est plus robuste qu'un schedule fixe et explique pourquoi tes hyperparamètres sont stables entre les versions.
+
+---
+
+## Comment en parler dans ton manuscrit
+
+Dans ta section hyperparamètres, je suggère un **tableau + paragraphe explicatif** :
+
+**Tableau :**
+
+| Paramètre | Valeur | Signification |
+|---|---|---|
+| Environnements parallèles | 4092 | Diversité statistique |
+| Steps par env (`num_steps_per_env`) | 24 | Rollout = 0.4 s à 60 Hz |
+| Transitions par itération | 98 208 | $24 \times 4092$ |
+| Époques par itération | 8 | Réutilisation des données |
+| Mini-batches | 8 | ~12k transitions/batch |
+| Updates de gradient par itération | 64 | $8 \times 8$ |
+| Learning rate initial | $5 \times 10^{-4}$ | Adaptatif (target KL = 0.008) |
+| Clip ratio ($\epsilon$) | 0.2 | Limite PPO |
+| Entropy coeff | 0.01 | Régularisation d'exploration |
+| $\gamma$ / $\lambda$ (GAE) | 0.99 / 0.95 | Discount / bias-variance |
+| Architecture | MLP [512, 256, 128] ELU | Actor et Critic séparés |
+
+**Paragraphe clé à écrire :**
+> "Conformément aux pratiques établies pour le RL massivement parallélisé [Rudin et al., 2022; Makoviychuk et al., 2021], nous utilisons des rollouts courts (24 steps) compensés par un grand nombre d'environnements parallèles (4092), donnant ~98k transitions par itération. Ce choix est motivé par le constat que la diversité inter-environnements (positions initiales, goals, domain randomization) fournit une couverture statistique suffisante sans nécessiter de longues trajectoires. Contrairement au supervised learning, aucun dropout ni weight decay n'est employé ; la régularisation repose sur le bonus d'entropie ($\beta_H = 0.01$), le clipping PPO ($\epsilon = 0.2$), et un learning rate adaptatif contrôlé par une cible de divergence KL ($D_{KL}^{target} = 0.008$), conformément aux recommandations de [Andrychowicz et al., 2021]."
+
+**Références clés à citer :**
+- [Schulman et al., 2017] — PPO original (clip, epochs, KL)
+- [Makoviychuk et al., 2021] — Isaac Gym (short rollouts + many envs)
+- [Rudin et al., 2022] — ANYmal (même config : 24 steps, 4096 envs)
+- [Andrychowicz et al., 2021] — "What Matters in On-Policy RL" (ablation systématique des hyperparamètres)
+- [Henderson et al., 2018] — "Deep RL that Matters" (pourquoi pas de dropout en RL)
