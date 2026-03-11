@@ -7,12 +7,12 @@
 #SBATCH --gpus=rtx_4090:1
 #SBATCH --time=00:45:00
 #SBATCH --mem-per-cpu=8000
-#SBATCH --job-name="WWSim-Pose-Orientation-Sim2Real-Direct-v3"
+#SBATCH --job-name="WWSim-Grasping-Single-Robot-Direct-v1"
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
 
 # --- CONFIGURATION ---
-TASK_NAME="WWSim-Pose-Orientation-Sim2Real-Direct-v3"
+TASK_NAME="WWSim-Grasping-Single-Robot-Direct-v1"
 # UPDATE THIS PATH to where you uploaded your .sif file
 SIF_PATH="/cluster/scratch/$USER/isaac_euler_salziegl.sif"
 
@@ -77,21 +77,8 @@ apptainer exec --nv \
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \
             --headless \
-            agent.max_iterations=2500 \
-            env.stability_reward_scale=0.3 \
-            env.action_penalty_scale=-0.01 \
-            env.velocity_action_penalty_scale=-0.05 \
-            env.velocity_penalty_scale=-0.01 \
-            env.position_exp_scale=0.05 \
-            env.orientation_exp_scale=0.2 \
-            env.action_scale=2.0 \
-            env.pos_threshold=0.05 \
-            env.required_frames=15 \
-            env.domain_rand.enabled=True \
-            env.domain_rand.action_delay_range=[0,2] \
-            env.domain_rand.obs_delay_range=[0,1] \
-            agent.experiment_name=sim2real_v3_rand_delay \
-            agent.wandb_project=sim2real_v3_rand_delay 
+            agent.policy.actor_hidden_dims=[512,256,128] \
+            agent.policy.critic_hidden_dims=[512,256,128] \
     "
 
 # Cleanup Cache

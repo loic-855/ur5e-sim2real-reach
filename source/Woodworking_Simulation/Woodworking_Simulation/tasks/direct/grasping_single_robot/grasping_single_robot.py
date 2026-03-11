@@ -56,7 +56,19 @@ class GraspingSingleRobotCfg(DirectRLEnvCfg):
     state_space = 0  # Not used in this task
 
     # simulation
-    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
+    try:
+        sim: SimulationCfg = SimulationCfg(
+            dt=1 / 120,
+            render_interval=decimation,
+            physx=PhysxCfg(solver_type=1, enable_external_forces_every_iteration=True),
+        )
+    except:
+        print("This version of Isaac Sim may not support the 'enable_external_forces_every_iteration' option.")
+        sim: SimulationCfg = SimulationCfg(
+            dt=1 / 120,
+            render_interval=decimation,
+            physx=PhysxCfg(solver_type=1),
+        )
 
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
