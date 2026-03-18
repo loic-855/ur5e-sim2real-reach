@@ -41,11 +41,13 @@ The impedance controller is a recent add and result have shown that it hasn't be
 
 # Manuscript writing:
 
-To do:
+To do after milie interview:
 * Write the related work section
 * In the methods write the section that detail the impedance controller tuning.
 * Write the results 
 * Write the discussion
+
+## Impedance controller focus: 
 
 
 
