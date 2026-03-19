@@ -230,11 +230,14 @@ def make_joint_figure(
     error_deg = cmd_deg - obs_deg
     rms_error_deg = float(np.sqrt(np.mean(np.square(error_deg))))
     display_name = clean_joint_name(joint_name)
+    position_reference_deg = float(np.median(cmd_deg))
+    cmd_plot_deg = cmd_deg - position_reference_deg
+    obs_plot_deg = obs_deg - position_reference_deg
 
     fig, (ax_pos, ax_err) = plt.subplots(2, 1, figsize=(10, 7), sharex=True, constrained_layout=True)
 
-    ax_pos.plot(local_time_s, cmd_deg, label="Command position", linewidth=2.0)
-    ax_pos.plot(local_time_s, obs_deg, label="Observed position", linewidth=1.8)
+    ax_pos.plot(local_time_s, cmd_plot_deg, label="Command position", linewidth=2.0)
+    ax_pos.plot(local_time_s, obs_plot_deg, label="Observed position", linewidth=1.8)
     ax_pos.set_title(f"Simulation: joint {joint_index + 1} - {display_name}")
     ax_pos.set_ylabel("Position [deg]")
     ax_pos.set_xlim(-WINDOW_PADDING_S, WINDOW_DURATION_S + WINDOW_PADDING_S)
