@@ -74,7 +74,6 @@ from Woodworking_Simulation.common.domain_randomization_v4 import (
     ActionBufferV3,
     ActuatorRandomizer,
     DomainRandomizationV4Cfg,
-    MassComRandomizer,
     ObservationBuffer,
 )
 
@@ -323,7 +322,6 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             device=self.device,
         )
         self._actuator_randomizer: ActuatorRandomizer | None = None
-        self._mass_com_randomizer: MassComRandomizer | None = None
 
     # -- Scene setup --------------------------------------------------------
 
@@ -651,13 +649,6 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
                 cfg=self.cfg.domain_rand,
                 device=self.device,
             )
-        # Lazily create the mass/CoM randomizer
-        if self._mass_com_randomizer is None:
-            self._mass_com_randomizer = MassComRandomizer(
-                robot=self._robot,
-                cfg=self.cfg.domain_rand,
-                device=self.device,
-            )
 
         # Split envs: some reset to home, others fully random
         mask = torch.rand(len(env_ids), device=self.device) < self.cfg.env_reset
@@ -685,7 +676,6 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         self._obs_buffer.reset(env_ids)
         if self.cfg.domain_rand.enabled:
             self._actuator_randomizer.sample_and_apply(env_ids)
-            self._mass_com_randomizer.sample_and_apply(env_ids)
 
         self._sample_goal(env_ids)
 
