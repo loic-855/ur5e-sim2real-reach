@@ -338,37 +338,43 @@ def run_tuner(args: argparse.Namespace) -> None:
 
         duration = args.duration
         n_steps = int(duration * args.rate)
+        total_steps = n_steps * len(excited_joints)
         print(
-            f"[Tuner] Starting excitation: joints={excited_joints}, "
+            f"[Tuner] Starting sequential excitation: joints={excited_joints}, "
             f"{'chirp' if args.chirp else f'freq={args.freq} Hz'}, amp={args.amplitude} rad, "
-            f"duration={duration} s, rate={args.rate} Hz, velocity_ff={'ON' if args.vel_ff else 'OFF'}"
+            f"duration={duration} s per joint, rate={args.rate} Hz, velocity_ff={'ON' if args.vel_ff else 'OFF'}"
         )
 
         excitation_start_time = time.monotonic()
-        for _ in range(n_steps):
-            loop_t0 = time.monotonic()
-            t = loop_t0 - excitation_start_time
+        for active_joint in excited_joints:
+            print(f"[Tuner] Exciting joint {active_joint} ({JOINT_NAMES[active_joint]}) …")
+            joint_start_time = time.monotonic()
+            for _ in range(n_steps):
+                loop_t0 = time.monotonic()
+                t = loop_t0 - joint_start_time
 
-            q_des = q_centre.copy()
-            qd_des = np.zeros(6, dtype=np.float64)
-            for j in excited_joints:
-                offset = float(q_centre[j])
+                q_des = q_centre.copy()
+                qd_des = np.zeros(6, dtype=np.float64)
+                offset = float(q_centre[active_joint])
                 if args.chirp:
                     pos, vel = chirp(t, args.amplitude, args.freq_start, args.freq_end, duration, offset)
                 else:
                     pos, vel = sinusoid(t, args.amplitude, args.freq, offset)
-                q_des[j] = pos
+                q_des[active_joint] = pos
                 if args.vel_ff:
-                    qd_des[j] = vel
+                    qd_des[active_joint] = vel
 
-            link.send_targets(q_des, qd_des)
-            append_sample(log_rows, log_start_time, link, q_des, qd_des, excited_joints)
-            remaining = dt - (time.monotonic() - loop_t0)
-            if remaining > 0:
-                time.sleep(remaining)
+                link.send_targets(q_des, qd_des)
+                append_sample(log_rows, log_start_time, link, q_des, qd_des, excited_joints)
+                remaining = dt - (time.monotonic() - loop_t0)
+                if remaining > 0:
+                    time.sleep(remaining)
 
         actual_duration = time.monotonic() - excitation_start_time
-        print(f"[Tuner] Excitation done: {n_steps} steps in {actual_duration:.2f} s (target {duration:.2f} s)")
+        print(
+            f"[Tuner] Excitation done: {total_steps} steps in {actual_duration:.2f} s "
+            f"(target {duration * len(excited_joints):.2f} s)"
+        )
 
         print(f"[Tuner] Holding centre position for {POST_HOLD_DURATION_S:.1f} s …")
         for _ in range(int(POST_HOLD_DURATION_S * args.rate)):

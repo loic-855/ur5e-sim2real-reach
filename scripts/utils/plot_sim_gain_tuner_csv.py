@@ -1,23 +1,26 @@
 #!/usr/bin/env python3
 """
-Plot joint tracking performance from a gain-tuner CSV export.
+Plot joint tracking performance from gain-tuner CSV exports.
 
 For each of the 6 UR5e arm joints, the script:
 - extracts the 10 s excitation window from the full sequential run,
 - adds 0.5 s of context before and after that excitation window,
 - reconstructs a local time axis from the CSV sampling period,
 - plots commanded vs observed joint position in degrees,
+- optionally overlays simulation and real-robot CSV exports,
 - plots the tracking error in degrees with RMS error in the title,
 - saves one figure per joint and displays them.
 
 Usage:
     python3 scripts/utils/plot_sim_gain_tuner_csv.py --file logs/sim_gain_tuner/run.csv
+    python3 scripts/utils/plot_sim_gain_tuner_csv.py --file sim.csv --file-real real.csv
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import dataclass
 import math
 import sys
 from pathlib import Path
@@ -30,6 +33,9 @@ try:
 except Exception:
     print("matplotlib is required to run this script. Install with: pip install matplotlib")
     raise
+
+plt.rcParams["path.simplify"] = False
+plt.rcParams["path.simplify_threshold"] = 0.0
 
 
 ARM_JOINTS = [
@@ -52,16 +58,46 @@ ACTIVITY_VEL_WEIGHT = 0.2
 ACTIVITY_SMOOTHING_S = 0.2
 ACTIVITY_THRESHOLD_RATIO = 0.15
 ACTIVITY_THRESHOLD_MIN = 1e-4
+SIM_COLOR = "tab:blue"
+REAL_COLOR = "tab:red"
+DEBUG_COMMAND_COLOR = "black"
+
+
+@dataclass(frozen=True)
+class JointWindow:
+    local_time_s: np.ndarray
+    cmd_deg: np.ndarray
+    obs_deg: np.ndarray
+    core_slice: slice
+
+
+@dataclass(frozen=True)
+class DatasetInfo:
+    label: str
+    csv_path: Path
+    columns: dict[str, np.ndarray]
+    dt: float
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot gain-tuner CSV tracking data for the 6 UR5e joints.")
-    parser.add_argument("--file", type=Path, required=True, help="Path to the gain-tuner CSV file.")
+    parser.add_argument("--file", type=Path, required=True, help="Path to the simulation gain-tuner CSV file.")
+    parser.add_argument(
+        "--file-real",
+        type=Path,
+        default=None,
+        help="Optional path to the real-robot gain-tuner CSV file to overlay with the simulation one.",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
         help="Directory where PNG figures will be saved. Defaults to <csv_stem>_plots next to the CSV.",
+    )
+    parser.add_argument(
+        "--plot-real-command-only",
+        action="store_true",
+        help="In dual-file mode, plot only the real-robot command curve and keep both observed curves.",
     )
     return parser.parse_args()
 
@@ -70,8 +106,13 @@ def get_csv_base_name(csv_path: Path) -> str:
     return csv_path.stem
 
 
-def get_default_output_dir(csv_path: Path) -> Path:
-    return csv_path.parent / f"{get_csv_base_name(csv_path)}_plots"
+def get_default_output_dir(sim_csv_path: Path, real_csv_path: Path | None = None) -> Path:
+    sim_stem = get_csv_base_name(sim_csv_path)
+    if real_csv_path is None:
+        return sim_csv_path.parent / f"{sim_stem}_plots"
+
+    real_stem = get_csv_base_name(real_csv_path)
+    return sim_csv_path.parent / f"{sim_stem}__vs__{real_stem}_plots"
 
 
 def load_csv_columns(file_path: Path) -> dict[str, np.ndarray]:
@@ -119,6 +160,14 @@ def clean_joint_name(joint_name: str) -> str:
     return joint_name.removesuffix("_joint")
 
 
+def load_dataset(csv_path: Path, label: str) -> DatasetInfo:
+    columns = load_csv_columns(csv_path)
+    if "time" not in columns:
+        raise KeyError(f"Missing required 'time' column in the {label} CSV file.")
+
+    return DatasetInfo(label=label, csv_path=csv_path, columns=columns, dt=infer_sample_period(columns["time"]))
+
+
 def require_joint_columns(columns: dict[str, np.ndarray], joint_name: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     required_columns = [
         f"{joint_name}_pos_cmd",
@@ -139,6 +188,16 @@ def require_joint_columns(columns: dict[str, np.ndarray], joint_name: str) -> tu
     )
 
 
+def has_joint_columns(columns: dict[str, np.ndarray], joint_name: str) -> bool:
+    required_columns = [
+        f"{joint_name}_pos_cmd",
+        f"{joint_name}_pos_obs",
+        f"{joint_name}_vel_cmd",
+        f"{joint_name}_vel_obs",
+    ]
+    return all(column_name in columns for column_name in required_columns)
+
+
 def compute_activity_metric(
     cmd_pos_rad: np.ndarray,
     obs_pos_rad: np.ndarray,
@@ -149,6 +208,13 @@ def compute_activity_metric(
     obs_center = float(np.median(obs_pos_rad))
     pos_activity = np.abs(cmd_pos_rad - cmd_center) + 0.25 * np.abs(obs_pos_rad - obs_center)
     vel_activity = np.abs(cmd_vel_rad_s) + 0.25 * np.abs(obs_vel_rad_s)
+    return ACTIVITY_POS_WEIGHT * pos_activity + ACTIVITY_VEL_WEIGHT * vel_activity
+
+
+def compute_command_activity_metric(cmd_pos_rad: np.ndarray, cmd_vel_rad_s: np.ndarray) -> np.ndarray:
+    cmd_center = float(np.median(cmd_pos_rad))
+    pos_activity = np.abs(cmd_pos_rad - cmd_center)
+    vel_activity = np.abs(cmd_vel_rad_s)
     return ACTIVITY_POS_WEIGHT * pos_activity + ACTIVITY_VEL_WEIGHT * vel_activity
 
 
@@ -197,14 +263,14 @@ def extract_joint_window(
     obs_vel_rad_s: np.ndarray,
     dt: float,
     duration_s: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> JointWindow:
     total_samples = cmd_pos_rad.size
     samples_per_window = max(2, int(round(duration_s / dt)))
     samples_per_window = min(samples_per_window, total_samples)
     padding_samples = max(1, int(round(WINDOW_PADDING_S / dt)))
 
-    activity_metric = compute_activity_metric(cmd_pos_rad, obs_pos_rad, cmd_vel_rad_s, obs_vel_rad_s)
-    start_idx = find_excitation_start(activity_metric, dt, samples_per_window)
+    command_activity_metric = compute_command_activity_metric(cmd_pos_rad, cmd_vel_rad_s)
+    start_idx = find_excitation_start(command_activity_metric, dt, samples_per_window)
     end_idx = min(total_samples, start_idx + samples_per_window)
 
     padded_start_idx = max(0, start_idx - padding_samples)
@@ -215,41 +281,139 @@ def extract_joint_window(
     cmd_window_deg = cmd_pos_rad[padded_start_idx:padded_end_idx] * RAD_TO_DEG
     obs_window_deg = obs_pos_rad[padded_start_idx:padded_end_idx] * RAD_TO_DEG
     local_time_s = (np.arange(padded_end_idx - padded_start_idx, dtype=np.float64) - pre_padding_samples) * dt
-    return local_time_s, cmd_window_deg, obs_window_deg
+    core_start = start_idx - padded_start_idx
+    core_end = core_start + (end_idx - start_idx)
+
+    return JointWindow(
+        local_time_s=local_time_s,
+        cmd_deg=cmd_window_deg,
+        obs_deg=obs_window_deg,
+        core_slice=slice(core_start, core_end),
+    )
+
+
+def compute_rms_error_deg(window: JointWindow) -> float:
+    core_error_deg = window.cmd_deg[window.core_slice] - window.obs_deg[window.core_slice]
+    return float(np.sqrt(np.mean(np.square(core_error_deg))))
+
+
+def build_joint_window(dataset: DatasetInfo, joint_name: str) -> JointWindow:
+    cmd_pos_rad, obs_pos_rad, cmd_vel_rad_s, obs_vel_rad_s = require_joint_columns(dataset.columns, joint_name)
+    return extract_joint_window(
+        cmd_pos_rad,
+        obs_pos_rad,
+        cmd_vel_rad_s,
+        obs_vel_rad_s,
+        dataset.dt,
+        WINDOW_DURATION_S,
+    )
 
 
 def make_joint_figure(
     joint_index: int,
     joint_name: str,
-    local_time_s: np.ndarray,
-    cmd_deg: np.ndarray,
-    obs_deg: np.ndarray,
+    sim_window: JointWindow,
     output_dir: Path,
     csv_stem: str,
+    real_window: JointWindow | None = None,
+    plot_real_command_only: bool = False,
 ) -> Path:
-    error_deg = cmd_deg - obs_deg
-    rms_error_deg = float(np.sqrt(np.mean(np.square(error_deg))))
     display_name = clean_joint_name(joint_name)
-    position_reference_deg = float(np.median(cmd_deg))
-    cmd_plot_deg = cmd_deg - position_reference_deg
-    obs_plot_deg = obs_deg - position_reference_deg
+    sim_position_reference_deg = float(np.median(sim_window.cmd_deg))
+
+    sim_cmd_plot_deg = sim_window.cmd_deg - sim_position_reference_deg
+    sim_obs_plot_deg = sim_window.obs_deg - sim_position_reference_deg
+    sim_error_deg = sim_window.cmd_deg - sim_window.obs_deg
+    sim_rms_error_deg = compute_rms_error_deg(sim_window)
+
+    real_cmd_plot_deg = None
+    real_obs_plot_deg = None
+    real_error_deg = None
+    real_rms_error_deg = None
+    if real_window is not None:
+        real_position_reference_deg = float(np.median(real_window.cmd_deg))
+        real_cmd_plot_deg = real_window.cmd_deg - real_position_reference_deg
+        real_obs_plot_deg = real_window.obs_deg - real_position_reference_deg
+        real_error_deg = real_window.cmd_deg - real_window.obs_deg
+        real_rms_error_deg = compute_rms_error_deg(real_window)
 
     fig, (ax_pos, ax_err) = plt.subplots(2, 1, figsize=(10, 7), sharex=True, constrained_layout=True)
 
-    ax_pos.plot(local_time_s, cmd_plot_deg, label="Command position", linewidth=2.0)
-    ax_pos.plot(local_time_s, obs_plot_deg, label="Observed position", linewidth=1.8)
-    ax_pos.set_title(f"Simulation: joint {joint_index + 1} - {display_name}")
+    if not (plot_real_command_only and real_window is not None):
+        ax_pos.plot(
+            sim_window.local_time_s,
+            sim_cmd_plot_deg,
+            color=SIM_COLOR,
+            linestyle="--",
+            linewidth=2.0,
+            antialiased=False,
+            label="Simulation command",
+        )
+    ax_pos.plot(
+        sim_window.local_time_s,
+        sim_obs_plot_deg,
+        color=SIM_COLOR,
+        linestyle="-",
+        linewidth=1.8,
+        antialiased=False,
+        label="Simulation observed",
+    )
+
+    if real_window is not None and real_cmd_plot_deg is not None and real_obs_plot_deg is not None:
+        ax_pos.plot(
+            real_window.local_time_s,
+            real_cmd_plot_deg,
+            color=DEBUG_COMMAND_COLOR if plot_real_command_only else REAL_COLOR,
+            linestyle="--",
+            linewidth=2.0,
+            antialiased=False,
+            label="Command" if plot_real_command_only else "Real command",
+        )
+        ax_pos.plot(
+            real_window.local_time_s,
+            real_obs_plot_deg,
+            color=REAL_COLOR,
+            linestyle="-",
+            linewidth=1.8,
+            antialiased=False,
+            label="Real observed",
+        )
+
+    ax_pos.set_title(f"Joint {joint_index + 1} - {display_name}")
     ax_pos.set_ylabel("Position [deg]")
     ax_pos.set_xlim(-WINDOW_PADDING_S, WINDOW_DURATION_S + WINDOW_PADDING_S)
     ax_pos.set_ylim(-POSITION_LIMIT_DEG, POSITION_LIMIT_DEG)
     ax_pos.legend(loc="upper right")
 
-    ax_err.plot(local_time_s, error_deg, color="tab:red", linewidth=1.8)
-    ax_err.set_title(f"RMS error: {rms_error_deg:.2f}°")
+    ax_err.plot(
+        sim_window.local_time_s,
+        sim_error_deg,
+        color=SIM_COLOR,
+        linestyle="-",
+        linewidth=1.8,
+        antialiased=False,
+        label="Simulation error",
+    )
+    if real_window is not None and real_error_deg is not None:
+        ax_err.plot(
+            real_window.local_time_s,
+            real_error_deg,
+            color=REAL_COLOR,
+            linestyle="-",
+            linewidth=1.8,
+            antialiased=False,
+            label="Real error",
+        )
+
+    if real_rms_error_deg is None:
+        ax_err.set_title(f"RMS error: sim {sim_rms_error_deg:.2f}°")
+    else:
+        ax_err.set_title(f"RMS error: sim {sim_rms_error_deg:.2f}° | real {real_rms_error_deg:.2f}°")
     ax_err.set_xlabel("Time [s]")
     ax_err.set_ylabel("Error [deg]")
     ax_err.set_xlim(-WINDOW_PADDING_S, WINDOW_DURATION_S + WINDOW_PADDING_S)
     ax_err.set_ylim(-ERROR_LIMIT_DEG, ERROR_LIMIT_DEG)
+    ax_err.legend(loc="upper right")
 
     for axis in (ax_pos, ax_err):
         axis.xaxis.set_major_locator(MultipleLocator(GRID_STEP_S))
@@ -262,24 +426,35 @@ def make_joint_figure(
 
 def main() -> None:
     args = parse_args()
-    csv_path = args.file.expanduser().resolve()
-    csv_base_name = get_csv_base_name(csv_path)
-    output_dir = args.output_dir.expanduser().resolve() if args.output_dir else get_default_output_dir(csv_path)
+    sim_csv_path = args.file.expanduser().resolve()
+    real_csv_path = args.file_real.expanduser().resolve() if args.file_real else None
+
+    if args.plot_real_command_only and real_csv_path is None:
+        print("The --plot-real-command-only option requires --file-real.")
+        sys.exit(1)
+
+    csv_base_name = get_csv_base_name(sim_csv_path)
+    output_dir = (
+        args.output_dir.expanduser().resolve()
+        if args.output_dir
+        else get_default_output_dir(sim_csv_path, real_csv_path)
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        columns = load_csv_columns(csv_path)
-        if "time" not in columns:
-            raise KeyError("Missing required 'time' column in the CSV file.")
-        dt = infer_sample_period(columns["time"])
+        sim_dataset = load_dataset(sim_csv_path, "simulation")
+        real_dataset = load_dataset(real_csv_path, "real") if real_csv_path is not None else None
     except Exception as exc:
         print(f"Failed to load CSV data: {exc}")
         sys.exit(1)
 
     figure_paths: list[Path] = []
-    print(f"Loaded CSV: {csv_path}")
+    print(f"Loaded simulation CSV: {sim_dataset.csv_path}")
+    print(f"Detected simulation sampling period: {sim_dataset.dt:.6f} s ({1.0 / sim_dataset.dt:.3f} Hz)")
+    if real_dataset is not None:
+        print(f"Loaded real CSV: {real_dataset.csv_path}")
+        print(f"Detected real sampling period: {real_dataset.dt:.6f} s ({1.0 / real_dataset.dt:.3f} Hz)")
     print(f"Output directory: {output_dir}")
-    print(f"Detected sampling period: {dt:.6f} s ({1.0 / dt:.3f} Hz)")
     print(
         f"Using per-joint local window: {WINDOW_DURATION_S:.1f} s + "
         f"{WINDOW_PADDING_S:.1f} s before/after ({DISPLAY_WINDOW_S:.1f} s displayed)"
@@ -287,17 +462,23 @@ def main() -> None:
 
     for joint_index, joint_name in enumerate(ARM_JOINTS):
         try:
-            cmd_pos_rad, obs_pos_rad, cmd_vel_rad_s, obs_vel_rad_s = require_joint_columns(columns, joint_name)
-            local_time_s, cmd_deg, obs_deg = extract_joint_window(
-                cmd_pos_rad,
-                obs_pos_rad,
-                cmd_vel_rad_s,
-                obs_vel_rad_s,
-                dt,
-                WINDOW_DURATION_S,
-            )
+            if real_dataset is not None:
+                if not has_joint_columns(sim_dataset.columns, joint_name) or not has_joint_columns(real_dataset.columns, joint_name):
+                    print(f"Skipping joint '{joint_name}': missing in one of the two CSV files.")
+                    continue
+
+            sim_window = build_joint_window(sim_dataset, joint_name)
+            real_window = build_joint_window(real_dataset, joint_name) if real_dataset is not None else None
             figure_paths.append(
-                make_joint_figure(joint_index, joint_name, local_time_s, cmd_deg, obs_deg, output_dir, csv_base_name)
+                make_joint_figure(
+                    joint_index,
+                    joint_name,
+                    sim_window,
+                    output_dir,
+                    csv_base_name,
+                    real_window=real_window,
+                    plot_real_command_only=args.plot_real_command_only,
+                )
             )
         except Exception as exc:
             print(f"Skipping joint '{joint_name}': {exc}")
