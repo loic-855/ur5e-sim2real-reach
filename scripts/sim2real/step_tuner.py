@@ -84,10 +84,10 @@ JOINT_NAMES = [
 ]
 
 # Best Kp from auto_tuner (first run)
-DEFAULT_KP = np.array([350.0, 800.0, 350.0, 50.0, 50.0, 50.0])
+DEFAULT_KP = np.array([800.0, 800.0, 800.0, 350.0, 350.0, 350.0])
 
 # Default ζ sweep
-DEFAULT_ZETA_GRID = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+DEFAULT_ZETA_GRID = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1]
 
 
 # ============================================================================
@@ -797,12 +797,12 @@ def parse_args():
                     help="Joints to test (default: all)")
     p.add_argument("--zeta", type=float, nargs="+", default=DEFAULT_ZETA_GRID,
                     help=f"Damping ratios to sweep (default: {DEFAULT_ZETA_GRID})")
-    p.add_argument("--step-size", type=float, default=0.20,
-                    help="Step size [rad] (default: 0.20 ≈ 11.5°)")
+    p.add_argument("--step-size", type=float, default=0.025,
+                    help="Step size [rad] (default: 0.025 ≈ 1.43°)")
     p.add_argument("--kp", type=float, default=None,
                     help="Override Kp for the tested joint (single-joint only)")
-    p.add_argument("--record", type=float, default=3.0,
-                    help="Recording time per step [s] (default: 3.0)")
+    p.add_argument("--record", type=float, default=2.0,
+                    help="Recording time per step [s] (default: 2.0)")
     p.add_argument("--settle", type=float, default=2.0,
                     help="Settle time before each step [s] (default: 2.0)")
     p.add_argument("--rate", type=float, default=60.0,

@@ -46,12 +46,12 @@ ARM_JOINTS = [
     "wrist_2_joint",
     "wrist_3_joint",
 ]
-WINDOW_DURATION_S = 10.0
+WINDOW_DURATION_S = 6.0
 WINDOW_PADDING_S = 0.5
 DISPLAY_WINDOW_S = WINDOW_DURATION_S + 2.0 * WINDOW_PADDING_S
 GRID_STEP_S = 2.0
 POSITION_LIMIT_DEG = 20.0
-ERROR_LIMIT_DEG = 5.0
+ERROR_LIMIT_DEG = 7.0
 RAD_TO_DEG = 180.0 / math.pi
 ACTIVITY_POS_WEIGHT = 1.0
 ACTIVITY_VEL_WEIGHT = 0.2
@@ -81,7 +81,7 @@ class DatasetInfo:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot gain-tuner CSV tracking data for the 6 UR5e joints.")
-    parser.add_argument("--file", type=Path, required=True, help="Path to the simulation gain-tuner CSV file.")
+    parser.add_argument("--file", type=Path, default=None, help="Path to the simulation gain-tuner CSV file.")
     parser.add_argument(
         "--file-real",
         type=Path,
@@ -106,13 +106,21 @@ def get_csv_base_name(csv_path: Path) -> str:
     return csv_path.stem
 
 
-def get_default_output_dir(sim_csv_path: Path, real_csv_path: Path | None = None) -> Path:
-    sim_stem = get_csv_base_name(sim_csv_path)
-    if real_csv_path is None:
-        return sim_csv_path.parent / f"{sim_stem}_plots"
+def get_output_base_name(sim_csv_path: Path | None = None, real_csv_path: Path | None = None) -> str:
+    if sim_csv_path is not None and real_csv_path is not None:
+        return f"{get_csv_base_name(sim_csv_path)}__vs__{get_csv_base_name(real_csv_path)}"
+    if sim_csv_path is not None:
+        return get_csv_base_name(sim_csv_path)
+    if real_csv_path is not None:
+        return get_csv_base_name(real_csv_path)
+    raise ValueError("At least one CSV path must be provided.")
 
-    real_stem = get_csv_base_name(real_csv_path)
-    return sim_csv_path.parent / f"{sim_stem}__vs__{real_stem}_plots"
+
+def get_default_output_dir(sim_csv_path: Path | None = None, real_csv_path: Path | None = None) -> Path:
+    base_path = sim_csv_path if sim_csv_path is not None else real_csv_path
+    if base_path is None:
+        raise ValueError("At least one CSV path must be provided.")
+    return base_path.parent / f"{get_output_base_name(sim_csv_path, real_csv_path)}_plots"
 
 
 def load_csv_columns(file_path: Path) -> dict[str, np.ndarray]:
@@ -312,19 +320,26 @@ def build_joint_window(dataset: DatasetInfo, joint_name: str) -> JointWindow:
 def make_joint_figure(
     joint_index: int,
     joint_name: str,
-    sim_window: JointWindow,
+    sim_window: JointWindow | None,
     output_dir: Path,
     csv_stem: str,
     real_window: JointWindow | None = None,
     plot_real_command_only: bool = False,
 ) -> Path:
     display_name = clean_joint_name(joint_name)
-    sim_position_reference_deg = float(np.median(sim_window.cmd_deg))
+    if sim_window is None and real_window is None:
+        raise ValueError("At least one dataset must be provided for plotting.")
 
-    sim_cmd_plot_deg = sim_window.cmd_deg - sim_position_reference_deg
-    sim_obs_plot_deg = sim_window.obs_deg - sim_position_reference_deg
-    sim_error_deg = sim_window.cmd_deg - sim_window.obs_deg
-    sim_rms_error_deg = compute_rms_error_deg(sim_window)
+    sim_cmd_plot_deg = None
+    sim_obs_plot_deg = None
+    sim_error_deg = None
+    sim_rms_error_deg = None
+    if sim_window is not None:
+        sim_position_reference_deg = float(np.median(sim_window.cmd_deg))
+        sim_cmd_plot_deg = sim_window.cmd_deg - sim_position_reference_deg
+        sim_obs_plot_deg = sim_window.obs_deg - sim_position_reference_deg
+        sim_error_deg = sim_window.cmd_deg - sim_window.obs_deg
+        sim_rms_error_deg = compute_rms_error_deg(sim_window)
 
     real_cmd_plot_deg = None
     real_obs_plot_deg = None
@@ -339,7 +354,7 @@ def make_joint_figure(
 
     fig, (ax_pos, ax_err) = plt.subplots(2, 1, figsize=(10, 7), sharex=True, constrained_layout=True)
 
-    if not (plot_real_command_only and real_window is not None):
+    if sim_window is not None and sim_cmd_plot_deg is not None and sim_obs_plot_deg is not None and not (plot_real_command_only and real_window is not None):
         ax_pos.plot(
             sim_window.local_time_s,
             sim_cmd_plot_deg,
@@ -349,15 +364,15 @@ def make_joint_figure(
             antialiased=False,
             label="Simulation command",
         )
-    ax_pos.plot(
-        sim_window.local_time_s,
-        sim_obs_plot_deg,
-        color=SIM_COLOR,
-        linestyle="-",
-        linewidth=1.8,
-        antialiased=False,
-        label="Simulation observed",
-    )
+        ax_pos.plot(
+            sim_window.local_time_s,
+            sim_obs_plot_deg,
+            color=SIM_COLOR,
+            linestyle="-",
+            linewidth=1.8,
+            antialiased=False,
+            label="Simulation observed",
+        )
 
     if real_window is not None and real_cmd_plot_deg is not None and real_obs_plot_deg is not None:
         ax_pos.plot(
@@ -385,15 +400,16 @@ def make_joint_figure(
     ax_pos.set_ylim(-POSITION_LIMIT_DEG, POSITION_LIMIT_DEG)
     ax_pos.legend(loc="upper right")
 
-    ax_err.plot(
-        sim_window.local_time_s,
-        sim_error_deg,
-        color=SIM_COLOR,
-        linestyle="-",
-        linewidth=1.8,
-        antialiased=False,
-        label="Simulation error",
-    )
+    if sim_window is not None and sim_error_deg is not None:
+        ax_err.plot(
+            sim_window.local_time_s,
+            sim_error_deg,
+            color=SIM_COLOR,
+            linestyle="-",
+            linewidth=1.8,
+            antialiased=False,
+            label="Simulation error",
+        )
     if real_window is not None and real_error_deg is not None:
         ax_err.plot(
             real_window.local_time_s,
@@ -405,8 +421,10 @@ def make_joint_figure(
             label="Real error",
         )
 
-    if real_rms_error_deg is None:
+    if sim_rms_error_deg is not None and real_rms_error_deg is None:
         ax_err.set_title(f"RMS error: sim {sim_rms_error_deg:.2f}°")
+    elif sim_rms_error_deg is None and real_rms_error_deg is not None:
+        ax_err.set_title(f"RMS error: real {real_rms_error_deg:.2f}°")
     else:
         ax_err.set_title(f"RMS error: sim {sim_rms_error_deg:.2f}° | real {real_rms_error_deg:.2f}°")
     ax_err.set_xlabel("Time [s]")
@@ -426,14 +444,18 @@ def make_joint_figure(
 
 def main() -> None:
     args = parse_args()
-    sim_csv_path = args.file.expanduser().resolve()
+    sim_csv_path = args.file.expanduser().resolve() if args.file else None
     real_csv_path = args.file_real.expanduser().resolve() if args.file_real else None
+
+    if sim_csv_path is None and real_csv_path is None:
+        print("Provide at least one input CSV with --file and/or --file-real.")
+        sys.exit(1)
 
     if args.plot_real_command_only and real_csv_path is None:
         print("The --plot-real-command-only option requires --file-real.")
         sys.exit(1)
 
-    csv_base_name = get_csv_base_name(sim_csv_path)
+    csv_base_name = get_output_base_name(sim_csv_path, real_csv_path)
     output_dir = (
         args.output_dir.expanduser().resolve()
         if args.output_dir
@@ -442,15 +464,16 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        sim_dataset = load_dataset(sim_csv_path, "simulation")
+        sim_dataset = load_dataset(sim_csv_path, "simulation") if sim_csv_path is not None else None
         real_dataset = load_dataset(real_csv_path, "real") if real_csv_path is not None else None
     except Exception as exc:
         print(f"Failed to load CSV data: {exc}")
         sys.exit(1)
 
     figure_paths: list[Path] = []
-    print(f"Loaded simulation CSV: {sim_dataset.csv_path}")
-    print(f"Detected simulation sampling period: {sim_dataset.dt:.6f} s ({1.0 / sim_dataset.dt:.3f} Hz)")
+    if sim_dataset is not None:
+        print(f"Loaded simulation CSV: {sim_dataset.csv_path}")
+        print(f"Detected simulation sampling period: {sim_dataset.dt:.6f} s ({1.0 / sim_dataset.dt:.3f} Hz)")
     if real_dataset is not None:
         print(f"Loaded real CSV: {real_dataset.csv_path}")
         print(f"Detected real sampling period: {real_dataset.dt:.6f} s ({1.0 / real_dataset.dt:.3f} Hz)")
@@ -462,12 +485,18 @@ def main() -> None:
 
     for joint_index, joint_name in enumerate(ARM_JOINTS):
         try:
-            if real_dataset is not None:
+            if sim_dataset is not None and real_dataset is not None:
                 if not has_joint_columns(sim_dataset.columns, joint_name) or not has_joint_columns(real_dataset.columns, joint_name):
                     print(f"Skipping joint '{joint_name}': missing in one of the two CSV files.")
                     continue
+            if sim_dataset is None and real_dataset is not None and not has_joint_columns(real_dataset.columns, joint_name):
+                print(f"Skipping joint '{joint_name}': missing in the real CSV file.")
+                continue
+            if real_dataset is None and sim_dataset is not None and not has_joint_columns(sim_dataset.columns, joint_name):
+                print(f"Skipping joint '{joint_name}': missing in the simulation CSV file.")
+                continue
 
-            sim_window = build_joint_window(sim_dataset, joint_name)
+            sim_window = build_joint_window(sim_dataset, joint_name) if sim_dataset is not None else None
             real_window = build_joint_window(real_dataset, joint_name) if real_dataset is not None else None
             figure_paths.append(
                 make_joint_figure(

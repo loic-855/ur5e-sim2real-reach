@@ -147,7 +147,7 @@ def impedance_control_tuning():
             i = i + 1
         end
 
-        direct_torque(tau)
+        direct_torque(tau, friction_comp=False)
 
         if stop:
             textmsg("Back to home position...")
