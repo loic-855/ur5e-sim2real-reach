@@ -66,6 +66,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def get_csv_base_name(csv_path: Path) -> str:
+    return csv_path.stem
+
+
+def get_default_output_dir(csv_path: Path) -> Path:
+    return csv_path.parent / f"{get_csv_base_name(csv_path)}_plots"
+
+
 def load_csv_columns(file_path: Path) -> dict[str, np.ndarray]:
     if not file_path.exists():
         raise FileNotFoundError(f"CSV file not found: {file_path}")
@@ -252,7 +260,8 @@ def make_joint_figure(
 def main() -> None:
     args = parse_args()
     csv_path = args.file.expanduser().resolve()
-    output_dir = args.output_dir.expanduser().resolve() if args.output_dir else csv_path.parent / f"{csv_path.stem}_plots"
+    csv_base_name = get_csv_base_name(csv_path)
+    output_dir = args.output_dir.expanduser().resolve() if args.output_dir else get_default_output_dir(csv_path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -266,6 +275,7 @@ def main() -> None:
 
     figure_paths: list[Path] = []
     print(f"Loaded CSV: {csv_path}")
+    print(f"Output directory: {output_dir}")
     print(f"Detected sampling period: {dt:.6f} s ({1.0 / dt:.3f} Hz)")
     print(
         f"Using per-joint local window: {WINDOW_DURATION_S:.1f} s + "
@@ -284,7 +294,7 @@ def main() -> None:
                 WINDOW_DURATION_S,
             )
             figure_paths.append(
-                make_joint_figure(joint_index, joint_name, local_time_s, cmd_deg, obs_deg, output_dir, csv_path.stem)
+                make_joint_figure(joint_index, joint_name, local_time_s, cmd_deg, obs_deg, output_dir, csv_base_name)
             )
         except Exception as exc:
             print(f"Skipping joint '{joint_name}': {exc}")

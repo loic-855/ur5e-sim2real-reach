@@ -1,3 +1,14 @@
+"""English
+sim_gain_tuner_logger.py
+------------------------
+
+Simple Isaac Sim script to record commanded and observed joint positions
+and velocities while the timeline is playing. Open this file in the Script
+Editor (Python extension), press Play to record and Stop to export a
+timestamped CSV into `SAVE_DIR`. Make sure `ROBOT_PRIM_PATH` points to the
+robot prim in the Stage.
+"""
+
 import csv
 import os
 import omni.timeline
