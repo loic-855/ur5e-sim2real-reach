@@ -48,7 +48,7 @@ To do after milie interview:
 * Write the discussion
 
 ## Impedance controller focus: 
-
+Explain the tuning method, the results and the justification for using it. This will be a section in the methods and one in the results. It will be mentioned in the discussion as well.
 
 
 
