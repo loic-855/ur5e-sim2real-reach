@@ -72,32 +72,6 @@ fi
 
 SEQUENTIAL_PER_JOB=${SEQ_ARR[$SLURM_ARRAY_TASK_ID]}
 
-# --- Initialise Modules & Load Proxy ---
-# Initialize module environment (required on Euler)
-if [ -f /etc/profile.d/modules.sh ]; then
-    source /etc/profile.d/modules.sh
-fi
-
-# Load proxy for internet access on compute nodes
-module load eth_proxy
-
-# Debug: print proxy variables
-echo "Proxy variables after module load:"
-echo "  http_proxy=$http_proxy"
-echo "  https_proxy=$https_proxy"
-echo "  HTTP_PROXY=$HTTP_PROXY"
-echo "  HTTPS_PROXY=$HTTPS_PROXY"
-
-# Export proxy variables (sometimes module load doesn't export properly)
-export http_proxy=${http_proxy:-$HTTP_PROXY}
-export https_proxy=${https_proxy:-$HTTPS_PROXY}
-export ftp_proxy=${ftp_proxy:-$FTP_PROXY}
-export NO_PROXY=$no_proxy
-
-echo "After export:"
-echo "  http_proxy=$http_proxy"
-echo "  https_proxy=$https_proxy"
-
 # --- WandB API Key ---
 if [ -f "$HOME/.wandb_key" ]; then
     export WANDB_API_KEY=$(cat $HOME/.wandb_key)
@@ -126,7 +100,19 @@ mkdir -p $JOB_CACHE/kit_cache $JOB_CACHE/kit_data $JOB_CACHE/ov $JOB_CACHE/pip \
          $JOB_CACHE/wandb_cache $JOB_CACHE/wandb_config $JOB_CACHE/wandb_data
 
 # Load Proxy (Required for internet access on compute nodes)
-module load eth_proxy
+# Source module init — not available by default in non-interactive SLURM batch shells
+if [ -f /cluster/apps/local/Modules/init/bash ]; then
+    source /cluster/apps/local/Modules/init/bash
+fi
+module load eth_proxy 2>/dev/null || true
+# Fallback: set proxy explicitly if module load did not set it
+if [ -z "$http_proxy" ]; then
+    export http_proxy=http://proxy.service.consul:3128
+    export https_proxy=http://proxy.service.consul:3128
+    export HTTP_PROXY=http://proxy.service.consul:3128
+    export HTTPS_PROXY=http://proxy.service.consul:3128
+    export no_proxy=localhost,127.0.0.1,127.0.0.0/8,169.254.0.0/16
+fi
 
 echo "================================================================"
 echo "SWEEP Job $SLURM_ARRAY_TASK_ID  (Array Job $SLURM_ARRAY_JOB_ID)"
@@ -141,13 +127,25 @@ echo "================================================================"
 echo ""
 echo "[Setup] Installing project in editable mode..."
 apptainer exec --nv \
+    -B $JOB_CACHE/kit_cache:/isaac-sim/kit/cache:rw \
+    -B $JOB_CACHE/kit_data:/isaac-sim/kit/data:rw \
+    -B $JOB_CACHE/ov:$HOME/.cache/ov:rw \
     -B $JOB_CACHE/pip:$HOME/.cache/pip:rw \
+    -B $JOB_CACHE/warp:$HOME/.cache/warp:rw \
     -B $JOB_CACHE/local_lib:$HOME/.local:rw \
+    -B $JOB_CACHE/glcache:$HOME/.cache/nvidia/GLCache:rw \
+    -B $JOB_CACHE/computecache:$HOME/.nv/ComputeCache:rw \
+    -B $JOB_CACHE/logs:$HOME/.nvidia-omniverse/logs:rw \
+    -B $JOB_CACHE/data:$HOME/.local/share/ov/data:rw \
+    -B $JOB_CACHE/documents:$HOME/Documents:rw \
+    -B $JOB_CACHE/wandb_cache:$HOME/.cache/wandb:rw \
+    -B $JOB_CACHE/wandb_config:$HOME/.config/wandb:rw \
+    -B $JOB_CACHE/wandb_data:$PROJECT_PATH/wandb:rw \
     -B $PROJECT_PATH:/workspace/isaaclab/$PROJECT_NAME:rw \
-    --env http_proxy=$http_proxy \
-    --env https_proxy=$https_proxy \
-    --env ftp_proxy=$ftp_proxy \
-    --env no_proxy=$no_proxy \
+    --env WANDB_API_KEY=$WANDB_API_KEY \
+    --env WANDB_DIR=$PROJECT_PATH \
+    --env WANDB_CACHE_DIR=$HOME/.cache/wandb \
+    --env WANDB_CONFIG_DIR=$HOME/.config/wandb \
     $SIF_PATH \
     bash -c "/isaac-sim/python.sh -m pip install --user -e /workspace/isaaclab/$PROJECT_NAME/source/$PROJECT_NAME"
 
@@ -206,10 +204,6 @@ for RUN_IDX in $(seq $START_IDX $END_IDX); do
         --env WANDB_DIR=$PROJECT_PATH \
         --env WANDB_CACHE_DIR=$HOME/.cache/wandb \
         --env WANDB_CONFIG_DIR=$HOME/.config/wandb \
-        --env http_proxy=$http_proxy \
-        --env https_proxy=$https_proxy \
-        --env ftp_proxy=$ftp_proxy \
-        --env no_proxy=$no_proxy \
         $SIF_PATH \
         bash -c "
             echo 'Starting Training: $RUN_NAME'
