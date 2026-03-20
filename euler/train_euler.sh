@@ -5,14 +5,14 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=2
 #SBATCH --gpus=rtx_4090:1
-#SBATCH --time=00:45:00
+#SBATCH --time=8:45:00
 #SBATCH --mem-per-cpu=8000
 #SBATCH --job-name="WWSim-Grasping-Single-Robot-Direct-v1"
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
 
 # --- CONFIGURATION ---
-TASK_NAME="WWSim-Grasping-Single-Robot-Direct-v1"
+TASK_NAME="WWSim-Pose-Orientation-Sim2Real-Direct-v4"  # Must match a task_name in your config files (e.g. source/wwsim/configs/pose_orientation_sim2real_direct.yaml)
 # UPDATE THIS PATH to where you uploaded your .sif file
 SIF_PATH="/cluster/scratch/$USER/isaac_euler_salziegl.sif"
 
@@ -72,13 +72,31 @@ apptainer exec --nv \
         echo 'Installing Project...'
         /isaac-sim/python.sh -m pip install --user -e /workspace/isaaclab/$PROJECT_NAME/source/$PROJECT_NAME
 
-        # 2. Run Training
-        echo 'Starting Training...'
+        # 2. Run Training - Sweep option 1 (noise disabled, minimal delays, low penalties)
+        echo 'Starting Training (Sweep Option 1)...'
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \
             --headless \
-            agent.policy.actor_hidden_dims=[512,256,128] \
-            agent.policy.critic_hidden_dims=[512,256,128] \
+            agent.wandb_project=sim2real_v4_new_network \
+            agent.max_iterations=1500 \
+            agent.experiment_name=pose_orientation_sim2real_v4_new_network \
+            agent.policy.actor_hidden_dims=[256,128,64] \
+            agent.policy.critic_hidden_dims=[256,128,64] \
+            agent.num_steps_per_env=512 \
+            agent.algorithm.entropy_coef=0.0 \
+            env.domain_rand.enabled=true \
+            env.domain_rand.action_noise_std_pos=0.0 \
+            env.domain_rand.action_noise_std_vel=0.0 \
+            env.domain_rand.obs_noise_std_pos=0.0 \
+            env.domain_rand.obs_noise_std_quat=0.0 \
+            env.domain_rand.obs_noise_std_joint_pos=0.0 \
+            env.domain_rand.obs_noise_std_joint_vel=0.0 \
+            env.domain_rand.action_delay_range=[1,2] \
+            env.domain_rand.obs_delay_range=[0,1] \
+            env.action_penalty_scale=-0.005 \
+            env.velocity_action_penalty_scale=-0.005 \
+            env.velocity_penalty_scale=-0.005 \
+            env.ee_orientation_reward=0.3
     "
 
 # Cleanup Cache

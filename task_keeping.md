@@ -44,6 +44,7 @@ cite the study where they compared action space, and controller types for the ro
 
 # Manuscript writing:
 
+<<<<<<< HEAD
 To do:
 ## Write the related work section
 * search for source for Rl part
@@ -53,10 +54,16 @@ change the real time operating system part as it is kinda wrong.
 * source impedance part
 
 
+=======
+To do after milie interview:
+* Write the related work section
+>>>>>>> ddba3e82b02686b42efd73f32cdd7ffc9273144b
 * In the methods write the section that detail the impedance controller tuning.
 * Write the results 
 * Write the discussion
 
+## Impedance controller focus: 
+Explain the tuning method, the results and the justification for using it. This will be a section in the methods and one in the results. It will be mentioned in the discussion as well.
 
 ## for the results, should be factual and quite plain.
 ablation study on: 

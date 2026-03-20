@@ -4,7 +4,7 @@
 # META slurm_time=10:00:00
 # META total_runs=12
 # META config=sweep_sim2real_v3_action_vel_scale.yaml
-# META generated=2026-02-27T17:01:42
+# META generated=2026-03-20T10:41:59
 action_scale-low_velocity_scale-low|agent.max_iterations=2500 agent.wandb_project=sim2real_v3_action_vel_scale agent.experiment_name=sim2real_v3_action_vel_scale env.domain_rand.enabled=True env.position_exp_scale=0.2 env.orientation_exp_scale=0.4 env.domain_rand.action_delay_range=[0,0] env.domain_rand.obs_delay_range=[0,0] env.action_scale=2.0 env.velocity_scale=0.5
 action_scale-low_velocity_scale-medium|agent.max_iterations=2500 agent.wandb_project=sim2real_v3_action_vel_scale agent.experiment_name=sim2real_v3_action_vel_scale env.domain_rand.enabled=True env.position_exp_scale=0.2 env.orientation_exp_scale=0.4 env.domain_rand.action_delay_range=[0,0] env.domain_rand.obs_delay_range=[0,0] env.action_scale=2.0 env.velocity_scale=1.0
 action_scale-low_velocity_scale-high|agent.max_iterations=2500 agent.wandb_project=sim2real_v3_action_vel_scale agent.experiment_name=sim2real_v3_action_vel_scale env.domain_rand.enabled=True env.position_exp_scale=0.2 env.orientation_exp_scale=0.4 env.domain_rand.action_delay_range=[0,0] env.domain_rand.obs_delay_range=[0,0] env.action_scale=2.0 env.velocity_scale=1.5

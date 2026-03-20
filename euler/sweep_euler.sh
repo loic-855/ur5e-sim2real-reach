@@ -100,7 +100,19 @@ mkdir -p $JOB_CACHE/kit_cache $JOB_CACHE/kit_data $JOB_CACHE/ov $JOB_CACHE/pip \
          $JOB_CACHE/wandb_cache $JOB_CACHE/wandb_config $JOB_CACHE/wandb_data
 
 # Load Proxy (Required for internet access on compute nodes)
-module load eth_proxy
+# Source module init — not available by default in non-interactive SLURM batch shells
+if [ -f /cluster/apps/local/Modules/init/bash ]; then
+    source /cluster/apps/local/Modules/init/bash
+fi
+module load eth_proxy 2>/dev/null || true
+# Fallback: set proxy explicitly if module load did not set it
+if [ -z "$http_proxy" ]; then
+    export http_proxy=http://proxy.service.consul:3128
+    export https_proxy=http://proxy.service.consul:3128
+    export HTTP_PROXY=http://proxy.service.consul:3128
+    export HTTPS_PROXY=http://proxy.service.consul:3128
+    export no_proxy=localhost,127.0.0.1,127.0.0.0/8,169.254.0.0/16
+fi
 
 echo "================================================================"
 echo "SWEEP Job $SLURM_ARRAY_TASK_ID  (Array Job $SLURM_ARRAY_JOB_ID)"
@@ -115,9 +127,25 @@ echo "================================================================"
 echo ""
 echo "[Setup] Installing project in editable mode..."
 apptainer exec --nv \
+    -B $JOB_CACHE/kit_cache:/isaac-sim/kit/cache:rw \
+    -B $JOB_CACHE/kit_data:/isaac-sim/kit/data:rw \
+    -B $JOB_CACHE/ov:$HOME/.cache/ov:rw \
     -B $JOB_CACHE/pip:$HOME/.cache/pip:rw \
+    -B $JOB_CACHE/warp:$HOME/.cache/warp:rw \
     -B $JOB_CACHE/local_lib:$HOME/.local:rw \
+    -B $JOB_CACHE/glcache:$HOME/.cache/nvidia/GLCache:rw \
+    -B $JOB_CACHE/computecache:$HOME/.nv/ComputeCache:rw \
+    -B $JOB_CACHE/logs:$HOME/.nvidia-omniverse/logs:rw \
+    -B $JOB_CACHE/data:$HOME/.local/share/ov/data:rw \
+    -B $JOB_CACHE/documents:$HOME/Documents:rw \
+    -B $JOB_CACHE/wandb_cache:$HOME/.cache/wandb:rw \
+    -B $JOB_CACHE/wandb_config:$HOME/.config/wandb:rw \
+    -B $JOB_CACHE/wandb_data:$PROJECT_PATH/wandb:rw \
     -B $PROJECT_PATH:/workspace/isaaclab/$PROJECT_NAME:rw \
+    --env WANDB_API_KEY=$WANDB_API_KEY \
+    --env WANDB_DIR=$PROJECT_PATH \
+    --env WANDB_CACHE_DIR=$HOME/.cache/wandb \
+    --env WANDB_CONFIG_DIR=$HOME/.config/wandb \
     $SIF_PATH \
     bash -c "/isaac-sim/python.sh -m pip install --user -e /workspace/isaaclab/$PROJECT_NAME/source/$PROJECT_NAME"
 
