@@ -4,7 +4,7 @@
 # META slurm_time=11:40:00
 # META total_runs=27
 # META config=sweep_sim2real_v2_exp_scale.yaml
-# META generated=2026-02-24T23:37:25
+# META generated=2026-03-20T01:49:55
 position_exp_scale-low_orientation_exp_scale-low_dof_vel_scale-conservative|agent.max_iterations=2500 agent.wandb_project=sim2real_v2_exp_scale_2 agent.experiment_name=sim2real_v2_exp_scale_2 env.position_exp_scale=0.2 env.orientation_exp_scale=0.2 env.dof_velocity_scale=0.3
 position_exp_scale-low_orientation_exp_scale-low_dof_vel_scale-balanced|agent.max_iterations=2500 agent.wandb_project=sim2real_v2_exp_scale_2 agent.experiment_name=sim2real_v2_exp_scale_2 env.position_exp_scale=0.2 env.orientation_exp_scale=0.2 env.dof_velocity_scale=0.4
 position_exp_scale-low_orientation_exp_scale-low_dof_vel_scale-aggressive|agent.max_iterations=2500 agent.wandb_project=sim2real_v2_exp_scale_2 agent.experiment_name=sim2real_v2_exp_scale_2 env.position_exp_scale=0.2 env.orientation_exp_scale=0.2 env.dof_velocity_scale=0.5
