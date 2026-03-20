@@ -8,7 +8,7 @@
 # Usage:  python euler/generate_sweep.py --config euler/sweep_pose_orientation_v4.yaml --submit
 # ============================================================================
 
-task_name: "WWSim-Pose-Orientation-Sim2Real-V4-Direct"
+task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v4"
 
 # --- SLURM settings ---
 slurm:
