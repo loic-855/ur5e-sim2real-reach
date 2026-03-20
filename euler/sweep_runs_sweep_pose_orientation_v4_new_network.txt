@@ -1,0 +1,9 @@
+# META task_name=WWSim-Pose-Orientation-Sim2Real-V4-Direct
+# META sequential_per_job=1
+# META sequential_per_job_list=1,1
+# META slurm_time=14:15:00
+# META total_runs=2
+# META config=sweep_pose_orientation_v4_new_network.yaml
+# META generated=2026-03-20T01:03:09
+noise_config-disabled_action_delay-minimal_obs_delay-minimal_penalty_profile-low|agent.max_iterations=2500 agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] agent.num_steps_per_env=512 agent.algorithm.entropy_coef=0.0 env.domain_rand.enabled=true env.domain_rand.action_noise_std_pos=0.0 env.domain_rand.action_noise_std_vel=0.0 env.domain_rand.obs_noise_std_pos=0.0 env.domain_rand.obs_noise_std_quat=0.0 env.domain_rand.obs_noise_std_joint_pos=0.0 env.domain_rand.obs_noise_std_joint_vel=0.0 env.domain_rand.action_delay_range=[0,1] env.domain_rand.obs_delay_range=[0,1] env.action_penalty_scale=-0.005 env.velocity_action_penalty_scale=-0.005 env.velocity_penalty_scale=-0.005
+noise_config-disabled_action_delay-moderate_obs_delay-minimal_penalty_profile-low|agent.max_iterations=2500 agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] agent.num_steps_per_env=512 agent.algorithm.entropy_coef=0.0 env.domain_rand.enabled=true env.domain_rand.action_noise_std_pos=0.0 env.domain_rand.action_noise_std_vel=0.0 env.domain_rand.obs_noise_std_pos=0.0 env.domain_rand.obs_noise_std_quat=0.0 env.domain_rand.obs_noise_std_joint_pos=0.0 env.domain_rand.obs_noise_std_joint_vel=0.0 env.domain_rand.action_delay_range=[1,2] env.domain_rand.obs_delay_range=[0,1] env.action_penalty_scale=-0.005 env.velocity_action_penalty_scale=-0.005 env.velocity_penalty_scale=-0.005
