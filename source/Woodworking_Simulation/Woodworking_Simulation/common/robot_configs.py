@@ -108,7 +108,7 @@ def get_robot_grasp_marker_cfg(scale: tuple[float, float, float] = (0.05, 0.05, 
 
 def get_camera_pole_cfg(
     size: tuple[float, float, float] = (0.1, 0.18, 0.7),
-    color: tuple[float, float, float] = (0.0, 1.0, 0.0)
+    color: tuple[float, float, float] = (0.5, 0.5, 0.5)
 ) -> sim_utils.CuboidCfg:
     """Get camera pole configuration (size and color only)."""
     return sim_utils.CuboidCfg(
@@ -198,9 +198,9 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 joint_pos={
                     "shoulder_pan_joint": 0.0,
                     "shoulder_lift_joint": -1.57,
-                    "elbow_joint": 1.57,
+                    "elbow_joint": 0.0,
                     "wrist_1_joint": -1.57,
-                    "wrist_2_joint": -1.57,
+                    "wrist_2_joint": 0.0,
                     "wrist_3_joint": 0.0,
                     "left_finger_joint": 0.0,
                     "right_finger_joint": 0.0,
@@ -244,9 +244,9 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 joint_pos={
                     "shoulder_pan_joint": 0.0,
                     "shoulder_lift_joint": -1.57,
-                    "elbow_joint": 1.57,
+                    "elbow_joint": 0.0,
                     "wrist_1_joint": -1.57,
-                    "wrist_2_joint": -1.57,
+                    "wrist_2_joint": 0.0,
                     "wrist_3_joint": 0.0,
                     "left_finger_joint": 0.0,
                     "right_finger_joint": 0.0,
@@ -294,9 +294,9 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 joint_pos={
                     "shoulder_pan_joint": 0.0,
                     "shoulder_lift_joint": -1.57,
-                    "elbow_joint": 1.57,
+                    "elbow_joint": 0.0,
                     "wrist_1_joint": -1.57,
-                    "wrist_2_joint": 1.57,
+                    "wrist_2_joint": 0.0,
                     "wrist_3_joint": 0.0,
                     "joint0": 0.0,  # Screwdriver joint
                 },

@@ -18,6 +18,12 @@ from isaaclab.utils import configclass
 from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.math import sample_uniform, quat_conjugate, quat_mul, quat_apply
+from Woodworking_Simulation.common.robot_configs import (
+    get_camera_pole_cfg,
+    TABLE_WIDTH,
+    TABLE_DEPTH,
+    TABLE_HEIGHT,
+)
 
 #path constants
 REPO_ROOT = Path(__file__).resolve().parents[6]
@@ -106,9 +112,9 @@ class PoseOrientationTwoRobotsCfg(DirectRLEnvCfg):
             joint_pos={
                 "shoulder_pan_joint": 0.0,
                 "shoulder_lift_joint": -1.57,
-                "elbow_joint": 1.57,
+                "elbow_joint": 0.0,
                 "wrist_1_joint": -1.57,
-                "wrist_2_joint": -1.57,
+                "wrist_2_joint": 0.0,
                 "wrist_3_joint": 0.0,
                 "left_finger_joint": 0.0,
                 "right_finger_joint": 0.0,
@@ -152,9 +158,9 @@ class PoseOrientationTwoRobotsCfg(DirectRLEnvCfg):
             joint_pos={
                 "shoulder_pan_joint": 0.0,
                 "shoulder_lift_joint": -1.57,
-                "elbow_joint": 1.57,
+                "elbow_joint": 0.0,
                 "wrist_1_joint": -1.57,
-                "wrist_2_joint": 1.57,
+                "wrist_2_joint": 0.0,
                 "wrist_3_joint": 0.0,
                 "joint0": 0.0,
             },
@@ -204,6 +210,10 @@ class PoseOrientationTwoRobotsCfg(DirectRLEnvCfg):
             ),
         },
     )
+
+    # Camera poles configuration (spawned in the scene)
+    camera_pole_1 = get_camera_pole_cfg()
+    camera_pole_2 = get_camera_pole_cfg()
 
     action_scale = 7.5
     dof_velocity_scale = 0.1
@@ -302,6 +312,23 @@ class PoseOrientationTwoRobotsV0(DirectRLEnv):
         init_ori = torch.tensor([0, 0, 0, 1], device=self.device).repeat(n_markers, 1)
         marker_indices = torch.arange(n_markers, dtype=torch.int64, device=self.device)
         self.goal_marker.visualize(init_pos, init_ori, marker_indices=marker_indices)
+        
+        # Spawn camera poles using constants from robot_configs
+        # Pole 1: translation = (TABLE_DEPTH - 0.05, 0.07, TABLE_HEIGHT + 0.37)
+        self.cfg.camera_pole_1.func(
+            "/World/CameraPole1",
+            self.cfg.camera_pole_1,
+            translation=(TABLE_DEPTH - 0.05, 0.07, TABLE_HEIGHT + 0.37),
+            orientation=(1.0, 0.0, 0.0, 0.0),
+        )
+
+        # Pole 2: translation = (0.05, TABLE_WIDTH - 0.07, TABLE_HEIGHT + 0.37)
+        self.cfg.camera_pole_2.func(
+            "/World/CameraPole2",
+            self.cfg.camera_pole_2,
+            translation=(0.05, TABLE_WIDTH - 0.07, TABLE_HEIGHT + 0.37),
+            orientation=(1.0, 0.0, 0.0, 0.0),
+        )
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self.actions = actions.clone().to(self.device).clamp(-1.0, 1.0)
