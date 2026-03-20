@@ -81,6 +81,23 @@ fi
 # Load proxy for internet access on compute nodes
 module load eth_proxy
 
+# Debug: print proxy variables
+echo "Proxy variables after module load:"
+echo "  http_proxy=$http_proxy"
+echo "  https_proxy=$https_proxy"
+echo "  HTTP_PROXY=$HTTP_PROXY"
+echo "  HTTPS_PROXY=$HTTPS_PROXY"
+
+# Export proxy variables (sometimes module load doesn't export properly)
+export http_proxy=${http_proxy:-$HTTP_PROXY}
+export https_proxy=${https_proxy:-$HTTPS_PROXY}
+export ftp_proxy=${ftp_proxy:-$FTP_PROXY}
+export NO_PROXY=$no_proxy
+
+echo "After export:"
+echo "  http_proxy=$http_proxy"
+echo "  https_proxy=$https_proxy"
+
 # --- WandB API Key ---
 if [ -f "$HOME/.wandb_key" ]; then
     export WANDB_API_KEY=$(cat $HOME/.wandb_key)
