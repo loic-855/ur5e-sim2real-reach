@@ -72,6 +72,15 @@ fi
 
 SEQUENTIAL_PER_JOB=${SEQ_ARR[$SLURM_ARRAY_TASK_ID]}
 
+# --- Initialise Modules & Load Proxy ---
+# Initialize module environment (required on Euler)
+if [ -f /etc/profile.d/modules.sh ]; then
+    source /etc/profile.d/modules.sh
+fi
+
+# Load proxy for internet access on compute nodes
+module load eth_proxy
+
 # --- WandB API Key ---
 if [ -f "$HOME/.wandb_key" ]; then
     export WANDB_API_KEY=$(cat $HOME/.wandb_key)
@@ -118,6 +127,10 @@ apptainer exec --nv \
     -B $JOB_CACHE/pip:$HOME/.cache/pip:rw \
     -B $JOB_CACHE/local_lib:$HOME/.local:rw \
     -B $PROJECT_PATH:/workspace/isaaclab/$PROJECT_NAME:rw \
+    --env http_proxy=$http_proxy \
+    --env https_proxy=$https_proxy \
+    --env ftp_proxy=$ftp_proxy \
+    --env no_proxy=$no_proxy \
     $SIF_PATH \
     bash -c "/isaac-sim/python.sh -m pip install --user -e /workspace/isaaclab/$PROJECT_NAME/source/$PROJECT_NAME"
 
@@ -176,6 +189,10 @@ for RUN_IDX in $(seq $START_IDX $END_IDX); do
         --env WANDB_DIR=$PROJECT_PATH \
         --env WANDB_CACHE_DIR=$HOME/.cache/wandb \
         --env WANDB_CONFIG_DIR=$HOME/.config/wandb \
+        --env http_proxy=$http_proxy \
+        --env https_proxy=$https_proxy \
+        --env ftp_proxy=$ftp_proxy \
+        --env no_proxy=$no_proxy \
         $SIF_PATH \
         bash -c "
             echo 'Starting Training: $RUN_NAME'
