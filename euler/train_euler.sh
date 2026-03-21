@@ -97,8 +97,9 @@ apptainer exec --nv \
             env.velocity_action_penalty_scale=-0.005 \
             env.velocity_penalty_scale=-0.005 \
             env.position_exp_scale=0.05 \
-            env.orientation_exp_scale=0.05 \
-            env.ee_orientation_reward=0.6
+            env.orientation_exp_scale=0.1 \
+            env.ee_orientation_reward=0.8 \
+            env.ee_orientation_penalty=-0.3 
     "
 
 # Cleanup Cache
