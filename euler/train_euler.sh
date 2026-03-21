@@ -5,7 +5,7 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=2
 #SBATCH --gpus=rtx_4090:1
-#SBATCH --time=8:45:00
+#SBATCH --time=7:45:00
 #SBATCH --mem-per-cpu=8000
 #SBATCH --job-name="WWSim-Grasping-Single-Robot-Direct-v1"
 #SBATCH --output=logs/train_%j.out
@@ -96,7 +96,9 @@ apptainer exec --nv \
             env.action_penalty_scale=-0.005 \
             env.velocity_action_penalty_scale=-0.005 \
             env.velocity_penalty_scale=-0.005 \
-            env.ee_orientation_reward=0.3
+            env.position_exp_scale=0.05 \
+            env.orientation_exp_scale=0.05 \
+            env.ee_orientation_reward=0.6
     "
 
 # Cleanup Cache
