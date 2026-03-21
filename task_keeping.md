@@ -44,7 +44,7 @@ cite the study where they compared action space, and controller types for the ro
 
 # Manuscript writing:
 
-<<<<<<< HEAD
+
 To do:
 ## Write the related work section
 * search for source for Rl part
@@ -57,7 +57,6 @@ change the real time operating system part as it is kinda wrong.
 =======
 To do after milie interview:
 * Write the related work section
->>>>>>> ddba3e82b02686b42efd73f32cdd7ffc9273144b
 * In the methods write the section that detail the impedance controller tuning.
 * Write the results 
 * Write the discussion
