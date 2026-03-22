@@ -39,7 +39,7 @@ from isaaclab.sensors import (
 from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
-from isaaclab.utils.math import sample_uniform, quat_error_magnitude, quat_box_minus, quat_apply_yaw, quat_inv
+from isaaclab.utils.math import sample_uniform, quat_error_magnitude, quat_box_minus, quat_apply_yaw, quat_inv, quat_apply, quat_mul
 
 # Shared project helpers
 from Woodworking_Simulation.common.robot_configs import (
@@ -166,9 +166,7 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     env_reset = 1.0
     progressive_reset: bool = False
     progressive_reset_steps: int = 25000
-    position_exp_scale = 0.05
     stability_reward_scale = 0.3
-    orientation_exp_scale = 0.2
     curric = [5000, 10000, 15000]
     curric_active = False
 
@@ -177,6 +175,9 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     ee_position_reward = 1.2
     ee_orientation_penalty = -0.20
     ee_orientation_reward = 0.60
+    #exp scales
+    position_exp_scale = 0.05
+    orientation_exp_scale = 0.2
 
     # penalty weights
     action_penalty_scale = -0.01
@@ -194,6 +195,11 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     rot_threshold = 0.1
     required_frames = 60
     goal_success_bonus = 15.0
+
+    # Goal sampling: 0.0 = 100 % FK-based (all goals kinematically reachable),
+    #                1.0 = 100 % random cylindrical (original behaviour).
+    #                Values in-between give a stochastic mix.
+    goal_sampling_random_ratio: float = 0.0
 
     # --- Debug ---
     debug = False
@@ -275,6 +281,17 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
 
         # goal tensors (source frame = table-relative)
         self.robot_base_local = torch.tensor([-0.52, 0.32, 0.0], device=self.device)
+
+        # Source-frame definition for FK → source frame conversion.
+        # The source frame is at BASE_OFFSET_LOCAL (translation) and
+        # BASE_ROTATION_LOCAL (orientation, w-first) relative to base_link.
+        self._source_origin_in_base = torch.tensor(
+            BASE_OFFSET_LOCAL, device=self.device, dtype=torch.float32
+        )
+        self._source_rot_in_base = torch.tensor(
+            BASE_ROTATION_LOCAL, device=self.device, dtype=torch.float32
+        )
+
         self.goal_pos_source = torch.zeros(
             (self._num_envs, 3), device=self.device, dtype=torch.float32
         )
@@ -405,8 +422,7 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
                 inc_sample = increments[0].cpu().numpy()
                 targ_sample = arm_targets[0].cpu().numpy()
                 speed_sample = self._arm_speed_targets[0].cpu().numpy()
-                mins = self.actions.min(dim=0).values.cpu().numpy()
-                maxs = self.actions.max(dim=0).values.cpu().numpy()
+                # Only print for env 0
                 print(
                     f"Action(raw) sample: {raw_sample}\n"
                     f"Action(clamped) sample: {clamped_sample}\n"
@@ -414,11 +430,12 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
                     f"Arm targets sample (pre-clamp): {targ_sample}\n"
                     f"Arm targets sample (post-clamp): {self.robot_dof_targets[0, :NUM_ARM_JOINTS].cpu().numpy()}\n"
                     f"Gripper targets: {self.robot_dof_targets[0, NUM_ARM_JOINTS:].cpu().numpy()}\n"
-                    f"Vel targets sample: {speed_sample}\n"
-                    f"Action min: {mins}\nAction max: {maxs}"
+                    f"Goal sample (pos, quat): {self.goal_pos_source[0].cpu().numpy()}, {self.goal_quat_source[0].cpu().numpy()}\n"
+                    f"Contact forces sample: {self._last_contact_forces[0].cpu().numpy()}\n"
+                    f"Vel targets sample: {speed_sample}"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[DEBUG ERROR] Exception in action debug: {e}")
 
     def _apply_action(self):
         # ---- V4: set position targets for all 8 joints (gripper held at default) ----
@@ -479,14 +496,12 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
 
         if self.cfg.debug and self.common_step_counter % 100 == 0:
             sample = obs[0].cpu().numpy()
+            # Only print for env 0
             print(
                 f"Observations: tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, "
                 f"tcp_quat_source={tcp_quat_source[0].cpu().numpy()}, "
                 f"Observation vector sample: {sample}"
             )
-            mins = obs.min(dim=0).values.cpu().numpy()
-            maxs = obs.max(dim=0).values.cpu().numpy()
-            print(f"Obs min: {mins}\nObs max: {maxs}")
         return {"policy": obs}
 
     def _get_observations_raw(self) -> dict[str, torch.Tensor]:
@@ -518,14 +533,12 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
 
         if self.cfg.debug and self.common_step_counter % 100 == 0:
             sample = obs[0].cpu().numpy()
+            # Only print for env 0
             print(
                 f"[Raw Observations] tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, "
                 f"tcp_quat_source={tcp_quat_source[0].cpu().numpy()}, "
                 f"Observation vector sample: {sample}"
             )
-            mins = obs.min(dim=0).values.cpu().numpy()
-            maxs = obs.max(dim=0).values.cpu().numpy()
-            print(f"[Raw Obs min]: {mins}\n[Raw Obs max]: {maxs}")
 
         return {"policy": obs}
 
@@ -689,33 +702,211 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
 
     # -- Goal sampling ------------------------------------------------------
 
+    def _ur5e_fk_batch(self, joint_angles: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Batched analytical FK for UR5e using standard DH parameters.
+
+        Fully GPU-native (no CPU / external solver needed).
+        Runs for N environments in a single pass.
+
+        Args:
+            joint_angles: ``(N, 6)`` arm joint angles in radians.
+
+        Returns:
+            pos_base:  ``(N, 3)`` TCP position in base_link frame.
+            quat_base: ``(N, 4)`` TCP orientation (w, x, y, z) in base_link frame.
+        """
+        import math
+
+        N = joint_angles.shape[0]
+        dev = joint_angles.device
+        dt = joint_angles.dtype
+
+        # UR5e standard DH parameters
+        a_list = [0.0, -0.425, -0.3922, 0.0, 0.0, 0.0]
+        d_list = [0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996]
+        alpha_list = [math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2, 0.0]
+
+        # Accumulate homogeneous transforms, starting from identity (N, 4, 4)
+        T = torch.eye(4, device=dev, dtype=dt).unsqueeze(0).repeat(N, 1, 1)
+
+        for i in range(6):
+            theta = joint_angles[:, i]   # (N,)
+            ct = torch.cos(theta)
+            st = torch.sin(theta)
+            ca = math.cos(alpha_list[i])
+            sa = math.sin(alpha_list[i])
+            ai = a_list[i]
+            di = d_list[i]
+
+            Ti = torch.zeros(N, 4, 4, device=dev, dtype=dt)
+            Ti[:, 0, 0] = ct
+            Ti[:, 0, 1] = -st * ca
+            Ti[:, 0, 2] =  st * sa
+            Ti[:, 0, 3] =  ai * ct
+            Ti[:, 1, 0] =  st
+            Ti[:, 1, 1] =  ct * ca
+            Ti[:, 1, 2] = -ct * sa
+            Ti[:, 1, 3] =  ai * st
+            Ti[:, 2, 1] =  sa
+            Ti[:, 2, 2] =  ca
+            Ti[:, 2, 3] =  di
+            Ti[:, 3, 3] =  1.0
+
+            T = torch.bmm(T, Ti)
+
+        # Apply TCP Z-offset along the last frame's Z-axis
+        tcp_z = TCP_OFFSET_LOCAL[2]
+        pos_base = torch.stack([
+            T[:, 0, 3] + T[:, 0, 2] * tcp_z,
+            T[:, 1, 3] + T[:, 1, 2] * tcp_z,
+            T[:, 2, 3] + T[:, 2, 2] * tcp_z,
+        ], dim=1)  # (N, 3)
+
+        # Rotation matrix → quaternion (w, x, y, z), numerically stable Shepperd method
+        R = T[:, :3, :3]
+        trace = R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2]
+
+        s0 = torch.sqrt(torch.clamp(trace + 1.0, min=1e-8)) * 2.0          # 4*w
+        s1 = torch.sqrt(torch.clamp(1.0 + R[:, 0, 0] - R[:, 1, 1] - R[:, 2, 2], min=1e-8)) * 2.0  # 4*x
+        s2 = torch.sqrt(torch.clamp(1.0 + R[:, 1, 1] - R[:, 0, 0] - R[:, 2, 2], min=1e-8)) * 2.0  # 4*y
+        s3 = torch.sqrt(torch.clamp(1.0 + R[:, 2, 2] - R[:, 0, 0] - R[:, 1, 1], min=1e-8)) * 2.0  # 4*z
+
+        q0 = torch.stack([0.25 * s0,
+                          (R[:, 2, 1] - R[:, 1, 2]) / s0,
+                          (R[:, 0, 2] - R[:, 2, 0]) / s0,
+                          (R[:, 1, 0] - R[:, 0, 1]) / s0], dim=1)
+        q1 = torch.stack([(R[:, 2, 1] - R[:, 1, 2]) / s1,
+                          0.25 * s1,
+                          (R[:, 0, 1] + R[:, 1, 0]) / s1,
+                          (R[:, 0, 2] + R[:, 2, 0]) / s1], dim=1)
+        q2 = torch.stack([(R[:, 0, 2] - R[:, 2, 0]) / s2,
+                          (R[:, 0, 1] + R[:, 1, 0]) / s2,
+                          0.25 * s2,
+                          (R[:, 1, 2] + R[:, 2, 1]) / s2], dim=1)
+        q3 = torch.stack([(R[:, 1, 0] - R[:, 0, 1]) / s3,
+                          (R[:, 0, 2] + R[:, 2, 0]) / s3,
+                          (R[:, 1, 2] + R[:, 2, 1]) / s3,
+                          0.25 * s3], dim=1)
+
+        c0 = (trace > 0).unsqueeze(1)
+        c1 = (~(trace > 0) & (R[:, 0, 0] > R[:, 1, 1]) & (R[:, 0, 0] > R[:, 2, 2])).unsqueeze(1)
+        c2 = (~(trace > 0) & ~(R[:, 0, 0] > R[:, 1, 1]) & (R[:, 1, 1] > R[:, 2, 2])).unsqueeze(1)
+
+        quat_base = torch.where(c0, q0, torch.where(c1, q1, torch.where(c2, q2, q3)))
+        quat_base = quat_base / torch.norm(quat_base, dim=1, keepdim=True).clamp(min=1e-8)
+
+        return pos_base, quat_base
+
+    def _fk_to_source_frame(
+        self, pos_base: torch.Tensor, quat_base: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Convert FK outputs from base_link frame to the FrameTransformer source frame.
+
+        The source frame is offset from base_link by ``_source_origin_in_base``
+        (translation) and rotated by ``_source_rot_in_base`` (quaternion, w-first).
+        """
+        N = pos_base.shape[0]
+        inv_rot = quat_inv(
+            self._source_rot_in_base.unsqueeze(0).expand(N, -1)
+        )  # (N, 4)
+        delta = pos_base - self._source_origin_in_base.unsqueeze(0)  # (N, 3)
+        pos_source = quat_apply(inv_rot, delta)   # (N, 3)
+        quat_source = quat_mul(inv_rot, quat_base)  # (N, 4)
+        return pos_source, quat_source
+
     def _sample_goal(self, env_ids: torch.Tensor | None = None):
-        """Sample random goal poses within a cylindrical volume around the robot base."""
+        """Sample goal poses for the given environments.
+
+        The mix between sampling strategies is controlled by
+        ``cfg.goal_sampling_random_ratio``:
+
+        * ``1.0`` – 100 % random cylindrical sampling (original behaviour,
+          some goals may be kinematically unreachable).
+        * ``0.0`` – 100 % FK-based sampling: a random arm configuration is
+          drawn uniformly within joint limits and FK is applied, so every
+          generated goal is guaranteed to be reachable.
+        * Values in-between give a stochastic mix of both strategies.
+        """
         if env_ids is None:
             env_ids = torch.arange(self._num_envs, dtype=torch.long, device=self.device)
         else:
             env_ids = env_ids.to(device=self.device, dtype=torch.long)
 
-        angle = torch.empty(len(env_ids), device=self.device).uniform_(
-            -torch.pi, torch.pi
-        )
-        radius = torch.empty(len(env_ids), device=self.device).uniform_(0.3, 0.75)
-        height = torch.empty(len(env_ids), device=self.device).uniform_(0.1, 0.6)
+        n = len(env_ids)
+        ratio = float(getattr(self.cfg, "goal_sampling_random_ratio", 1.0))
+        ratio = max(0.0, min(1.0, ratio))
 
-        self.goal_pos_source[env_ids, 0] = self.robot_base_local[0] + radius * torch.cos(angle)
-        self.goal_pos_source[env_ids, 1] = self.robot_base_local[1] + radius * torch.sin(angle)
-        self.goal_pos_source[env_ids, 2] = height
+        # Assign each env to either random or FK sampling
+        if ratio >= 1.0:
+            random_mask = torch.ones(n, dtype=torch.bool, device=self.device)
+        elif ratio <= 0.0:
+            random_mask = torch.zeros(n, dtype=torch.bool, device=self.device)
+        else:
+            random_mask = torch.rand(n, device=self.device) < ratio
 
-        delta_quat = torch.randn(len(env_ids), 4, device=self.device)
-        delta_quat = delta_quat / torch.norm(delta_quat, dim=1, keepdim=True)
-        self.goal_quat_source[env_ids] = delta_quat
+        rand_ids = env_ids[random_mask]
+        fk_ids   = env_ids[~random_mask]
+
+        # --- Random cylindrical sampling (original) ---
+        if len(rand_ids) > 0:
+            m = len(rand_ids)
+            angle  = torch.empty(m, device=self.device).uniform_(-torch.pi, torch.pi)
+            radius = torch.empty(m, device=self.device).uniform_(0.3, 0.75)
+            height = torch.empty(m, device=self.device).uniform_(0.1, 0.6)
+
+            self.goal_pos_source[rand_ids, 0] = self.robot_base_local[0] + radius * torch.cos(angle)
+            self.goal_pos_source[rand_ids, 1] = self.robot_base_local[1] + radius * torch.sin(angle)
+            self.goal_pos_source[rand_ids, 2] = height
+
+            delta_quat = torch.randn(m, 4, device=self.device)
+            delta_quat = delta_quat / torch.norm(delta_quat, dim=1, keepdim=True)
+            self.goal_quat_source[rand_ids] = delta_quat
+
+        # --- FK-based sampling (all goals are kinematically reachable) ---
+        # Goals whose TCP ends up below the table surface (source-frame Z < FK_GOAL_MIN_HEIGHT)
+        # are rejected and resampled iteratively (rejection sampling).
+        FK_GOAL_MIN_HEIGHT = 0.02   # metres above table surface in source frame
+        FK_MAX_RESAMPLE_ITERS = 15  # max rejection-sampling passes before fallback
+
+        if len(fk_ids) > 0:
+            n_fk = len(fk_ids)
+            pos_source_buf  = torch.zeros(n_fk, 3, device=self.device, dtype=torch.float32)
+            quat_source_buf = torch.zeros(n_fk, 4, device=self.device, dtype=torch.float32)
+
+            # pending_idx: indices (into pos_source_buf) still waiting for a valid goal
+            pending_idx = torch.arange(n_fk, device=self.device)
+
+            for _ in range(FK_MAX_RESAMPLE_ITERS):
+                if len(pending_idx) == 0:
+                    break
+                arm_joints = sample_uniform(
+                    self.robot_dof_lower_limits,
+                    self.robot_dof_upper_limits,
+                    (len(pending_idx), NUM_ARM_JOINTS),
+                    self.device,
+                )
+                pb, qb = self._ur5e_fk_batch(arm_joints)
+                ps, qs = self._fk_to_source_frame(pb, qb)
+
+                valid_mask = ps[:, 2] >= FK_GOAL_MIN_HEIGHT
+                accepted = pending_idx[valid_mask]
+                pos_source_buf[accepted]  = ps[valid_mask]
+                quat_source_buf[accepted] = qs[valid_mask]
+                pending_idx = pending_idx[~valid_mask]
+
+            # Fallback for the (very rare) remaining cases: copy nearest accepted goal
+            if len(pending_idx) > 0:
+                fallback_idx = (pending_idx[0] - 1) % n_fk  # guaranteed accepted
+                pos_source_buf[pending_idx]  = pos_source_buf[fallback_idx]
+                quat_source_buf[pending_idx] = quat_source_buf[fallback_idx]
+
+            self.goal_pos_source[fk_ids]  = pos_source_buf
+            self.goal_quat_source[fk_ids] = quat_source_buf
 
         self.goal_steps_elapsed[env_ids] = 0
 
         if self.cfg.debug:
-            marker_idx = torch.zeros(
-                len(env_ids), dtype=torch.int64, device=self.device
-            )
+            marker_idx = torch.zeros(n, dtype=torch.int64, device=self.device)
             self.goal_marker.visualize(
                 self.goal_pos_source[env_ids] + self.env_origins[env_ids],
                 self.goal_quat_source[env_ids],

@@ -77,6 +77,8 @@ apptainer exec --nv \
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \
             --headless \
+            --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-20_15-03-34/model_1499.pt \
+            -- resume
             agent.wandb_project=sim2real_v4_new_network \
             agent.max_iterations=1500 \
             agent.experiment_name=pose_orientation_sim2real_v4_new_network \
@@ -96,10 +98,7 @@ apptainer exec --nv \
             env.action_penalty_scale=-0.005 \
             env.velocity_action_penalty_scale=-0.005 \
             env.velocity_penalty_scale=-0.005 \
-            env.position_exp_scale=0.05 \
-            env.orientation_exp_scale=0.1 \
-            env.ee_orientation_reward=0.8 \
-            env.ee_orientation_penalty=-0.3 
+            env.ee_orientation_reward=0.4 
     "
 
 # Cleanup Cache
