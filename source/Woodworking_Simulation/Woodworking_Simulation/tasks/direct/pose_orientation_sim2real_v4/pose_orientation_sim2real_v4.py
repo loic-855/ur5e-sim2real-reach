@@ -630,8 +630,10 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
                 "ori_reward": (
                     self.cfg.ee_orientation_reward * orientation_exp_error
                 ).mean(),
+                "ori_penalty": (self.cfg.ee_orientation_penalty * orientation_error).mean(),
                 "pos_error": position_error.mean(),
-                "pos_reward": (self.cfg.ee_position_penalty * position_error).mean(),
+                "pos_reward": (self.cfg.ee_position_reward * position_exp_error).mean(),
+                "pos_penalty": (self.cfg.ee_position_penalty * position_error).mean(),
                 "rewards_mean": reward.mean(),
                 "rewards_std": reward.std(),
                 "step_counter": self.common_step_counter,
