@@ -36,7 +36,6 @@ base_overrides:
   - "env.position_exp_scale_start=0.2"
   - "env.orientation_exp_scale_start=0.2"
   - "env.position_exp_scale_end=0.05"
-  - "env.orientation_exp_scale_end=0.05"
   - "env.exp_curriculum_steps=40000"
 
 # ============================================================================
@@ -50,6 +49,6 @@ dimensions:
   # variant keeps the orientation end value at 0.2 (no orientation curriculum).
   exp_curriculum_variant:
     curriculum_both:
-      - "# use base_overrides (both position & orientation anneal 0.2->0.05)"
+      - "env.orientation_exp_scale_end=0.05"
     orientation_fixed:
       - "env.orientation_exp_scale_end=0.2"
