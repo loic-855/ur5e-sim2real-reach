@@ -176,8 +176,19 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     ee_orientation_penalty = -0.20
     ee_orientation_reward = 0.60
     #exp scales
+    # legacy defaults (kept for backwards compatibility)
     position_exp_scale = 0.05
     orientation_exp_scale = 0.2
+
+    # --- Small curriculum for exponential scales ---
+    # Start both scales at 0.2 and linearly anneal to 0.05 over
+    # `exp_curriculum_steps` environment steps when enabled.
+    enable_exp_curriculum: bool = True
+    position_exp_scale_start: float = 0.2
+    orientation_exp_scale_start: float = 0.2
+    position_exp_scale_end: float = 0.05
+    orientation_exp_scale_end: float = 0.05
+    exp_curriculum_steps: int = 40000
 
     # penalty weights
     action_penalty_scale = -0.01
@@ -550,16 +561,26 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
         tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
 
+        # Curriculum for exponential scales (position / orientation)
+        if getattr(self.cfg, "enable_exp_curriculum", False):
+            steps = max(1, int(self.cfg.exp_curriculum_steps))
+            t = min(1.0, float(self.common_step_counter) / float(steps))
+            pos_scale = (1.0 - t) * float(self.cfg.position_exp_scale_start) + t * float(
+                self.cfg.position_exp_scale_end
+            )
+            ori_scale = (1.0 - t) * float(self.cfg.orientation_exp_scale_start) + t * float(
+                self.cfg.orientation_exp_scale_end
+            )
+        else:
+            pos_scale = float(self.cfg.position_exp_scale)
+            ori_scale = float(self.cfg.orientation_exp_scale)
+
         # Position and orientation error/reward
         position_error = torch.norm(self.goal_pos_source - tcp_pos_source, dim=1)
-        position_exp_error = torch.exp(-position_error / self.cfg.position_exp_scale)
+        position_exp_error = torch.exp(-position_error / pos_scale)
 
-        orientation_error = quat_error_magnitude(
-            self.goal_quat_source, tcp_quat_source
-        )
-        orientation_exp_error = torch.exp(
-            -orientation_error / self.cfg.orientation_exp_scale
-        )
+        orientation_error = quat_error_magnitude(self.goal_quat_source, tcp_quat_source)
+        orientation_exp_error = torch.exp(-orientation_error / ori_scale)
 
         # Penalties
         pos_action_cost = torch.sum(self.actions[:, :6] ** 2, dim=1)
