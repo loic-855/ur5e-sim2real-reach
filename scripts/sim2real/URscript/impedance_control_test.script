@@ -28,7 +28,7 @@ def impedance_control_v3():
 
     # Impedance gains
     kp = [800.0, 800.0, 800.0, 350.0, 350.0, 350.0]
-    kd = [60.0, 60.0, 60.0, 35.0, 35.0, 35.0]
+    kd = [28.3, 56.6, 28.3, 7.5, 7.5, 7.5]
     max_error = 0.20
 
     # Torque limits (Nm) – UR5e specs: 120 shoulder, 60 wrist
@@ -112,7 +112,7 @@ def impedance_control_v3():
             i = i + 1
         end
 
-        direct_torque(tau)
+        direct_torque(tau, friction_comp=False)
 
         if stop:
             textmsg("Back to home position...")

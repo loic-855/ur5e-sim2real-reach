@@ -75,7 +75,8 @@ ROBOT_PRIMARY_PORT = 30001
 # Paths relative to repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RTDE_CONFIG_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "rtde_input_v3.xml")
-URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control_v3.script")
+#URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control_v3.script")
+URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control_test.script")
 
 # Home position
 HOME_Q = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
@@ -183,6 +184,21 @@ class RTDEController:
         print("[RTDE] Connected and synchronised (V3 – with qdot_des)")
 
     # -- URScript -----------------------------------------------------------
+
+    def send_home_movement(self, timeout: float = 5.0, wait_time: float = 5.2):
+        """Send a simple movej command to home position before impedance control."""
+        print("[RTDE] Sending home movement command...")
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((self.robot_host, self.primary_port))
+            s.sendall(f"movej({HOME_Q}, a=0.7, v=0.6, t={timeout}, r=0)\n".encode("utf-8"))
+            s.close()
+            print("[RTDE] Home movement command sent")
+        except Exception as e:
+            raise RuntimeError(f"[RTDE] Failed to send home movement: {e}")
+
+        time.sleep(wait_time)
+        print(f"[RTDE] Home movement completed")
 
     def send_urscript(self):
         """Upload and start the URScript impedance controller V3 on the robot."""
@@ -388,6 +404,8 @@ class Sim2RealNode(Node):
         )
         self.get_logger().info("Connecting to robot via RTDE (V3)...")
         self.rtde.connect()
+        self.get_logger().info("Sending home movement...")
+        self.rtde.send_home_movement()
         self.get_logger().info("Uploading URScript (impedance + velocity feedforward)...")
         self.rtde.send_urscript()
         self.get_logger().info("Starting RTDE reader thread...")
