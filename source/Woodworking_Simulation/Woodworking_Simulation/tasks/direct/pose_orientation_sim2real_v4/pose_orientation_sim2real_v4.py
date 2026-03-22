@@ -862,45 +862,41 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             self.goal_quat_source[rand_ids] = delta_quat
 
         # --- FK-based sampling (all goals are kinematically reachable) ---
-        # Goals whose TCP ends up below the table surface (source-frame Z < FK_GOAL_MIN_HEIGHT)
-        # are rejected and resampled iteratively (rejection sampling).
-        FK_GOAL_MIN_HEIGHT = 0.02   # metres above table surface in source frame
-        FK_MAX_RESAMPLE_ITERS = 15  # max rejection-sampling passes before fallback
+        # Single-pass: sample joints → FK → mirror any below-table goals across
+        # the table surface (z=0 in source frame).
+        #
+        # FK_GOAL_MIN_HEIGHT = 0.0: goals exactly at the table surface are kept;
+        # the robot will learn to reach them without colliding with the table.
+        #
+        # Mirroring across z=0 for a goal below the table:
+        #   Position : only z is negated, x and y are unchanged.
+        #   Orientation: 180° rotation around (1,1,0)/√2, i.e.
+        #       q_mirror = (w=0, x=1/√2, y=1/√2, z=0)
+        #     This maps  z↓ → z↑,  x → y,  y → x,
+        #     which is the physically consistent mirrored frame.
 
         if len(fk_ids) > 0:
-            n_fk = len(fk_ids)
-            pos_source_buf  = torch.zeros(n_fk, 3, device=self.device, dtype=torch.float32)
-            quat_source_buf = torch.zeros(n_fk, 4, device=self.device, dtype=torch.float32)
+            arm_joints = sample_uniform(
+                self.robot_dof_lower_limits,
+                self.robot_dof_upper_limits,
+                (len(fk_ids), NUM_ARM_JOINTS),
+                self.device,
+            )
+            ps, qs = self._fk_to_source_frame(*self._ur5e_fk_batch(arm_joints))
 
-            # pending_idx: indices (into pos_source_buf) still waiting for a valid goal
-            pending_idx = torch.arange(n_fk, device=self.device)
+            below = ps[:, 2] < 0.0
+            if torch.any(below):
+                # Flip z only
+                ps[below, 2] = -ps[below, 2]
+                # Apply q_mirror = (0, 1/√2, 1/√2, 0)  as  q_new = q_mirror * q_old
+                s = 2 ** -0.5  # 1/√2
+                q_mirror = torch.tensor(
+                    [0.0, s, s, 0.0], device=self.device, dtype=qs.dtype
+                ).unsqueeze(0).expand(int(below.sum()), -1)
+                qs[below] = quat_mul(q_mirror, qs[below])
 
-            for _ in range(FK_MAX_RESAMPLE_ITERS):
-                if len(pending_idx) == 0:
-                    break
-                arm_joints = sample_uniform(
-                    self.robot_dof_lower_limits,
-                    self.robot_dof_upper_limits,
-                    (len(pending_idx), NUM_ARM_JOINTS),
-                    self.device,
-                )
-                pb, qb = self._ur5e_fk_batch(arm_joints)
-                ps, qs = self._fk_to_source_frame(pb, qb)
-
-                valid_mask = ps[:, 2] >= FK_GOAL_MIN_HEIGHT
-                accepted = pending_idx[valid_mask]
-                pos_source_buf[accepted]  = ps[valid_mask]
-                quat_source_buf[accepted] = qs[valid_mask]
-                pending_idx = pending_idx[~valid_mask]
-
-            # Fallback for the (very rare) remaining cases: copy nearest accepted goal
-            if len(pending_idx) > 0:
-                fallback_idx = (pending_idx[0] - 1) % n_fk  # guaranteed accepted
-                pos_source_buf[pending_idx]  = pos_source_buf[fallback_idx].clone()
-                quat_source_buf[pending_idx] = quat_source_buf[fallback_idx].clone()
-
-            self.goal_pos_source[fk_ids]  = pos_source_buf
-            self.goal_quat_source[fk_ids] = quat_source_buf
+            self.goal_pos_source[fk_ids]  = ps
+            self.goal_quat_source[fk_ids] = qs
 
         self.goal_steps_elapsed[env_ids] = 0
 
