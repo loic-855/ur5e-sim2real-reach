@@ -77,10 +77,8 @@ apptainer exec --nv \
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \
             --headless \
-            --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-20_15-03-34/model_1499.pt \
-            -- resume
             agent.wandb_project=sim2real_v4_new_network \
-            agent.max_iterations=300 \
+            agent.max_iterations=1500 \
             agent.experiment_name=pose_orientation_sim2real_v4_new_network \
             agent.policy.actor_hidden_dims=[256,128,64] \
             agent.policy.critic_hidden_dims=[256,128,64] \
