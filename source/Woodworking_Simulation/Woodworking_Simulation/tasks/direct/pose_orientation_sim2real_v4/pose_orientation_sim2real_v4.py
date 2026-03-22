@@ -431,7 +431,6 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
                     f"Arm targets sample (post-clamp): {self.robot_dof_targets[0, :NUM_ARM_JOINTS].cpu().numpy()}\n"
                     f"Gripper targets: {self.robot_dof_targets[0, NUM_ARM_JOINTS:].cpu().numpy()}\n"
                     f"Goal sample (pos, quat): {self.goal_pos_source[0].cpu().numpy()}, {self.goal_quat_source[0].cpu().numpy()}\n"
-                    f"Contact forces sample: {self._last_contact_forces[0].cpu().numpy()}\n"
                     f"Vel targets sample: {speed_sample}"
                 )
             except Exception as e:
