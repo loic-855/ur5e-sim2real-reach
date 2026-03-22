@@ -896,8 +896,8 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             # Fallback for the (very rare) remaining cases: copy nearest accepted goal
             if len(pending_idx) > 0:
                 fallback_idx = (pending_idx[0] - 1) % n_fk  # guaranteed accepted
-                pos_source_buf[pending_idx]  = pos_source_buf[fallback_idx]
-                quat_source_buf[pending_idx] = quat_source_buf[fallback_idx]
+                pos_source_buf[pending_idx]  = pos_source_buf[fallback_idx].clone()
+                quat_source_buf[pending_idx] = quat_source_buf[fallback_idx].clone()
 
             self.goal_pos_source[fk_ids]  = pos_source_buf
             self.goal_quat_source[fk_ids] = quat_source_buf
