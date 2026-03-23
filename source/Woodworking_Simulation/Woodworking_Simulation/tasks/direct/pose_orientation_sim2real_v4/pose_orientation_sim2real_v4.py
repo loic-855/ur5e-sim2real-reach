@@ -188,7 +188,7 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     orientation_exp_scale_start: float = 0.2
     position_exp_scale_end: float = 0.05
     orientation_exp_scale_end: float = 0.05
-    exp_curriculum_steps: int = 40000
+    exp_curriculum_steps: int = 100000
 
     # penalty weights
     action_penalty_scale = -0.01
