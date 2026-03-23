@@ -202,12 +202,6 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     # TCP velocity normalization (m/s)
     tcp_max_speed = 2.0
 
-    # Bonus reward
-    pos_threshold = 0.02
-    rot_threshold = 0.1
-    required_frames = 60
-    goal_success_bonus = 15.0
-
     # Goal sampling: 0.0 = 100 % FK-based (all goals kinematically reachable),
     #                1.0 = 100 % random cylindrical (original behaviour).
     #                Values in-between give a stochastic mix.

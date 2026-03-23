@@ -96,8 +96,6 @@ apptainer exec --nv \
             env.ee_position_penalty=-1.0 \
             env.stability_reward_scale=0.0 \
             env.enable_exp_curriculum=False \
-            env.action_scale=3.0 \
-            env.velocity_scale=1.5
     "
 
 # Cleanup Cache
