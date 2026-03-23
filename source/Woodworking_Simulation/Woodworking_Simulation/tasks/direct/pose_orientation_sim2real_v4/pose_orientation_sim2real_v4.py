@@ -164,13 +164,9 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     # action and coef scaling
     action_scale = 2.0
     velocity_scale = 1.0
-    env_reset = 1.0
-    progressive_reset: bool = False
-    progressive_reset_steps: int = 25000
-    stability_reward_scale = 0.3
-    curric = [5000, 10000, 15000]
-    curric_active = False
-
+    reset_range = 0.125
+    stability_reward_scale = 0.0
+    
     # reward weights
     ee_position_penalty = -0.30
     ee_position_reward = 1.2
@@ -693,14 +689,9 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
                 device=self.device,
             )
 
-        # Split envs: some reset to home, others fully random
-        mask = torch.rand(len(env_ids), device=self.device) < self.cfg.env_reset
-        home_ids = env_ids[mask]
-        random_ids = env_ids[~mask]
-        if len(home_ids) > 0:
-            self._reset_to_home(home_ids)
-        if len(random_ids) > 0:
-            self._reset_random(random_ids)
+        # reset to home
+        self._reset_to_home(env_ids)
+
 
         # Write reset joint state to simulation
         self._robot.write_joint_state_to_sim(
@@ -1015,30 +1006,11 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         ---- V4: resets all 8 joints; arm joints randomised, gripper at default. ----
         """
         home = self._robot.data.default_joint_pos[env_ids]  # (N, 8)
-
-        if self.cfg.progressive_reset:
-            progress = min(1.0, self.common_step_counter / self.cfg.progressive_reset_steps)
-
-            # Arm joints: progressively expand from home ± 0.125 toward full limits
-            arm_home = home[:, :NUM_ARM_JOINTS]
-            initial_half = 0.125
-            tight_low = (arm_home - initial_half).clamp(min=self.robot_dof_lower_limits)
-            tight_high = (arm_home + initial_half).clamp(max=self.robot_dof_upper_limits)
-
-            low = tight_low + progress * (self.robot_dof_lower_limits - tight_low)
-            high = tight_high + progress * (self.robot_dof_upper_limits - tight_high)
-
-            arm_pos = sample_uniform(
-                low, high,
-                (len(env_ids), NUM_ARM_JOINTS),
-                self.device,
-            )
-        else:
-            arm_pos = home[:, :NUM_ARM_JOINTS] + sample_uniform(
-                -0.125, 0.125,
-                (len(env_ids), NUM_ARM_JOINTS),
-                self.device,
-            )
+        arm_pos = home[:, :NUM_ARM_JOINTS] + sample_uniform(
+            -self.cfg.reset_range, self.cfg.reset_range,
+            (len(env_ids), NUM_ARM_JOINTS),
+            self.device,
+        )
 
         self.robot_dof_targets[env_ids] = self._robot.data.default_joint_pos[env_ids]
         self.robot_dof_targets[env_ids, :NUM_ARM_JOINTS] = arm_pos
