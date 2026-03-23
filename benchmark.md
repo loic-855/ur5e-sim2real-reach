@@ -33,12 +33,13 @@
 - Ajout d'un tenseur interne minimal pour stocker des goals explicites.
 - Ajout d'un fichier par défaut [scripts/rsl_rl/default_benchmark_goals.json](scripts/rsl_rl/default_benchmark_goals.json).
 - Ajout d'une CLI `--goals-file` pour injecter les goals explicites dans le runner sim.
+- Implémentation des métriques `in_area` et `on_goal` dans [scripts/rsl_rl/test.py](scripts/rsl_rl/test.py).
+- Export automatique d'un JSON de benchmark dans `logs/benchmarks/`.
+- Le runner sim utilise maintenant la longueur réelle du tuple de goals pour déterminer le nombre de goals à exécuter.
+- Arrêt automatique du runner sim après un passage complet sur la liste de goals par défaut.
 
 ### En cours / à faire
 
-- Ajouter la logique complète du benchmark dans [scripts/rsl_rl/test.py](scripts/rsl_rl/test.py).
-- Forcer la séquence de 10 goals avec timeout de 10 s par goal.
-- Mesurer `in_area` et `on_goal` et sauver les résultats en JSON.
 - Ajouter le runner benchmark pour le setup réel.
 - Ajouter un vrai fichier de config benchmark dédié.
 
