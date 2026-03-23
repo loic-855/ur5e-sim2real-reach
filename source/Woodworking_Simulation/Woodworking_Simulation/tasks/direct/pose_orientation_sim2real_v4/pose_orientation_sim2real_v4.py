@@ -24,6 +24,7 @@ Gripper joints are held at their default position (closed).
 from __future__ import annotations
 
 import torch
+import math
 
 from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
@@ -165,17 +166,12 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     action_scale = 2.0
     velocity_scale = 1.0
     reset_range = 0.125
-    stability_reward_scale = 0.0
     
     # reward weights
     ee_position_penalty = -0.30
     ee_position_reward = 1.2
     ee_orientation_penalty = -0.20
     ee_orientation_reward = 0.60
-    #exp scales
-    # legacy defaults (kept for backwards compatibility)
-    position_exp_scale = 0.05
-    orientation_exp_scale = 0.2
 
     # --- Small curriculum for exponential scales ---
     # Start both scales at 0.2 and linearly anneal to 0.05 over
@@ -185,15 +181,15 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     position_exp_scale_end: float = 0.05
     orientation_exp_scale_start: float = 0.2
     orientation_exp_scale_end: float = 0.05
-    exp_curriculum_steps: int = 170000
+    exp_curriculum_steps: int = 110000
 
     # penalty weights
-    action_penalty_scale = -0.01
+    action_penalty_scale = -0.05
     velocity_action_penalty_scale = -0.05
-    velocity_penalty_scale = -0.01
+    velocity_penalty_scale = -0.05
     contact_penalty_scale = -0.01
     contact_force_threshold_penalty = 5.0
-    joint_limit_penalty_scale = -0.01
+    joint_limit_penalty_scale = -0.02
 
     # TCP velocity normalization (m/s)
     tcp_max_speed = 2.0
@@ -201,14 +197,13 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     # Goal sampling: 0.0 = 100 % FK-based (all goals kinematically reachable),
     #                1.0 = 100 % random cylindrical (original behaviour).
     #                Values in-between give a stochastic mix.
-    goal_sampling_random_ratio: float = 0.0
+    goal_sampling_random_ratio: float = 0.3
     deterministic_goal_sampling: bool = False
     benchmark_goals: tuple[tuple[float, ...], ...] = ()
 
     # --- Debug ---
     debug = False
     contact_debug_interval: int = 0
-    norm_obs: bool = True
 
     # --- Domain Randomization ---
     domain_rand: DomainRandomizationV4Cfg = DomainRandomizationV4Cfg()
@@ -255,6 +250,15 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
 
         # ---- V4: look up wrist body index dynamically (not hardcoded 6) ----
         self._wrist_body_idx = self._robot.body_names.index("wrist_3_link")
+
+        # ---- Pre-compute UR5e DH parameters (avoid recomputation in every FK call) ----
+        import math
+        self._dh_a = [0.0, -0.425, -0.3922, 0.0, 0.0, 0.0]
+        self._dh_d = [0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996]
+        self._dh_alpha = [math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2, 0.0]
+        # Pre-compute cos/sin of alpha values (constant per joint)
+        self._dh_cos_alpha = [math.cos(a) for a in self._dh_alpha]
+        self._dh_sin_alpha = [math.sin(a) for a in self._dh_alpha]
 
         # Joint limits for the 6 ARM joints only (used for normalization & clamping)
         arm_limits = list(JOINT_LIMITS.values())[:NUM_ARM_JOINTS]
@@ -470,9 +474,6 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
     # -- Observations -------------------------------------------------------
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
-        if not getattr(self.cfg, "norm_obs", True):
-            return self._get_observations_raw()
-
         frame_data = self._frame_transformer.data
         tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
         tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
@@ -522,44 +523,6 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             )
         return {"policy": obs}
 
-    def _get_observations_raw(self) -> dict[str, torch.Tensor]:
-        """Return raw (unnormalized) observations."""
-        frame_data = self._frame_transformer.data
-        tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
-        tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
-
-        to_target = self.goal_pos_source - tcp_pos_source
-        orientation_error = quat_box_minus(self.goal_quat_source, tcp_quat_source)
-
-        # ---- V4: arm joints only ----
-        joint_pos = self._robot.data.joint_pos[:, :NUM_ARM_JOINTS]
-        joint_vel = self._robot.data.joint_vel[:, :NUM_ARM_JOINTS]
-
-        tcp_angular_vel, tcp_linear_vel = self.compute_tcp_states()
-
-        obs = torch.cat(
-            [
-                to_target,            # 3
-                orientation_error,    # 3
-                joint_pos,            # 6 (arm only)
-                joint_vel,            # 6 (arm only)
-                tcp_linear_vel,       # 3
-                tcp_angular_vel,      # 3
-            ],
-            dim=1,
-        )
-
-        if self.cfg.debug and self.common_step_counter % 100 == 0:
-            sample = obs[0].cpu().numpy()
-            # Only print for env 0
-            print(
-                f"[Raw Observations] tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, "
-                f"tcp_quat_source={tcp_quat_source[0].cpu().numpy()}, "
-                f"Observation vector sample: {sample}"
-            )
-
-        return {"policy": obs}
-
     # -- Rewards ------------------------------------------------------------
 
     def _get_rewards(self) -> torch.Tensor:
@@ -580,8 +543,9 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
                 self.cfg.orientation_exp_scale_end
             )
         else:
-            pos_scale = float(self.cfg.position_exp_scale)
-            ori_scale = float(self.cfg.orientation_exp_scale)
+            # Use final scale values when curriculum is disabled
+            pos_scale = float(self.cfg.position_exp_scale_end)
+            ori_scale = float(self.cfg.orientation_exp_scale_end)
 
         # Position and orientation error/reward
         position_error = torch.norm(self.goal_pos_source - tcp_pos_source, dim=1)
@@ -617,11 +581,6 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         )
         reward_joint_limits = penalty_val.sum(dim=-1)
 
-        # Continuous stability reward
-        closeness = torch.exp(-position_error / self.cfg.position_exp_scale)
-        stillness = torch.exp(-velocity_cost / 10.0)
-        stability_reward = self.cfg.stability_reward_scale * closeness * stillness
-
         # TCP marker visualisation (debug only)
         if self.cfg.debug:
             self.ee_marker.visualize(
@@ -639,7 +598,6 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             + self.cfg.velocity_penalty_scale * velocity_cost
             + self.cfg.joint_limit_penalty_scale * reward_joint_limits
             + contact_penalty
-            + stability_reward
         )
 
         if "log" not in self.extras:
@@ -648,7 +606,6 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             {
                 "pos_action_penalty": (self.cfg.action_penalty_scale * pos_action_cost).mean(),
                 "vel_action_penalty": (self.cfg.velocity_action_penalty_scale * vel_action_cost).mean(),
-                "stability_reward_mean": stability_reward.mean(),
                 "contact_force_max": contact_forces.max(),
                 "contact_force_mean": contact_forces.mean(),
                 "contact_penalty_mean": contact_penalty.mean(),
@@ -747,16 +704,15 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             pos_base:  ``(N, 3)`` TCP position in base_link frame.
             quat_base: ``(N, 4)`` TCP orientation (w, x, y, z) in base_link frame.
         """
-        import math
-
         N = joint_angles.shape[0]
         dev = joint_angles.device
         dt = joint_angles.dtype
 
-        # UR5e standard DH parameters
-        a_list = [0.0, -0.425, -0.3922, 0.0, 0.0, 0.0]
-        d_list = [0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996]
-        alpha_list = [math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2, 0.0]
+        # UR5e DH parameters (pre-computed in __init__)
+        a_list = self._dh_a
+        d_list = self._dh_d
+        cos_alpha = self._dh_cos_alpha
+        sin_alpha = self._dh_sin_alpha
 
         # Accumulate homogeneous transforms, starting from identity (N, 4, 4)
         T = torch.eye(4, device=dev, dtype=dt).unsqueeze(0).repeat(N, 1, 1)
@@ -765,8 +721,8 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             theta = joint_angles[:, i]   # (N,)
             ct = torch.cos(theta)
             st = torch.sin(theta)
-            ca = math.cos(alpha_list[i])
-            sa = math.sin(alpha_list[i])
+            ca = cos_alpha[i]
+            sa = sin_alpha[i]
             ai = a_list[i]
             di = d_list[i]
 
@@ -1088,7 +1044,7 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             .unsqueeze(0)
             .expand(wrist_quat_w.shape[0], -1)
         )
-        r_offset_w = quat_apply_yaw(wrist_quat_w, tcp_offset)
+        r_offset_w = quat_apply(wrist_quat_w, tcp_offset)
 
         v_tcp_w = lin_vel_wrist_w + torch.cross(ang_vel_wrist_w, r_offset_w, dim=-1)
 
@@ -1098,7 +1054,7 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             .expand(wrist_quat_w.shape[0], -1)
         )
         inv_base = quat_inv(base_rot)
-        v_tcp_final = quat_apply_yaw(inv_base, v_tcp_w)
-        ang_vel_final = quat_apply_yaw(inv_base, ang_vel_wrist_w)
+        v_tcp_final = quat_apply(inv_base, v_tcp_w)
+        ang_vel_final = quat_apply(inv_base, ang_vel_wrist_w)
 
         return v_tcp_final, ang_vel_final
