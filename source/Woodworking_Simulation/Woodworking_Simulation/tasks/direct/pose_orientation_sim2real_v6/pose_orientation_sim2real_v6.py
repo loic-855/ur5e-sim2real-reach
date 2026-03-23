@@ -66,10 +66,11 @@ BASE_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)
 TCP_OFFSET_LOCAL = (0.0, 0.0, 0.14)
 TCP_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)
 
-from Woodworking_Simulation.common.domain_randomization_v3 import (
-    ActionBufferV3,
+from Woodworking_Simulation.common.domain_randomization import (
+    ActionBuffer,
     ActuatorRandomizer,
-    DomainRandomizationV3Cfg,
+    DomainRandomizationV4Cfg,
+    MassComRandomizer,
     ObservationBuffer,
 )
 
@@ -192,9 +193,7 @@ class PoseOrientationSim2RealV6Cfg(DirectRLEnvCfg):
     norm_obs: bool = True
 
     # --- Domain Randomization ---
-    domain_rand: DomainRandomizationV3Cfg = DomainRandomizationV3Cfg(
-        enabled=False
-    )
+    domain_rand: DomainRandomizationV4Cfg = DomainRandomizationV4Cfg()
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +286,7 @@ class PoseOrientationSim2RealV6(DirectRLEnv):
         self._sample_goal()
 
         # --- Domain Randomization helpers ---
-        self._action_buffer = ActionBufferV3(
+        self._action_buffer = ActionBuffer(
             num_envs=self._num_envs,
             action_dim=self.cfg.action_space,
             num_joints=6,
@@ -302,6 +301,7 @@ class PoseOrientationSim2RealV6(DirectRLEnv):
             device=self.device,
         )
         self._actuator_randomizer: ActuatorRandomizer | None = None
+        self._mass_com_randomizer: MassComRandomizer | None = None
 
     # -- Scene setup --------------------------------------------------------
 
@@ -348,10 +348,8 @@ class PoseOrientationSim2RealV6(DirectRLEnv):
         self.prev_actions[:] = self.actions
         self.actions = actions.clone().clamp(-1.0, 1.0)
 
-        # Apply domain-randomised action delay/noise only when enabled
-        effective_actions = self.actions
-        if self.cfg.domain_rand.enabled:
-            effective_actions = self._action_buffer.push(self.actions)
+        # Apply domain-randomised action delay/noise (toggles checked internally)
+        effective_actions = self._action_buffer.push(self.actions)
 
         # Split the 12-dim action vector: first 6 = position, last 6 = velocity
         pos_actions = effective_actions[:, :6]
@@ -437,9 +435,8 @@ class PoseOrientationSim2RealV6(DirectRLEnv):
             ],
             dim=1,
         )
-        # Domain randomisation on observations (when enabled)
-        if self.cfg.domain_rand.enabled:
-            obs = self._obs_buffer.append_and_get(obs)
+        # Domain randomisation on observations (toggles checked internally)
+        obs = self._obs_buffer.append_and_get(obs)
 
         if self.cfg.debug and self.common_step_counter % 100 == 0:
             sample = obs[0].cpu().numpy()
@@ -601,9 +598,15 @@ class PoseOrientationSim2RealV6(DirectRLEnv):
     def _reset_idx(self, env_ids: torch.Tensor):
         super()._reset_idx(env_ids)
 
-        # Lazily create the actuator randomizer
+        # Lazily create the physical randomizers
         if self._actuator_randomizer is None:
             self._actuator_randomizer = ActuatorRandomizer(
+                robot=self._robot,
+                cfg=self.cfg.domain_rand,
+                device=self.device,
+            )
+        if self._mass_com_randomizer is None:
+            self._mass_com_randomizer = MassComRandomizer(
                 robot=self._robot,
                 cfg=self.cfg.domain_rand,
                 device=self.device,
@@ -630,11 +633,11 @@ class PoseOrientationSim2RealV6(DirectRLEnv):
         self.robot_speed_targets[env_ids] = 0.0
         self.success_frames_count[env_ids] = 0
 
-        # Reset DR buffers & apply actuator randomisation when enabled
+        # Reset DR buffers & apply physical randomisation (toggles checked internally)
         self._action_buffer.reset(env_ids)
         self._obs_buffer.reset(env_ids)
-        if self.cfg.domain_rand.enabled:
-            self._actuator_randomizer.sample_and_apply(env_ids)
+        self._actuator_randomizer.sample_and_apply(env_ids)
+        self._mass_com_randomizer.sample_and_apply(env_ids)
 
         self._sample_goal(env_ids)
 

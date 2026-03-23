@@ -59,7 +59,8 @@ from Woodworking_Simulation.common.robot_configs import (
 from Woodworking_Simulation.common.domain_randomization import (
     ActionBuffer,
     ActuatorRandomizer,
-    DomainRandomizationCfg,
+    DomainRandomizationV4Cfg,
+    MassComRandomizer,
     ObservationBuffer,
 )
 
@@ -534,7 +535,7 @@ class PoseOrientationSim2RealV1Cfg(PoseOrientationSim2RealCfg):
 
     episode_length_s = 6.0
 
-    domain_randomization: DomainRandomizationCfg = DomainRandomizationCfg()
+    domain_randomization: DomainRandomizationV4Cfg = DomainRandomizationV4Cfg()
 
 
 # ---------------------------------------------------------------------------
@@ -572,6 +573,11 @@ class PoseOrientationSim2RealV1(PoseOrientationSim2RealV0):
             device=self.device,
         )
         self._actuator_randomizer = ActuatorRandomizer(
+            robot=self._robot,
+            cfg=dr,
+            device=self.device,
+        )
+        self._mass_com_randomizer = MassComRandomizer(
             robot=self._robot,
             cfg=dr,
             device=self.device,
@@ -651,6 +657,7 @@ class PoseOrientationSim2RealV1(PoseOrientationSim2RealV0):
         self._action_buffer.reset(env_ids)
         self._obs_buffer.reset(env_ids)
         self._actuator_randomizer.sample_and_apply(env_ids)
+        self._mass_com_randomizer.sample_and_apply(env_ids)
 
     # -- Contact metric -----------------------------------------------------
 

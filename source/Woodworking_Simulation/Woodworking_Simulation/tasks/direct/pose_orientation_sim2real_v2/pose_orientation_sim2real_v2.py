@@ -71,10 +71,11 @@ BASE_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)  # Rotation locale en z
 
 TCP_OFFSET_LOCAL = (0.0, 0.0, 0.14)  # position du TCP par rapport au dernier joint (wrist_3_link)
 TCP_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)  # 
-from Woodworking_Simulation.common.domain_randomization_v2 import (
+from Woodworking_Simulation.common.domain_randomization import (
     ActionBuffer,
     ActuatorRandomizer,
-    DomainRandomizationCfg,
+    DomainRandomizationV4Cfg,
+    MassComRandomizer,
     ObservationBuffer,
 )
 
@@ -195,7 +196,7 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     norm_obs: bool = True
 
     # --- Domain Randomization (active in curriculum phase 3: step > 15000) ---
-    domain_rand: DomainRandomizationCfg = DomainRandomizationCfg(
+    domain_rand: DomainRandomizationV4Cfg = DomainRandomizationV4Cfg()
         enabled=False
     )
 
@@ -302,6 +303,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         )
         # ActuatorRandomizer is initialised after scene setup, defer to first _reset_idx
         self._actuator_randomizer: ActuatorRandomizer | None = None
+        self._mass_com_randomizer: MassComRandomizer | None = None
 
     # -- Scene setup --------------------------------------------------------
 
@@ -348,10 +350,8 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         self.prev_actions[:] = self.actions
         self.actions = actions.clone().clamp(-1.0, 1.0)
 
-        # Apply domain-randomised action delay/noise only in curriculum phase 3
-        effective_actions = self.actions
-        if self.cfg.domain_rand.enabled:
-            effective_actions = self._action_buffer.push(self.actions)
+        # Apply domain-randomised action delay/noise (toggles checked internally)
+        effective_actions = self._action_buffer.push(self.actions)
 
         increments = (
             self.robot_dof_speed_scales.unsqueeze(0)
@@ -427,9 +427,8 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             ],
             dim=1,
         )
-        # Domain randomisation on observations (curriculum phase 3 only)
-        if self.cfg.domain_rand.enabled:
-            obs = self._obs_buffer.append_and_get(obs)
+        # Domain randomisation on observations (toggles checked internally)
+        obs = self._obs_buffer.append_and_get(obs)
 
         if self.cfg.debug and self.common_step_counter % 100 == 0:
             sample = obs[0].cpu().numpy()
@@ -621,9 +620,15 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
     def _reset_idx(self, env_ids: torch.Tensor):  # type: ignore
         super()._reset_idx(env_ids)  # type: ignore
 
-        # Lazily create the actuator randomizer (needs robot to be initialised)
+        # Lazily create the physical randomizers (needs robot to be initialised)
         if self._actuator_randomizer is None:
             self._actuator_randomizer = ActuatorRandomizer(
+                robot=self._robot,
+                cfg=self.cfg.domain_rand,
+                device=self.device,
+            )
+        if self._mass_com_randomizer is None:
+            self._mass_com_randomizer = MassComRandomizer(
                 robot=self._robot,
                 cfg=self.cfg.domain_rand,
                 device=self.device,
@@ -649,11 +654,11 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         self.prev_actions[env_ids] = 0.0
         self.success_frames_count[env_ids] = 0
 
-        # Reset DR buffers & apply actuator randomisation in curriculum phase 3
+        # Reset DR buffers & apply physical randomisation (toggles checked internally)
         self._action_buffer.reset(env_ids)
         self._obs_buffer.reset(env_ids)
-        if self.cfg.domain_rand.enabled:
-            self._actuator_randomizer.sample_and_apply(env_ids)
+        self._actuator_randomizer.sample_and_apply(env_ids)
+        self._mass_com_randomizer.sample_and_apply(env_ids)
 
         self._sample_goal(env_ids)
 

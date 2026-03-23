@@ -84,13 +84,7 @@ apptainer exec --nv \
             agent.policy.critic_hidden_dims=[256,128,64] \
             agent.num_steps_per_env=512 \
             agent.algorithm.entropy_coef=0.0 \
-            env.domain_rand.enabled=true \
-            env.domain_rand.action_noise_std_pos=0.0 \
-            env.domain_rand.action_noise_std_vel=0.0 \
-            env.domain_rand.obs_noise_std_pos=0.0 \
-            env.domain_rand.obs_noise_std_quat=0.0 \
-            env.domain_rand.obs_noise_std_joint_pos=0.0 \
-            env.domain_rand.obs_noise_std_joint_vel=0.0 \
+            env.domain_rand.enable_noise=False \
             env.domain_rand.action_delay_range=[1,2] \
             env.domain_rand.obs_delay_range=[0,1] \
             env.action_penalty_scale=-0.005 \

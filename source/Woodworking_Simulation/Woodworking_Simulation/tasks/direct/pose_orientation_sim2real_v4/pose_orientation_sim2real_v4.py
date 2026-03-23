@@ -70,7 +70,7 @@ BASE_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)
 TCP_OFFSET_LOCAL = (0.0, 0.0, 0.14)
 TCP_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)
 
-from Woodworking_Simulation.common.domain_randomization_v4 import (
+from Woodworking_Simulation.common.domain_randomization import (
     ActionBuffer,
     ActuatorRandomizer,
     DomainRandomizationV4Cfg,
