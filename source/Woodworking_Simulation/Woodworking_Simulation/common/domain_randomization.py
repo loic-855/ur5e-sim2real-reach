@@ -195,6 +195,7 @@ class ActionBuffer:
 
         # -- Pre-allocated noise buffer for in-place randn (avoids allocation each step) --
         self._noise_buf = torch.zeros(num_envs, action_dim, device=self.device)
+        self._output_buf = torch.zeros(num_envs, action_dim, device=self.device)
 
         # -- Fast-path flags resolved once at construction time --
         # Skip everything: no noise, no delay → transparent pass-through
@@ -225,7 +226,10 @@ class ActionBuffer:
         if self._skip_buffer:
             if self.cfg.enable_noise:
                 torch.randn_(self._noise_buf)
-                return actions + self._noise_buf * self._noise_std
+                self._output_buf.copy_(self._noise_buf)
+                self._output_buf.mul_(self._noise_std)
+                self._output_buf.add_(actions)
+                return self._output_buf
             return actions
 
         # -- Full path: delay enabled --
@@ -233,7 +237,10 @@ class ActionBuffer:
         # Additive noise (in-place random fill avoids allocation)
         if self.cfg.enable_noise:
             torch.randn_(self._noise_buf)
-            actions = actions + self._noise_buf * self._noise_std
+            self._output_buf.copy_(self._noise_buf)
+            self._output_buf.mul_(self._noise_std)
+            self._output_buf.add_(actions)
+            actions = self._output_buf
 
         # Write into ring-buffer
         idx = self.cursor % self.buffer_len
@@ -242,16 +249,16 @@ class ActionBuffer:
 
         # Read delayed action
         read_idx = (self.cursor - 1 - self.delay) % self.buffer_len
-        delayed = self.buffer[self._env_idx, read_idx]
+        self._output_buf.copy_(self.buffer[self._env_idx, read_idx])
 
         # Packet loss (drop → hold previous)
         if self.cfg.packet_loss_prob > 0.0:
             drop_mask = torch.rand(self.num_envs, device=self.device) < self.cfg.packet_loss_prob
-            delayed = torch.where(drop_mask.unsqueeze(-1), self.last_action, delayed)
+            self._output_buf[drop_mask] = self.last_action[drop_mask]
 
         # In-place copy avoids allocating a new tensor
-        self.last_action.copy_(delayed)
-        return delayed
+        self.last_action.copy_(self._output_buf)
+        return self._output_buf
 
     def reset(self, env_ids: torch.Tensor) -> None:
         """Clear buffer and re-sample delays for the given environments."""
@@ -269,9 +276,9 @@ class ActionBuffer:
     def _resample_delay(self, env_ids: torch.Tensor | None = None) -> None:
         lo, hi = self.cfg.action_delay_range
         if env_ids is None:
-            self.delay = torch.randint(lo, hi + 1, (self.num_envs,), device=self.device)
+            self.delay.random_(lo, hi + 1)
         else:
-            self.delay[env_ids] = torch.randint(lo, hi + 1, (len(env_ids),), device=self.device)
+            self.delay[env_ids].random_(lo, hi + 1)
 
     def _build_noise_vector(self) -> torch.Tensor:
         """Build a per-dim noise std vector according to the detected layout."""
@@ -328,6 +335,7 @@ class ObservationBuffer:
         self._noise_std: torch.Tensor | None = None
         # Pre-allocated noise buffer (lazily sized to actual obs_dim at first call)
         self._noise_buf: torch.Tensor | None = None
+        self._output_buf: torch.Tensor | None = None
 
         # -- Cached index vector --
         self._env_idx = torch.arange(num_envs, device=self.device)
@@ -362,12 +370,21 @@ class ObservationBuffer:
             )
             self._noise_std = self._build_noise_vector()
             self._noise_buf = torch.zeros(self.num_envs, actual_dim, device=self.device)
+            self._output_buf = torch.zeros(self.num_envs, actual_dim, device=self.device)
+
+        assert self.buffer is not None
+        assert self._noise_std is not None
+        assert self._noise_buf is not None
+        assert self._output_buf is not None
 
         # -- Fast-path: delay disabled → just apply noise and return (skip ring buffer) --
         if self._skip_buffer:
             # enable_noise must be True here (skip_all already handled above)
             torch.randn_(self._noise_buf)
-            return obs + self._noise_buf * self._noise_std
+            self._output_buf.copy_(self._noise_buf)
+            self._output_buf.mul_(self._noise_std)
+            self._output_buf.add_(obs)
+            return self._output_buf
 
         # -- Full path: delay enabled --
         idx = self.cursor % self.buffer_len
@@ -375,15 +392,16 @@ class ObservationBuffer:
         self.cursor += 1
 
         read_idx = (self.cursor - 1 - self.delay) % self.buffer_len
-        # clone() is required so in-place noise addition doesn't corrupt the ring buffer
-        delayed = self.buffer[self._env_idx, read_idx].clone()
+        # Copy into a dedicated output buffer so in-place noise addition does not corrupt the ring buffer
+        self._output_buf.copy_(self.buffer[self._env_idx, read_idx])
 
         # Additive Gaussian noise (in-place to avoid extra allocation)
         if self.cfg.enable_noise:
             torch.randn_(self._noise_buf)
-            delayed.add_(self._noise_buf * self._noise_std)
+            self._noise_buf.mul_(self._noise_std)
+            self._output_buf.add_(self._noise_buf)
 
-        return delayed
+        return self._output_buf
 
     def reset(self, env_ids: torch.Tensor) -> None:
         if self._skip_all:
@@ -399,9 +417,9 @@ class ObservationBuffer:
     def _resample_delay(self, env_ids: torch.Tensor | None = None) -> None:
         lo, hi = self.cfg.obs_delay_range
         if env_ids is None:
-            self.delay = torch.randint(lo, hi + 1, (self.num_envs,), device=self.device)
+            self.delay.random_(lo, hi + 1)
         else:
-            self.delay[env_ids] = torch.randint(lo, hi + 1, (len(env_ids),), device=self.device)
+            self.delay[env_ids].random_(lo, hi + 1)
 
     def _build_noise_vector(self) -> torch.Tensor:
         """Construct a 1-D noise-std tensor aligned with the V4 observation layout (24-dim)."""

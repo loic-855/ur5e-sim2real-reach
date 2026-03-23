@@ -268,19 +268,28 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         )
         self.robot_dof_lower_limits = lower  # (6,)
         self.robot_dof_upper_limits = upper  # (6,)
+        self._robot_dof_span = self.robot_dof_upper_limits - self.robot_dof_lower_limits
+        self._joint_pos_norm_scale = 2.0 / self._robot_dof_span
         self.joint_pos_norm = torch.zeros((self._num_envs, NUM_ARM_JOINTS), device=self.device)
         self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)  # (6,)
+        self._arm_action_scale_dt = self.dt * self.cfg.action_scale
+        self._inv_tcp_max_speed = 1.0 / self.cfg.tcp_max_speed
+        self._inv_pi = 1.0 / torch.pi
 
         # ---- V4: full joint targets (8-dim) – arm + gripper ----
         self.robot_dof_targets = self._robot.data.joint_pos.clone()  # (N, 8)
 
         # Default gripper position (read from initial state)
         self._gripper_default_pos = self._robot.data.default_joint_pos[0, NUM_ARM_JOINTS:].clone()  # (2,)
+        self._gripper_default_pos_batch = self._gripper_default_pos.unsqueeze(0)
 
         # Velocity feedforward targets for ARM only (6-dim buffer)
         # We'll expand to full 8-dim (with zeros for gripper) in _apply_action
         self._arm_speed_targets = torch.zeros(
             (self._num_envs, NUM_ARM_JOINTS), device=self.device, dtype=torch.float32
+        )
+        self._full_velocity_targets = torch.zeros(
+            (self._num_envs, self._num_total_joints), device=self.device, dtype=torch.float32
         )
 
         # goal tensors (source frame = table-relative)
@@ -294,6 +303,13 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         )
         self._source_rot_in_base = torch.tensor(
             BASE_ROTATION_LOCAL, device=self.device, dtype=torch.float32
+        )
+        self._source_rot_in_base_inv = quat_inv(self._source_rot_in_base.unsqueeze(0)).squeeze(0)
+        self._tcp_offset_local = torch.tensor(TCP_OFFSET_LOCAL, device=self.device, dtype=torch.float32)
+        self._base_rotation_local = torch.tensor(BASE_ROTATION_LOCAL, device=self.device, dtype=torch.float32)
+        self._base_rotation_inv = quat_inv(self._base_rotation_local.unsqueeze(0)).squeeze(0)
+        self._goal_mirror_quat = torch.tensor(
+            [0.0, 2 ** -0.5, 2 ** -0.5, 0.0], device=self.device, dtype=torch.float32
         )
 
         self.goal_pos_source = torch.zeros(
@@ -317,6 +333,8 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             self.num_envs, dtype=torch.long, device=self.device
         )
         self.goal_max_steps = int(5.0 / self.dt)
+        self._terminated_buf = torch.zeros(self._num_envs, dtype=torch.bool, device=self.device)
+        self._zero_contact_metric = torch.zeros(self._num_envs, device=self.device)
 
         # visualisation markers
         if self.cfg.debug:
@@ -387,8 +405,9 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor):
         actions = actions.to(self.device)
-        self.prev_actions[:] = self.actions
-        self.actions = actions.clone().clamp(-1.0, 1.0)
+        self.prev_actions.copy_(self.actions)
+        self.actions.copy_(actions)
+        self.actions.clamp_(-1.0, 1.0)
 
         # Apply domain-randomised action delay/noise (toggles checked inside buffer)
         effective_actions = self._action_buffer.push(self.actions)
@@ -399,10 +418,9 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
 
         # --- Position increments (arm joints only) ---
         increments = (
-            self.robot_dof_speed_scales.unsqueeze(0)
-            * self.dt
+            self.robot_dof_speed_scales
             * pos_actions
-            * self.cfg.action_scale
+            * self._arm_action_scale_dt
         )
         # ---- V4: update only the first 6 columns (arm joints) ----
         arm_targets = self.robot_dof_targets[:, :NUM_ARM_JOINTS] + increments
@@ -411,11 +429,9 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             self.robot_dof_lower_limits.unsqueeze(0),
             self.robot_dof_upper_limits.unsqueeze(0),
         )
-        # Gripper joints stay at their default position
-        self.robot_dof_targets[:, NUM_ARM_JOINTS:] = self._gripper_default_pos.unsqueeze(0)
-
         # --- Velocity targets (arm only) ---
-        self._arm_speed_targets[:] = vel_actions * self.cfg.velocity_scale
+        self._arm_speed_targets.copy_(vel_actions)
+        self._arm_speed_targets.mul_(self.cfg.velocity_scale)
 
         # Debug
         if self.cfg.debug and self.common_step_counter % 100 == 0:
@@ -443,12 +459,10 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         # ---- V4: set position targets for all 8 joints (gripper held at default) ----
         self._robot.set_joint_position_target(self.robot_dof_targets)
 
-        # Velocity targets: build full 8-dim tensor with zeros for gripper
-        full_vel = torch.zeros(
-            (self._num_envs, self._num_total_joints), device=self.device, dtype=torch.float32
-        )
-        full_vel[:, :NUM_ARM_JOINTS] = self._arm_speed_targets
-        self._robot.set_joint_velocity_target(full_vel)
+        # Velocity targets: reuse a preallocated full 8-dim tensor with zeros for gripper
+        self._full_velocity_targets.zero_()
+        self._full_velocity_targets[:, :NUM_ARM_JOINTS] = self._arm_speed_targets
+        self._robot.set_joint_velocity_target(self._full_velocity_targets)
 
     # -- Observations -------------------------------------------------------
 
@@ -470,16 +484,14 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         arm_joint_pos = self._robot.data.joint_pos[:, :NUM_ARM_JOINTS]
         arm_joint_vel = self._robot.data.joint_vel[:, :NUM_ARM_JOINTS]
 
-        self.joint_pos_norm = (
-            2
-            * (arm_joint_pos - self.robot_dof_lower_limits)
-            / (self.robot_dof_upper_limits - self.robot_dof_lower_limits)
-            - 1.0
-        )
+        self.joint_pos_norm.copy_(arm_joint_pos)
+        self.joint_pos_norm.sub_(self.robot_dof_lower_limits)
+        self.joint_pos_norm.mul_(self._joint_pos_norm_scale)
+        self.joint_pos_norm.sub_(1.0)
         joint_vel_norm = arm_joint_vel / MAX_JOINT_VEL
         tcp_angular_vel, tcp_linear_vel = self.compute_tcp_states()
-        tcp_linear_vel_norm = tcp_linear_vel / self.cfg.tcp_max_speed
-        tcp_angular_vel_norm = tcp_angular_vel / torch.pi
+        tcp_linear_vel_norm = tcp_linear_vel * self._inv_tcp_max_speed
+        tcp_angular_vel_norm = tcp_angular_vel * self._inv_pi
 
         obs = torch.cat(
             [
@@ -582,8 +594,8 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         # Resample goals: timeout
         self.goal_steps_elapsed += 1
         timed_out = self.goal_steps_elapsed >= self.goal_max_steps
-        if torch.any(timed_out):
-            timeout_ids = timed_out.nonzero(as_tuple=False).flatten()
+        timeout_ids = timed_out.nonzero(as_tuple=False).flatten()
+        if timeout_ids.numel() > 0:
             self._sample_goal(timeout_ids)
             self.success_frames_count[timeout_ids] = 0
 
@@ -659,9 +671,8 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
     # -- Termination --------------------------------------------------------
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        terminated = torch.zeros(self._num_envs, dtype=torch.bool, device=self.device)
         truncated = self.episode_length_buf >= self.max_episode_length - 1
-        return terminated, truncated
+        return self._terminated_buf, truncated
 
     # -- Reset --------------------------------------------------------------
 
@@ -825,9 +836,7 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         (translation) and rotated by ``_source_rot_in_base`` (quaternion, w-first).
         """
         N = pos_base.shape[0]
-        inv_rot = quat_inv(
-            self._source_rot_in_base.unsqueeze(0).expand(N, -1)
-        )  # (N, 4)
+        inv_rot = self._source_rot_in_base_inv.unsqueeze(0).expand(N, -1)
         delta = pos_base - self._source_origin_in_base.unsqueeze(0)  # (N, 3)
         pos_source = quat_apply(inv_rot, delta)   # (N, 3)
         quat_source = quat_mul(inv_rot, quat_base)  # (N, 4)
@@ -850,6 +859,8 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             env_ids = torch.arange(self._num_envs, dtype=torch.long, device=self.device)
         else:
             env_ids = env_ids.to(device=self.device, dtype=torch.long)
+
+        assert env_ids is not None
 
         n = len(env_ids)
         ratio = float(getattr(self.cfg, "goal_sampling_random_ratio", 1.0))
@@ -904,15 +915,14 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             )
             ps, qs = self._fk_to_source_frame(*self._ur5e_fk_batch(arm_joints))
 
-            below = ps[:, 2] < 0.0
-            if torch.any(below):
+            below = (ps[:, 2] < 0.0).nonzero(as_tuple=False).flatten()
+            if below.numel() > 0:
                 # Flip z only
                 ps[below, 2] = -ps[below, 2]
                 # Apply q_mirror = (0, 1/√2, 1/√2, 0)  as  q_new = q_mirror * q_old
-                s = 2 ** -0.5  # 1/√2
-                q_mirror = torch.tensor(
-                    [0.0, s, s, 0.0], device=self.device, dtype=qs.dtype
-                ).unsqueeze(0).expand(int(below.sum()), -1)
+                q_mirror = self._goal_mirror_quat.to(dtype=qs.dtype).unsqueeze(0).expand(
+                    qs[below].shape[0], -1
+                )
                 qs[below] = quat_mul(q_mirror, qs[below])
 
             self.goal_pos_source[fk_ids]  = ps
@@ -967,11 +977,11 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
     def _compute_contact_metric(self) -> torch.Tensor:
         """Max normal contact force per environment (N)."""
         if self._contact_sensor is None:
-            return torch.zeros(self._num_envs, device=self.device)
+            return self._zero_contact_metric
 
         data = self._contact_sensor.data
         if data is None or data.net_forces_w is None:
-            return torch.zeros(self._num_envs, device=self.device)
+            return self._zero_contact_metric
 
         forces = data.net_forces_w
         magnitudes = torch.norm(forces, dim=2)
@@ -1030,15 +1040,10 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
                 self.device,
             )
 
-        # Build full joint position: arm + gripper default
-        joint_pos = torch.zeros(
-            (len(env_ids), self._num_total_joints), device=self.device, dtype=torch.float32
-        )
-        joint_pos[:, :NUM_ARM_JOINTS] = arm_pos
-        joint_pos[:, NUM_ARM_JOINTS:] = self._gripper_default_pos.unsqueeze(0)
-
-        self.robot_dof_targets[env_ids] = joint_pos
-        self._robot.data.joint_pos[env_ids] = joint_pos
+        self.robot_dof_targets[env_ids] = self._robot.data.default_joint_pos[env_ids]
+        self.robot_dof_targets[env_ids, :NUM_ARM_JOINTS] = arm_pos
+        self.robot_dof_targets[env_ids, NUM_ARM_JOINTS:] = self._gripper_default_pos_batch
+        self._robot.data.joint_pos[env_ids] = self.robot_dof_targets[env_ids]
         self._robot.data.joint_vel[env_ids] = 0.0
 
     def _reset_random(self, env_ids: torch.Tensor):
@@ -1050,15 +1055,10 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
             self.device,
         )
 
-        # Build full joint position: arm + gripper default
-        joint_pos = torch.zeros(
-            (len(env_ids), self._num_total_joints), device=self.device, dtype=torch.float32
-        )
-        joint_pos[:, :NUM_ARM_JOINTS] = arm_pos
-        joint_pos[:, NUM_ARM_JOINTS:] = self._gripper_default_pos.unsqueeze(0)
-
-        self.robot_dof_targets[env_ids] = joint_pos
-        self._robot.data.joint_pos[env_ids] = joint_pos
+        self.robot_dof_targets[env_ids] = self._robot.data.default_joint_pos[env_ids]
+        self.robot_dof_targets[env_ids, :NUM_ARM_JOINTS] = arm_pos
+        self.robot_dof_targets[env_ids, NUM_ARM_JOINTS:] = self._gripper_default_pos_batch
+        self._robot.data.joint_pos[env_ids] = self.robot_dof_targets[env_ids]
         self._robot.data.joint_vel[env_ids] = 0.0
 
     # -- TCP velocity computation -------------------------------------------
@@ -1071,21 +1071,12 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         lin_vel_wrist_w = wrist_vel_w[:, :3]
         ang_vel_wrist_w = wrist_vel_w[:, 3:]
 
-        tcp_offset = (
-            torch.tensor(TCP_OFFSET_LOCAL, device=self.device, dtype=torch.float32)
-            .unsqueeze(0)
-            .expand(wrist_quat_w.shape[0], -1)
-        )
+        tcp_offset = self._tcp_offset_local.unsqueeze(0).expand(wrist_quat_w.shape[0], -1)
         r_offset_w = quat_apply_yaw(wrist_quat_w, tcp_offset)
 
         v_tcp_w = lin_vel_wrist_w + torch.cross(ang_vel_wrist_w, r_offset_w, dim=-1)
 
-        base_rot = (
-            torch.tensor(BASE_ROTATION_LOCAL, device=self.device, dtype=torch.float32)
-            .unsqueeze(0)
-            .expand(wrist_quat_w.shape[0], -1)
-        )
-        inv_base = quat_inv(base_rot)
+        inv_base = self._base_rotation_inv.unsqueeze(0).expand(wrist_quat_w.shape[0], -1)
         v_tcp_final = quat_apply_yaw(inv_base, v_tcp_w)
         ang_vel_final = quat_apply_yaw(inv_base, ang_vel_wrist_w)
 
