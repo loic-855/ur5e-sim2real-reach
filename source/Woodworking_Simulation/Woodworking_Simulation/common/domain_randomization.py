@@ -224,7 +224,7 @@ class ActionBuffer:
         # -- Fast-path: delay disabled → just apply noise and return (skip ring buffer) --
         if self._skip_buffer:
             if self.cfg.enable_noise:
-                torch.randn_(self._noise_buf)
+                torch.randn(self._noise_buf.shape, device=self._noise_buf.device, dtype=self._noise_buf.dtype, out=self._noise_buf)
                 return actions + self._noise_buf * self._noise_std
             return actions
 
@@ -232,7 +232,7 @@ class ActionBuffer:
 
         # Additive noise (in-place random fill avoids allocation)
         if self.cfg.enable_noise:
-            torch.randn_(self._noise_buf)
+            torch.randn(self._noise_buf.shape, device=self._noise_buf.device, dtype=self._noise_buf.dtype, out=self._noise_buf)
             actions = actions + self._noise_buf * self._noise_std
 
         # Write into ring-buffer
@@ -366,7 +366,7 @@ class ObservationBuffer:
         # -- Fast-path: delay disabled → just apply noise and return (skip ring buffer) --
         if self._skip_buffer:
             # enable_noise must be True here (skip_all already handled above)
-            torch.randn_(self._noise_buf)
+            torch.randn(self._noise_buf.shape, device=self._noise_buf.device, dtype=self._noise_buf.dtype, out=self._noise_buf)
             return obs + self._noise_buf * self._noise_std
 
         # -- Full path: delay enabled --
@@ -380,7 +380,7 @@ class ObservationBuffer:
 
         # Additive Gaussian noise (in-place to avoid extra allocation)
         if self.cfg.enable_noise:
-            torch.randn_(self._noise_buf)
+            torch.randn(self._noise_buf.shape, device=self._noise_buf.device, dtype=self._noise_buf.dtype, out=self._noise_buf)
             delayed.add_(self._noise_buf * self._noise_std)
 
         return delayed
