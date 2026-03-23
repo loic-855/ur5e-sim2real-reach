@@ -202,6 +202,8 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     #                1.0 = 100 % random cylindrical (original behaviour).
     #                Values in-between give a stochastic mix.
     goal_sampling_random_ratio: float = 0.0
+    deterministic_goal_sampling: bool = False
+    benchmark_goals: tuple[tuple[float, ...], ...] = ()
 
     # --- Debug ---
     debug = False
@@ -298,6 +300,25 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         self.goal_quat_source = torch.zeros(
             (self._num_envs, 4), device=self.device, dtype=torch.float32
         )
+        self.benchmark_goal_pos_quat = torch.zeros(
+            (1, 7), device=self.device, dtype=torch.float32
+        )
+        self._num_benchmark_goals = 0
+        self._benchmark_goal_idx = 0
+
+        if len(self.cfg.benchmark_goals) > 0:
+            benchmark_goals = torch.tensor(
+                self.cfg.benchmark_goals, device=self.device, dtype=torch.float32
+            )
+            if benchmark_goals.ndim != 2 or benchmark_goals.shape[1] != 7:
+                raise ValueError(
+                    "cfg.benchmark_goals must have shape (N, 7) with [x, y, z, qw, qx, qy, qz]."
+                )
+            benchmark_goals[:, 3:7] = benchmark_goals[:, 3:7] / torch.norm(
+                benchmark_goals[:, 3:7], dim=1, keepdim=True
+            ).clamp(min=1e-8)
+            self.benchmark_goal_pos_quat = benchmark_goals
+            self._num_benchmark_goals = int(benchmark_goals.shape[0])
 
         # buffers – full 12-dim action vector (arm only)
         self.actions = torch.zeros(
@@ -693,6 +714,7 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         self.prev_actions[env_ids] = 0.0
         self._arm_speed_targets[env_ids] = 0.0
         self.success_frames_count[env_ids] = 0
+        self._benchmark_goal_idx = 0
 
         # Reset DR buffers & apply physical randomisation (toggles checked internally)
         self._action_buffer.reset(env_ids)
@@ -827,23 +849,41 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
     def _sample_goal(self, env_ids: torch.Tensor | None = None):
         """Sample goal poses for the given environments.
 
-        The mix between sampling strategies is controlled by
-        ``cfg.goal_sampling_random_ratio``:
-
-        * ``1.0`` – 100 % random cylindrical sampling (original behaviour,
-          some goals may be kinematically unreachable).
-        * ``0.0`` – 100 % FK-based sampling: a random arm configuration is
-          drawn uniformly within joint limits and FK is applied, so every
-          generated goal is guaranteed to be reachable.
-        * Values in-between give a stochastic mix of both strategies.
+        When ``cfg.deterministic_goal_sampling`` is true, goals are taken from
+        ``cfg.benchmark_goals`` in ``[x, y, z, qw, qx, qy, qz]`` format.
+        Otherwise the original mixed random/FK sampling is used.
         """
         if env_ids is None:
             env_ids = torch.arange(self._num_envs, dtype=torch.long, device=self.device)
         else:
             env_ids = env_ids.to(device=self.device, dtype=torch.long)
 
+        assert env_ids is not None
+
         n = len(env_ids)
-        ratio = float(getattr(self.cfg, "goal_sampling_random_ratio", 1.0))
+        if self.cfg.deterministic_goal_sampling:
+            if self._num_benchmark_goals <= 0:
+                raise RuntimeError(
+                    "deterministic_goal_sampling=True requires cfg.benchmark_goals to contain at least one goal."
+                )
+
+            goal_idx = self._benchmark_goal_idx % self._num_benchmark_goals
+            selected_goals = self.benchmark_goal_pos_quat[goal_idx].unsqueeze(0).expand(n, -1)
+            self.goal_pos_source[env_ids] = selected_goals[:, :3]
+            self.goal_quat_source[env_ids] = selected_goals[:, 3:7]
+            self._benchmark_goal_idx += 1
+            self.goal_steps_elapsed[env_ids] = 0
+
+            if self.cfg.debug:
+                marker_idx = torch.zeros(n, dtype=torch.int64, device=self.device)
+                self.goal_marker.visualize(
+                    self.goal_pos_source[env_ids] + self.env_origins[env_ids],
+                    self.goal_quat_source[env_ids],
+                    marker_indices=marker_idx,
+                )
+            return
+
+        ratio = float(self.cfg.goal_sampling_random_ratio)
         ratio = max(0.0, min(1.0, ratio))
 
         # Assign each env to either random or FK sampling
