@@ -82,6 +82,8 @@ tradeof made during the thesis.
 
 future works, implication of the work
 
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v4 --num_envs 1 --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-21_15-05-13/model_1499.pt env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64]
+
 
 
 
