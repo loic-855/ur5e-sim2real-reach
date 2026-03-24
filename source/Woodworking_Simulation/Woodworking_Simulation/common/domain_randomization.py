@@ -84,7 +84,7 @@ class DomainRandomizationV4Cfg:
     """Uniform int range [lo, hi] for per-env action delay (in *decimated* steps).
     Only active when ``enable_delay=True``."""
 
-    action_noise_std_pos: float = 0.025
+    action_noise_std_pos: float = 0.01
     """Std-dev of additive Gaussian noise on position-increment action dims.
     Only active when ``enable_noise=True``."""
 
@@ -101,22 +101,22 @@ class DomainRandomizationV4Cfg:
     """Uniform int range [lo, hi] for per-env observation delay (in *decimated* steps).
     Only active when ``enable_delay=True``."""
 
-    obs_noise_std_pos: float = 0.005
+    obs_noise_std_pos: float = 0.01
     """Observation noise applied to the normalised position-error components (3-dim)."""
 
-    obs_noise_std_ori: float = 0.025
+    obs_noise_std_ori: float = 0.02
     """Observation noise applied to the normalised orientation-error components (3-dim)."""
 
-    obs_noise_std_joint_pos: float = 0.012
+    obs_noise_std_joint_pos: float = 0.008
     """Observation noise applied to the normalised joint position components."""
 
-    obs_noise_std_joint_vel: float = 0.025
+    obs_noise_std_joint_vel: float = 0.01
     """Observation noise applied to the normalised joint velocity components."""
 
-    obs_noise_std_tcp_lin_vel: float = 0.02
+    obs_noise_std_tcp_lin_vel: float = 0.01
     """Observation noise applied to the normalised TCP linear velocity components."""
 
-    obs_noise_std_tcp_ang_vel: float = 0.02
+    obs_noise_std_tcp_ang_vel: float = 0.01
     """Observation noise applied to the normalised TCP angular velocity components."""
 
     # -- Actuator randomisation ------------------------------------------------
