@@ -167,10 +167,10 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     reset_range = 0.125
 
     # reward weights
-    ee_position_penalty = -0.30
-    ee_position_reward = 1.2
-    ee_orientation_penalty = -0.20
-    ee_orientation_reward = 0.60
+    ee_position_penalty = -1.0
+    ee_position_reward = 2.0
+    ee_orientation_penalty = -0.8
+    ee_orientation_reward = 0.0
 
     # --- Small curriculum for exponential scales ---
     # Start both scales at 0.2 and linearly anneal to 0.05 over
@@ -183,9 +183,9 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     exp_curriculum_steps: int = 110000
 
     # penalty weights
-    action_penalty_scale = -0.05
-    velocity_action_penalty_scale = -0.05
-    velocity_penalty_scale = -0.05
+    action_penalty_scale = -0.02
+    velocity_action_penalty_scale = -0.02
+    velocity_penalty_scale = -0.02
     contact_penalty_scale = -0.01
     contact_force_threshold_penalty = 5.0
     joint_limit_penalty_scale = -0.02
