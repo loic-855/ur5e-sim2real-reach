@@ -24,7 +24,7 @@ Frame convention (same as V2):
 Usage:
     source ~/wwro_ws/install/local_setup.bash
     python3 sim2real_node_v3.py --robot gripper --model path/to/policy.pt
-    python3 sim2real_node_v3.py --robot gripper --rate 60 --action-scale 0.3 --velocity-scale 0.7 --model path/to/policy.pt
+    python3 scripts/sim2real/v3/sim2real_node_v3.py --robot gripper --rate 60 --action-scale 0.3 --velocity-scale 0.15 --model path/to/policy.pt
 """
 
 import math
