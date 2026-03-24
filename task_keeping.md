@@ -82,19 +82,19 @@ tradeof made during the thesis.
 
 future works, implication of the work
 
-python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v4 --num_envs 1 --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-21_15-05-13/model_1499.pt env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64]
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v2 --num_envs 1 --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-21_15-05-13/model_1499.pt env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64]
 
-python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v4 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] --checkpoint 
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v2 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] --checkpoint 
 
-python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v4 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] env.domain_rand.enable_actuator_rand=False env.domain_rand.enable_delay=False --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-24_12-58-52/model_1499.pt
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v2 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] env.domain_rand.enable_actuator_rand=False env.domain_rand.enable_delay=False --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-24_12-58-52/model_1499.pt
 
-python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v4 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] env.domain_rand.enable_actuator_rand=False env.domain_rand.enable_delay=False --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-24_12-59-50/model_1499.pt
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v2 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] env.domain_rand.enable_actuator_rand=False env.domain_rand.enable_delay=False --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-24_12-59-50/model_1499.pt
 
-python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v4 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] env.domain_rand.enable_actuator_rand=False env.domain_rand.enable_delay=False --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-24_13-02-02/model_1499.pt
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v2 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] env.domain_rand.enable_actuator_rand=False env.domain_rand.enable_delay=False --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-24_13-02-02/model_1499.pt
 
-python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v4 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] env.domain_rand.enable_actuator_rand=False env.domain_rand.enable_delay=False --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-24_13-28-20/model_1499.pt
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v2 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] env.domain_rand.enable_actuator_rand=False env.domain_rand.enable_delay=False --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-24_13-28-20/model_1499.pt
 
-python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v4 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] env.domain_rand.enable_actuator_rand=False env.domain_rand.enable_delay=False --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-20_15-03-34/model_1499.pt
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v2 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] env.domain_rand.enable_actuator_rand=False env.domain_rand.enable_delay=False --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-20_15-03-34/model_1499.pt
 
 
 
