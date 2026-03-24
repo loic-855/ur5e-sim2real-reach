@@ -92,7 +92,10 @@ apptainer exec --nv \
             env.ee_position_reward=2.0 \
             env.ee_position_penalty=-1.0 \
             env.ee_orientation_reward=0.0 \
-            env.ee_orientation_penalty=-0.7
+            env.ee_orientation_penalty=-1.0 \
+            env.action_penalty_scale=-0.01 \
+            env.velocity_action_penalty_scale=-0.01 \
+            env.velocity_penalty_scale=-0.01
 
     "
 
