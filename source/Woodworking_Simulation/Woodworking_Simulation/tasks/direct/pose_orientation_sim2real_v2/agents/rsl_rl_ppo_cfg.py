@@ -15,7 +15,7 @@ from isaaclab_rl.rsl_rl import (
 # UR5e + gripper, 24-dim observation, 12-dim action (position + velocity feedforward)
 @configclass
 class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
-    num_steps_per_env = 24
+    num_steps_per_env = 512
     max_iterations = 1500
     save_interval = 50
     experiment_name = "pose_orientation_sim2real_v2"
@@ -24,15 +24,15 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         init_noise_std=1.0,
         actor_obs_normalization=False,
         critic_obs_normalization=False,
-        actor_hidden_dims=[512, 256, 128],
-        critic_hidden_dims=[512, 256, 128],
+        actor_hidden_dims=[256, 128, 64],
+        critic_hidden_dims=[256, 128, 64],
         activation="elu",
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
-        entropy_coef=0.01,
+        entropy_coef=0.0,
         num_learning_epochs=8,
         num_mini_batches=8,
         learning_rate=5.0e-4,
@@ -44,5 +44,5 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
     logger = "wandb"
-    wandb_project = "sim2real_v2"
+    wandb_project = "sim2real_v2_final"
     monitor_gym = True
