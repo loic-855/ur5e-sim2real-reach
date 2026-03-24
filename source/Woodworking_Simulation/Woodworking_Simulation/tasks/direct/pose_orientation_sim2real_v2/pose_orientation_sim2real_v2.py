@@ -4,31 +4,27 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """
-Pose-and-orientation reaching task for a UR5e arm (sim-to-real variant).
+Pose-and-orientation reaching task for a UR5e arm **with gripper** (sim-to-real variant V2).
 
-Observations (26-dim):
-    ee_pos_source (3), ee_quat_source (4), joint_pos (6), joint_vel (6),
-    goal_pos_source (3), goal_quat_source (4).
+Uses the GRIPPER_TCP robot model (8 joints: 6 arm + 2 finger).
+The gripper is present in the simulation for visual/collision fidelity with
+the real robot but is **not actuated by the policy**.  Only the 6 arm joints
+are controlled.
 
-includes domain-randomisation (V1) and contact sensing
+Observations (24-dim):
+    pos_error (3), ori_error (3), joint_pos (6 arm), joint_vel (6 arm),
+    tcp_linear_vel (3), tcp_angular_vel (3).
 
-  Nouvelle version, chose à implémenter:
-- fusion de v0 et v1
-- observation supplémentaire pour tcp (vitesse)
-- simplification des rewards: action, vitesse, position pénalité et récompense,
-récompense d'alignement, récompense de d'imobilité, pénalité de contact et si les angles des joint sont proches de leur limites
-- observations:
-    joint_pos (6), joint_vel (6), but (goal_pos - tcp_pos) (3), orientation error (3),
-    vitesse linéaire et angulaire de l'tcp (6). Normaliser le tout.
-- utilisation de obs domain randomisation et logique de buffer pour les obs et actions
-- nouvelle logique de reset: 40% autour de home position, 60% random dans l'espace de travail de joints.
-- découpler le reset de goal du reset de l'env: un goal atteint pop un nouveau goal sans reset de l'env. le resampling du goal en général est plus court que
-l'épisode aussi si le goal n'est pas atteint. Pour valider le nouveau goal il faut rester immobile dans une zone un certain temps.
+Actions (12-dim):
+    position increments (6 arm) + velocity feedforward (6 arm).
+
+Gripper joints are held at their default position (closed).
 """
 
 from __future__ import annotations
 
 import torch
+import math
 
 from isaaclab.assets import Articulation
 from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
@@ -44,7 +40,7 @@ from isaaclab.sensors import (
 from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
-from isaaclab.utils.math import sample_uniform, quat_error_magnitude, quat_box_minus, quat_apply_yaw, quat_inv
+from isaaclab.utils.math import sample_uniform, quat_error_magnitude, quat_box_minus, quat_apply_yaw, quat_inv, quat_apply, quat_mul
 
 # Shared project helpers
 from Woodworking_Simulation.common.robot_configs import (
@@ -66,11 +62,14 @@ from Woodworking_Simulation.common.robot_configs import (
     get_terrain_cfg,
     setup_dome_light,
 )
-BASE_OFFSET_LOCAL = (-(TABLE_WIDTH / 2 - 0.08), TABLE_DEPTH / 2 - 0.08, -MOUNT_HEIGHT)
-BASE_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)  # Rotation locale en z
 
-TCP_OFFSET_LOCAL = (0.0, 0.0, 0.14)  # position du TCP par rapport au dernier joint (wrist_3_link)
-TCP_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)  # 
+BASE_OFFSET_LOCAL = (-(TABLE_WIDTH / 2 - 0.08), TABLE_DEPTH / 2 - 0.08, -MOUNT_HEIGHT)
+BASE_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)
+
+# TCP offset from wrist_3_link – may need tuning for gripper model
+TCP_OFFSET_LOCAL = (0.0, 0.0, 0.14)
+TCP_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)
+
 from Woodworking_Simulation.common.domain_randomization import (
     ActionBuffer,
     ActuatorRandomizer,
@@ -79,6 +78,10 @@ from Woodworking_Simulation.common.domain_randomization import (
     ObservationBuffer,
 )
 
+# Number of UR5e arm joints (excluding gripper)
+NUM_ARM_JOINTS = 6
+
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -86,39 +89,39 @@ from Woodworking_Simulation.common.domain_randomization import (
 
 @configclass
 class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
-    """Base configuration (used by V0)."""
+    """Configuration for V2 – UR5e + gripper, only arm controlled, with velocity feedforward."""
 
     # env timing
     episode_length_s = 10.0
     decimation = 2
 
-    # spaces
-    action_space = 6
-    observation_space = 24  # pos_error (3), ori_error (3), joint_pos (6), joint_vel (6), tcp linear vel (3), tcp angular vel (3)
+    # spaces – 12 actions: 6 position increments + 6 velocity (arm only)
+    action_space = 12
+    observation_space = 24  # only arm joints in obs
     state_space = 0
 
     # simulation
-    try: 
+    try:
         sim: SimulationCfg = SimulationCfg(
             dt=1 / 120,
             render_interval=decimation,
             physx=PhysxCfg(solver_type=1, enable_external_forces_every_iteration=True),
         )
-    except: 
+    except:
         print("This version of Isaac Sim may not support the 'enable_external_forces_every_iteration' option.")
         sim: SimulationCfg = SimulationCfg(
             dt=1 / 120,
             render_interval=decimation,
             physx=PhysxCfg(solver_type=1),
         )
-            
+
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(
         num_envs=4092, env_spacing=3.0, replicate_physics=True
     )
 
-    # robot
-    robot = get_robot_cfg(RobotType.NO_GRIPPER, "/World/envs/env_.*/ur5e")
+    # GRIPPER_TCP robot model (8 joints: 6 arm + 2 finger)
+    robot = get_robot_cfg(RobotType.GRIPPER_TCP, "/World/envs/env_.*/ur5e")
 
     # scene assets
     table = get_table_cfg()
@@ -129,14 +132,14 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
 
     # frame transformer – TCP pose relative to table centre
     frame_transformer = FrameTransformerCfg(
-        prim_path="/World/envs/env_.*/ur5e/base_link",
+        prim_path="/World/envs/env_.*/ur5e/ur5e/base_link",
         source_frame_offset=OffsetCfg(
             pos=BASE_OFFSET_LOCAL,
             rot=BASE_ROTATION_LOCAL,
         ),
         target_frames=[
             FrameTransformerCfg.FrameCfg(
-                prim_path="/World/envs/env_.*/ur5e/wrist_3_link",
+                prim_path="/World/envs/env_.*/ur5e/ur5e/wrist_3_link",
                 name="ee_tcp",
                 offset=OffsetCfg(
                     pos=TCP_OFFSET_LOCAL,
@@ -145,9 +148,10 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
             )
         ],
     )
+
     # contact sensor
     contact_sensor: ContactSensorCfg = ContactSensorCfg(
-        prim_path="/World/envs/env_.*/ur5e/.*",
+        prim_path="/World/envs/env_.*/ur5e/ur5e/.*",
         update_period=0.0,
         history_length=6,
         debug_vis=False,
@@ -158,14 +162,9 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     camera_pole_spawn_cfg = get_camera_pole_cfg()
 
     # action and coef scaling
-    action_scale = 3.0
-    env_reset = 1.0  # % of episodes that reset to home position vs fully random
-    progressive_reset: bool = False  # gradually expand reset range from home to full joint limits
-    progressive_reset_steps: int = 25000  # steps to go from ±0.125 rad around home to full joint range
-    position_exp_scale = 0.4
-    orientation_exp_scale = 0.7  
-    curric = [5000, 10000, 15000]  # curriculum thresholds (steps)
-    curric_active = False  # whether to use curriculum learning (curric thresholds and reward scaling)
+    action_scale = 2.0
+    velocity_scale = 1.0
+    reset_range = 0.125
 
     # reward weights
     ee_position_penalty = -0.30
@@ -173,32 +172,39 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
     ee_orientation_penalty = -0.20
     ee_orientation_reward = 0.60
 
+    # --- Small curriculum for exponential scales ---
+    # Start both scales at 0.2 and linearly anneal to 0.05 over
+    # `exp_curriculum_steps` environment steps when enabled.
+    enable_exp_curriculum: bool = True
+    position_exp_scale_start: float = 0.2
+    position_exp_scale_end: float = 0.05
+    orientation_exp_scale_start: float = 0.2
+    orientation_exp_scale_end: float = 0.05
+    exp_curriculum_steps: int = 110000
+
     # penalty weights
-    action_penalty_scale = -0.001
-    velocity_penalty_scale = -0.001
+    action_penalty_scale = -0.05
+    velocity_action_penalty_scale = -0.05
+    velocity_penalty_scale = -0.05
     contact_penalty_scale = -0.01
     contact_force_threshold_penalty = 5.0
-    joint_limit_penalty_scale = -0.01
+    joint_limit_penalty_scale = -0.02
 
     # TCP velocity normalization (m/s)
     tcp_max_speed = 2.0
 
-    # Bonus reward setup_sim2real_v2
-    pos_threshold = 0.02  # 2 cm
-    rot_threshold = 0.1  # ~5.7 degrés (en radians)
-    required_frames = 60  # 1 seconde à 60Hz
-    goal_success_bonus = 15.0
+    # Goal sampling: 0.0 = 100 % FK-based (all goals kinematically reachable),
+    #                1.0 = 100 % random cylindrical (original behaviour).
+    goal_sampling_random_ratio: float = 0.3
+    deterministic_goal_sampling: bool = False
+    benchmark_goals: tuple[tuple[float, ...], ...] = ()
 
-    # --- Debug general toggle (set True to see markers and print statements) -----------
+    # --- Debug ---
     debug = False
     contact_debug_interval: int = 0
-    # If False, return raw (unnormalized) observations from the environment
-    norm_obs: bool = True
 
-    # --- Domain Randomization (active in curriculum phase 3: step > 15000) ---
+    # --- Domain Randomization ---
     domain_rand: DomainRandomizationV4Cfg = DomainRandomizationV4Cfg()
-        enabled=False
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +213,7 @@ class PoseOrientationSim2RealV2Cfg(DirectRLEnvCfg):
 
 
 class PoseOrientationSim2RealV2(DirectRLEnv):
-    """Pose + orientation reaching – no domain randomisation, no contact sensor."""
+    """Pose + orientation reaching with velocity feedforward – gripper present but passive."""
 
     cfg: PoseOrientationSim2RealV2Cfg
 
@@ -221,10 +227,13 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         self.dt = self.cfg.sim.dt * self.cfg.decimation
         self._num_envs = self.scene.cfg.num_envs
-        # reward buffer (initialized here to ensure availability before first step)
         self.reward_buf = torch.zeros(self._num_envs, device=self.device, dtype=torch.float32)
         self._debug_step_count = 0
-        self.c_idx = 0 #curriculum index for rewards
+        self.c_idx = 0
+
+        # arm vs total joints
+        self._num_arm_joints = NUM_ARM_JOINTS
+        self._num_total_joints = self._robot.num_joints  # 8 for GRIPPER_TCP
 
         # env origins with global offset
         self.env_origins = (
@@ -233,41 +242,76 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         # frame transformer
         self._frame_transformer = self.scene.sensors["frame_transformer"]
-        self._ee_frame_idx = self._frame_transformer.data.target_frame_names.index(
-            "ee_tcp"
+        self._ee_frame_idx = self._frame_transformer.data.target_frame_names.index("ee_tcp")
+
+        # look up wrist body index dynamically
+        self._wrist_body_idx = self._robot.body_names.index("wrist_3_link")
+
+        # Pre-compute UR5e DH parameters
+        import math
+        self._dh_a = [0.0, -0.425, -0.3922, 0.0, 0.0, 0.0]
+        self._dh_d = [0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996]
+        self._dh_alpha = [math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2, 0.0]
+        self._dh_cos_alpha = [math.cos(a) for a in self._dh_alpha]
+        self._dh_sin_alpha = [math.sin(a) for a in self._dh_alpha]
+
+        # Joint limits for the 6 ARM joints only
+        arm_limits = list(JOINT_LIMITS.values())[:NUM_ARM_JOINTS]
+        lower = torch.tensor([v[0] for v in arm_limits], device=self.device, dtype=torch.float32)
+        upper = torch.tensor([v[1] for v in arm_limits], device=self.device, dtype=torch.float32)
+        self.robot_dof_lower_limits = lower  # (6,)
+        self.robot_dof_upper_limits = upper  # (6,)
+        self.joint_pos_norm = torch.zeros((self._num_envs, NUM_ARM_JOINTS), device=self.device)
+        self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)  # (6,)
+
+        # Full joint targets (8-dim) – arm + gripper
+        self.robot_dof_targets = self._robot.data.joint_pos.clone()  # (N, 8)
+
+        # Default gripper position
+        self._gripper_default_pos = self._robot.data.default_joint_pos[0, NUM_ARM_JOINTS:].clone()  # (2,)
+
+        # Velocity feedforward targets for ARM only (6-dim)
+        self._arm_speed_targets = torch.zeros(
+            (self._num_envs, NUM_ARM_JOINTS), device=self.device, dtype=torch.float32
         )
-
-        # joint limits & speed scales
-        limits = list(JOINT_LIMITS.values())[:6]  # les 6 joints du UR5e
-        lower = torch.tensor(
-            [v[0] for v in limits], device=self.device, dtype=torch.float32
-        )
-        upper = torch.tensor(
-            [v[1] for v in limits], device=self.device, dtype=torch.float32
-        )
-
-        self.robot_dof_lower_limits = lower
-        self.robot_dof_upper_limits = upper
-        self.joint_pos_norm = torch.zeros((self._num_envs, 6), device=self.device)
-        self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)
-
-        self.robot_dof_targets = self._robot.data.joint_pos.clone()
-
 
         # goal tensors (source frame = table-relative)
         self.robot_base_local = torch.tensor([-0.52, 0.32, 0.0], device=self.device)
+        self._source_origin_in_base = torch.tensor(
+            BASE_OFFSET_LOCAL, device=self.device, dtype=torch.float32
+        )
+        self._source_rot_in_base = torch.tensor(
+            BASE_ROTATION_LOCAL, device=self.device, dtype=torch.float32
+        )
         self.goal_pos_source = torch.zeros(
             (self._num_envs, 3), device=self.device, dtype=torch.float32
         )
         self.goal_quat_source = torch.zeros(
             (self._num_envs, 4), device=self.device, dtype=torch.float32
         )
+        self.benchmark_goal_pos_quat = torch.zeros(
+            (1, 7), device=self.device, dtype=torch.float32
+        )
+        self._num_benchmark_goals = 0
+        self._benchmark_goal_idx = 0
 
-        # buffers
+        if len(self.cfg.benchmark_goals) > 0:
+            benchmark_goals = torch.tensor(
+                self.cfg.benchmark_goals, device=self.device, dtype=torch.float32
+            )
+            if benchmark_goals.ndim != 2 or benchmark_goals.shape[1] != 7:
+                raise ValueError(
+                    "cfg.benchmark_goals must have shape (N, 7) with [x, y, z, qw, qx, qy, qz]."
+                )
+            benchmark_goals[:, 3:7] = benchmark_goals[:, 3:7] / torch.norm(
+                benchmark_goals[:, 3:7], dim=1, keepdim=True
+            ).clamp(min=1e-8)
+            self.benchmark_goal_pos_quat = benchmark_goals
+            self._num_benchmark_goals = int(benchmark_goals.shape[0])
+
+        # Action and step buffers
         self.actions = torch.zeros(
-            (self._num_envs, self.cfg.action_space),
-            device=self.device,
-            dtype=torch.float32,
+            (self._num_envs, self.cfg.action_space), device=self.device, dtype=torch.float32
         )
         self.prev_actions = torch.zeros_like(self.actions)
         self.success_frames_count = torch.zeros(
@@ -278,7 +322,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         )
         self.goal_max_steps = int(5.0 / self.dt)
 
-        # visualisation markers (only used when debug_visualization is True)
+        # visualisation markers
         if self.cfg.debug:
             self.goal_marker = VisualizationMarkers(cfg.goal_marker)
             self.origin_marker = VisualizationMarkers(cfg.origin_marker)
@@ -287,21 +331,21 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         self._sample_goal()
 
-        # --- Domain Randomization helpers ---
+        # Domain Randomization helpers
         self._action_buffer = ActionBuffer(
             num_envs=self._num_envs,
             action_dim=self.cfg.action_space,
+            num_joints=NUM_ARM_JOINTS,
             cfg=self.cfg.domain_rand,
             device=self.device,
         )
         self._obs_buffer = ObservationBuffer(
             num_envs=self._num_envs,
             obs_dim=self.cfg.observation_space,
-            num_joints=6,
+            num_joints=NUM_ARM_JOINTS,
             cfg=self.cfg.domain_rand,
             device=self.device,
         )
-        # ActuatorRandomizer is initialised after scene setup, defer to first _reset_idx
         self._actuator_randomizer: ActuatorRandomizer | None = None
         self._mass_com_randomizer: MassComRandomizer | None = None
 
@@ -322,7 +366,6 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             self.cfg.table,
             orientation=(0.7071068, 0.0, 0.0, 0.7071068),
         )
-
         self.cfg.camera_pole_spawn_cfg.func(
             "/World/envs/env_0/CameraLeftPole",
             self.cfg.camera_pole_spawn_cfg,
@@ -350,193 +393,120 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         self.prev_actions[:] = self.actions
         self.actions = actions.clone().clamp(-1.0, 1.0)
 
-        # Apply domain-randomised action delay/noise (toggles checked internally)
         effective_actions = self._action_buffer.push(self.actions)
+
+        # Split: first 6 = position increments, last 6 = velocity feedforward
+        pos_actions = effective_actions[:, :6]
+        vel_actions = effective_actions[:, 6:]
 
         increments = (
             self.robot_dof_speed_scales.unsqueeze(0)
             * self.dt
-            * effective_actions
+            * pos_actions
             * self.cfg.action_scale
         )
-        targets = self.robot_dof_targets + increments
-        self.robot_dof_targets[:] = torch.clamp(
-            targets,
+        arm_targets = self.robot_dof_targets[:, :NUM_ARM_JOINTS] + increments
+        self.robot_dof_targets[:, :NUM_ARM_JOINTS] = torch.clamp(
+            arm_targets,
             self.robot_dof_lower_limits.unsqueeze(0),
             self.robot_dof_upper_limits.unsqueeze(0),
         )
-        # Debug: print actions and resulting targets (sample + min/max)
+        self.robot_dof_targets[:, NUM_ARM_JOINTS:] = self._gripper_default_pos.unsqueeze(0)
+
+        self._arm_speed_targets[:] = vel_actions * self.cfg.velocity_scale
+
         if self.cfg.debug and self.common_step_counter % 100 == 0:
             try:
-                raw_sample = actions[0].cpu().numpy()
-                clamped_sample = self.actions[0].cpu().numpy()
-                inc_sample = increments[0].cpu().numpy()
-                targ_sample = targets[0].cpu().numpy()
-                mins = self.actions.min(dim=0).values.cpu().numpy()
-                maxs = self.actions.max(dim=0).values.cpu().numpy()
                 print(
-                    f"Action(raw) sample: {raw_sample}\n"
-                    f"Action(clamped) sample: {clamped_sample}\n"
-                    f"Increments sample: {inc_sample}\n"
-                    f"Targets sample (pre-clamp): {targ_sample}\n"
-                    f"Targets sample (post-clamp): {self.robot_dof_targets[0].cpu().numpy()}\n"
-                    f"Action min: {mins}\nAction max: {maxs}"
+                    f"Action(raw) sample: {actions[0].cpu().numpy()}\n"
+                    f"Pos increments: {increments[0].cpu().numpy()}\n"
+                    f"Arm targets (post-clamp): {self.robot_dof_targets[0, :NUM_ARM_JOINTS].cpu().numpy()}\n"
+                    f"Gripper targets: {self.robot_dof_targets[0, NUM_ARM_JOINTS:].cpu().numpy()}\n"
+                    f"Vel targets: {self._arm_speed_targets[0].cpu().numpy()}"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[DEBUG ERROR] {e}")
 
     def _apply_action(self):
         self._robot.set_joint_position_target(self.robot_dof_targets)
+        full_vel = torch.zeros(
+            (self._num_envs, self._num_total_joints), device=self.device, dtype=torch.float32
+        )
+        full_vel[:, :NUM_ARM_JOINTS] = self._arm_speed_targets
+        self._robot.set_joint_velocity_target(full_vel)
 
     # -- Observations -------------------------------------------------------
 
     def _get_observations(self) -> dict[str, torch.Tensor]:
-        # Allow switching to a raw (non-normalized) observation mode
-        if not getattr(self.cfg, "norm_obs", True):
-            return self._get_observations_v3()
-
         frame_data = self._frame_transformer.data
         tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
         tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
 
-        # Observation are normalized
-        to_target_norm = (self.goal_pos_source - tcp_pos_source) / MAX_REACH  # (N, 3)
-        orientation_error_norm = (
-            quat_box_minus(self.goal_quat_source, tcp_quat_source) / torch.pi
-        )  # (N, 3)
+        to_target_norm = (self.goal_pos_source - tcp_pos_source) / MAX_REACH
+        orientation_error_norm = quat_box_minus(self.goal_quat_source, tcp_quat_source) / torch.pi
+
+        arm_joint_pos = self._robot.data.joint_pos[:, :NUM_ARM_JOINTS]
+        arm_joint_vel = self._robot.data.joint_vel[:, :NUM_ARM_JOINTS]
+
         self.joint_pos_norm = (
-            2
-            * (self._robot.data.joint_pos - self.robot_dof_lower_limits)
+            2 * (arm_joint_pos - self.robot_dof_lower_limits)
             / (self.robot_dof_upper_limits - self.robot_dof_lower_limits)
             - 1.0
         )
-        joint_vel_norm = self._robot.data.joint_vel / MAX_JOINT_VEL
+        joint_vel_norm = arm_joint_vel / MAX_JOINT_VEL
         tcp_angular_vel, tcp_linear_vel = self.compute_tcp_states()
-        # Normalize linear velocity by configured max speed to keep values on similar scale
         tcp_linear_vel_norm = tcp_linear_vel / self.cfg.tcp_max_speed
-        tcp_angular_vel_norm = tcp_angular_vel / torch.pi  # Assuming max angular velocity of ~180 deg/s for normalization
+        tcp_angular_vel_norm = tcp_angular_vel / torch.pi
 
         obs = torch.cat(
             [
-                to_target_norm,  # 3
+                to_target_norm,          # 3
                 orientation_error_norm,  # 3
-                self.joint_pos_norm,  # 6
-                joint_vel_norm,  # 6
-                tcp_linear_vel_norm,  # 3
-                tcp_angular_vel_norm,  # 3
+                self.joint_pos_norm,     # 6 (arm only)
+                joint_vel_norm,          # 6 (arm only)
+                tcp_linear_vel_norm,     # 3
+                tcp_angular_vel_norm,    # 3
             ],
             dim=1,
         )
-        # Domain randomisation on observations (toggles checked internally)
         obs = self._obs_buffer.append_and_get(obs)
 
         if self.cfg.debug and self.common_step_counter % 100 == 0:
-            sample = obs[0].cpu().numpy()
             print(
-                f"Observations: tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, tcp_quat_source={tcp_quat_source[0].cpu().numpy()}, "
-                f"Observation vector sample: {sample}"
+                f"Observations: tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, "
+                f"Observation vector sample: {obs[0].cpu().numpy()}"
             )
-            # additional debug: per-component min/max for the batch
-            mins = obs.min(dim=0).values.cpu().numpy()
-            maxs = obs.max(dim=0).values.cpu().numpy()
-            print(f"Obs min: {mins}\nObs max: {maxs}")
         return {"policy": obs}
-
-    # def _get_observations_v3(self) -> dict[str, torch.Tensor]:
-    #     """Return raw (unnormalized) observations.
-
-    #     Order preserved: to_target (m), orientation_error (3 raw components),
-    #     joint_pos (rad), joint_vel (rad/s), tcp_linear_vel (m/s), tcp_angular_vel (rad/s)
-    #     """
-    #     frame_data = self._frame_transformer.data
-    #     tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
-    #     tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
-
-    #     to_target = self.goal_pos_source - tcp_pos_source  # meters (unnormalized)
-    #     # quat_box_minus returns a 3-vector 'box' error; keep raw (not divided by pi)
-    #     orientation_error = quat_box_minus(self.goal_quat_source, tcp_quat_source)
-
-    #     joint_pos = self._robot.data.joint_pos
-    #     joint_vel = self._robot.data.joint_vel
-
-    #     tcp_angular_vel, tcp_linear_vel = self.compute_tcp_states()
-
-    #     obs = torch.cat(
-    #         [
-    #             to_target,  # 3
-    #             orientation_error,  # 3
-    #             joint_pos,  # 6
-    #             joint_vel,  # 6
-    #             tcp_linear_vel,  # 3
-    #             tcp_angular_vel,  # 3
-    #         ],
-    #         dim=1,
-    #     )
-
-    #     if self.cfg.debug and self.common_step_counter % 100 == 0:
-    #         sample = obs[0].cpu().numpy()
-    #         print(
-    #             f"[V3 Observations] tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, tcp_quat_source={tcp_quat_source[0].cpu().numpy()}, "
-    #             f"Observation vector sample: {sample}"
-    #         )
-    #         mins = obs.min(dim=0).values.cpu().numpy()
-    #         maxs = obs.max(dim=0).values.cpu().numpy()
-    #         print(f"[V3 Obs min]: {mins}\n[V3 Obs max]: {maxs}")
-
-    #     return {"policy": obs}
 
     # -- Rewards ------------------------------------------------------------
 
     def _get_rewards(self) -> torch.Tensor:
         self._debug_step_count += 1
-        # if self.common_step_counter > self.cfg.curric[2] and self.cfg.curric_active:
-        #     self.c_idx = 2
-        # elif self.common_step_counter > self.cfg.curric[1] and self.cfg.curric_active:
-        #     self.c_idx = 1
-        # else:
-        #     self.c_idx = 0
 
         frame_data = self._frame_transformer.data
         tcp_pos_source = frame_data.target_pos_source[:, self._ee_frame_idx, :]
         tcp_quat_source = frame_data.target_quat_source[:, self._ee_frame_idx, :]
 
-        # Position and orientation error/reward
-        position_error = torch.norm(self.goal_pos_source - tcp_pos_source, dim=1)  # m
-        position_exp_error = torch.exp(-position_error / self.cfg.position_exp_scale)
+        if getattr(self.cfg, "enable_exp_curriculum", False):
+            steps = max(1, int(self.cfg.exp_curriculum_steps))
+            t = min(1.0, float(self.common_step_counter) / float(steps))
+            pos_scale = (1.0 - t) * float(self.cfg.position_exp_scale_start) + t * float(self.cfg.position_exp_scale_end)
+            ori_scale = (1.0 - t) * float(self.cfg.orientation_exp_scale_start) + t * float(self.cfg.orientation_exp_scale_end)
+        else:
+            pos_scale = float(self.cfg.position_exp_scale_end)
+            ori_scale = float(self.cfg.orientation_exp_scale_end)
 
-        orientation_error = quat_error_magnitude(
-            self.goal_quat_source, tcp_quat_source
-        )  # rad
-        orientation_exp_error = torch.exp(
-            -orientation_error / self.cfg.orientation_exp_scale
-        )
-        # Penalities
-        action_cost = torch.sum(self.actions**2, dim=1)
-        velocity_cost = torch.sum(self._robot.data.joint_vel**2, dim=1)
+        position_error = torch.norm(self.goal_pos_source - tcp_pos_source, dim=1)
+        position_exp_error = torch.exp(-position_error / pos_scale)
 
-        # Goal logic handling
-        within_pos = position_error < self.cfg.pos_threshold
-        within_rot = orientation_error < self.cfg.rot_threshold
-        is_stable = torch.logical_and(within_pos, within_rot)
-        self.success_frames_count = torch.where(
-            is_stable,
-            self.success_frames_count + 1,
-            torch.zeros_like(self.success_frames_count),
-        )
-        goal_reached = self.success_frames_count >= self.cfg.required_frames
-        reward_success = torch.where(
-            goal_reached,
-            torch.ones_like(self.reward_buf),
-            torch.zeros_like(self.reward_buf),
-        )
+        orientation_error = quat_error_magnitude(self.goal_quat_source, tcp_quat_source)
+        orientation_exp_error = torch.exp(-orientation_error / ori_scale)
 
-        # Resample goals: on success
-        if torch.any(goal_reached):
-            env_ids = goal_reached.nonzero(as_tuple=False).flatten()
-            self._sample_goal(env_ids)
-            self.success_frames_count[env_ids] = 0
+        pos_action_cost = torch.sum(self.actions[:, :6] ** 2, dim=1)
+        vel_action_cost = torch.sum(self.actions[:, 6:] ** 2, dim=1)
+        velocity_cost = torch.sum(self._robot.data.joint_vel[:, :NUM_ARM_JOINTS] ** 2, dim=1)
 
-        # Resample goals: timeout (5s without reaching)
+        # Goal timeout resampling
         self.goal_steps_elapsed += 1
         timed_out = self.goal_steps_elapsed >= self.goal_max_steps
         if torch.any(timed_out):
@@ -544,21 +514,15 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             self._sample_goal(timeout_ids)
             self.success_frames_count[timeout_ids] = 0
 
-        # Contact penalty
         contact_forces = torch.clamp_max(self._compute_contact_metric(), 1000.0)
-        
         excess = torch.relu(contact_forces - self.cfg.contact_force_threshold_penalty)
         contact_penalty = self.cfg.contact_penalty_scale * excess
 
-        # Joint limit penalty
         threshold = 0.9
         out_of_bounds = torch.abs(self.joint_pos_norm) - threshold
-        penalty_val = torch.where(
-            out_of_bounds > 0, out_of_bounds**2, torch.zeros_like(out_of_bounds)
-        )
+        penalty_val = torch.where(out_of_bounds > 0, out_of_bounds ** 2, torch.zeros_like(out_of_bounds))
         reward_joint_limits = penalty_val.sum(dim=-1)
 
-        # tcp marker visualisation (debug only)
         if self.cfg.debug:
             self.ee_marker.visualize(
                 frame_data.target_pos_w[:, self._ee_frame_idx, :],
@@ -570,9 +534,9 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             + self.cfg.ee_position_reward * position_exp_error
             + self.cfg.ee_orientation_penalty * orientation_error
             + self.cfg.ee_orientation_reward * orientation_exp_error
-            + self.cfg.action_penalty_scale * action_cost
+            + self.cfg.action_penalty_scale * pos_action_cost
+            + self.cfg.velocity_action_penalty_scale * vel_action_cost
             + self.cfg.velocity_penalty_scale * velocity_cost
-            + self.cfg.goal_success_bonus * reward_success
             + self.cfg.joint_limit_penalty_scale * reward_joint_limits
             + contact_penalty
         )
@@ -581,29 +545,22 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             self.extras["log"] = {}
         self.extras["log"].update(
             {
-                "action_penalty": (self.cfg.action_penalty_scale * action_cost).mean(),
+                "pos_action_penalty": (self.cfg.action_penalty_scale * pos_action_cost).mean(),
+                "vel_action_penalty": (self.cfg.velocity_action_penalty_scale * vel_action_cost).mean(),
                 "contact_force_max": contact_forces.max(),
                 "contact_force_mean": contact_forces.mean(),
                 "contact_penalty_mean": contact_penalty.mean(),
-                "goal_success_bonus_mean": (
-                    self.cfg.goal_success_bonus * reward_success
-                ).mean(),
-                "goal_reached_number": reward_success.sum(),
-                "joint_limit_penalty_mean": (
-                    self.cfg.joint_limit_penalty_scale * reward_joint_limits
-                ).mean(),
+                "joint_limit_penalty_mean": (self.cfg.joint_limit_penalty_scale * reward_joint_limits).mean(),
                 "ori_error": orientation_error.mean(),
-                "ori_reward": (
-                    self.cfg.ee_orientation_reward * orientation_exp_error
-                ).mean(),
+                "ori_reward": (self.cfg.ee_orientation_reward * orientation_exp_error).mean(),
+                "ori_penalty": (self.cfg.ee_orientation_penalty * orientation_error).mean(),
                 "pos_error": position_error.mean(),
-                "pos_reward": (self.cfg.ee_position_penalty * position_error).mean(),
+                "pos_reward": (self.cfg.ee_position_reward * position_exp_error).mean(),
+                "pos_penalty": (self.cfg.ee_position_penalty * position_error).mean(),
                 "rewards_mean": reward.mean(),
                 "rewards_std": reward.std(),
                 "step_counter": self.common_step_counter,
-                "velocity_penalty": (
-                    self.cfg.velocity_penalty_scale * velocity_cost
-                ).mean(),
+                "velocity_penalty": (self.cfg.velocity_penalty_scale * velocity_cost).mean(),
             }
         )
         return reward
@@ -620,30 +577,17 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
     def _reset_idx(self, env_ids: torch.Tensor):  # type: ignore
         super()._reset_idx(env_ids)  # type: ignore
 
-        # Lazily create the physical randomizers (needs robot to be initialised)
         if self._actuator_randomizer is None:
             self._actuator_randomizer = ActuatorRandomizer(
-                robot=self._robot,
-                cfg=self.cfg.domain_rand,
-                device=self.device,
+                robot=self._robot, cfg=self.cfg.domain_rand, device=self.device
             )
         if self._mass_com_randomizer is None:
             self._mass_com_randomizer = MassComRandomizer(
-                robot=self._robot,
-                cfg=self.cfg.domain_rand,
-                device=self.device,
+                robot=self._robot, cfg=self.cfg.domain_rand, device=self.device
             )
 
-        # Split envs: some reset to home, others fully random
-        mask = torch.rand(len(env_ids), device=self.device) < self.cfg.env_reset
-        home_ids = env_ids[mask]
-        random_ids = env_ids[~mask]
-        if len(home_ids) > 0:
-            self._reset_to_home(home_ids)
-        if len(random_ids) > 0:
-            self._reset_random(random_ids)
+        self._reset_to_home(env_ids)
 
-        # Write reset joint state to simulation
         self._robot.write_joint_state_to_sim(
             self._robot.data.joint_pos[env_ids],
             self._robot.data.joint_vel[env_ids],
@@ -652,9 +596,10 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         self.actions[env_ids] = 0.0
         self.prev_actions[env_ids] = 0.0
+        self._arm_speed_targets[env_ids] = 0.0
         self.success_frames_count[env_ids] = 0
+        self._benchmark_goal_idx = 0
 
-        # Reset DR buffers & apply physical randomisation (toggles checked internally)
         self._action_buffer.reset(env_ids)
         self._obs_buffer.reset(env_ids)
         self._actuator_randomizer.sample_and_apply(env_ids)
@@ -662,53 +607,171 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
 
         self._sample_goal(env_ids)
 
-        # debug markers
         if self.cfg.debug:
-            marker_idx = torch.zeros(
-                len(env_ids), dtype=torch.int64, device=self.device
-            )
+            marker_idx = torch.zeros(len(env_ids), dtype=torch.int64, device=self.device)
             self.origin_marker.visualize(self.env_origins, marker_indices=marker_idx)
             self._visualize_source_frame(env_ids, marker_idx)
 
     # -- Goal sampling ------------------------------------------------------
 
+    def _ur5e_fk_batch(self, joint_angles: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Batched analytical FK for UR5e using standard DH parameters (GPU-native)."""
+        N = joint_angles.shape[0]
+        dev = joint_angles.device
+        dt = joint_angles.dtype
+
+        a_list = self._dh_a
+        d_list = self._dh_d
+        cos_alpha = self._dh_cos_alpha
+        sin_alpha = self._dh_sin_alpha
+
+        T = torch.eye(4, device=dev, dtype=dt).unsqueeze(0).repeat(N, 1, 1)
+
+        for i in range(6):
+            theta = joint_angles[:, i]
+            ct = torch.cos(theta)
+            st = torch.sin(theta)
+            ca = cos_alpha[i]
+            sa = sin_alpha[i]
+            ai = a_list[i]
+            di = d_list[i]
+
+            Ti = torch.zeros(N, 4, 4, device=dev, dtype=dt)
+            Ti[:, 0, 0] = ct
+            Ti[:, 0, 1] = -st * ca
+            Ti[:, 0, 2] =  st * sa
+            Ti[:, 0, 3] =  ai * ct
+            Ti[:, 1, 0] =  st
+            Ti[:, 1, 1] =  ct * ca
+            Ti[:, 1, 2] = -ct * sa
+            Ti[:, 1, 3] =  ai * st
+            Ti[:, 2, 1] =  sa
+            Ti[:, 2, 2] =  ca
+            Ti[:, 2, 3] =  di
+            Ti[:, 3, 3] =  1.0
+
+            T = torch.bmm(T, Ti)
+
+        tcp_z = TCP_OFFSET_LOCAL[2]
+        pos_base = torch.stack([
+            T[:, 0, 3] + T[:, 0, 2] * tcp_z,
+            T[:, 1, 3] + T[:, 1, 2] * tcp_z,
+            T[:, 2, 3] + T[:, 2, 2] * tcp_z,
+        ], dim=1)
+
+        R = T[:, :3, :3]
+        trace = R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2]
+        s0 = torch.sqrt(torch.clamp(trace + 1.0, min=1e-8)) * 2.0
+        s1 = torch.sqrt(torch.clamp(1.0 + R[:, 0, 0] - R[:, 1, 1] - R[:, 2, 2], min=1e-8)) * 2.0
+        s2 = torch.sqrt(torch.clamp(1.0 + R[:, 1, 1] - R[:, 0, 0] - R[:, 2, 2], min=1e-8)) * 2.0
+        s3 = torch.sqrt(torch.clamp(1.0 + R[:, 2, 2] - R[:, 0, 0] - R[:, 1, 1], min=1e-8)) * 2.0
+
+        q0 = torch.stack([0.25 * s0, (R[:, 2, 1] - R[:, 1, 2]) / s0, (R[:, 0, 2] - R[:, 2, 0]) / s0, (R[:, 1, 0] - R[:, 0, 1]) / s0], dim=1)
+        q1 = torch.stack([(R[:, 2, 1] - R[:, 1, 2]) / s1, 0.25 * s1, (R[:, 0, 1] + R[:, 1, 0]) / s1, (R[:, 0, 2] + R[:, 2, 0]) / s1], dim=1)
+        q2 = torch.stack([(R[:, 0, 2] - R[:, 2, 0]) / s2, (R[:, 0, 1] + R[:, 1, 0]) / s2, 0.25 * s2, (R[:, 1, 2] + R[:, 2, 1]) / s2], dim=1)
+        q3 = torch.stack([(R[:, 1, 0] - R[:, 0, 1]) / s3, (R[:, 0, 2] + R[:, 2, 0]) / s3, (R[:, 1, 2] + R[:, 2, 1]) / s3, 0.25 * s3], dim=1)
+
+        c0 = (trace > 0).unsqueeze(1)
+        c1 = (~(trace > 0) & (R[:, 0, 0] > R[:, 1, 1]) & (R[:, 0, 0] > R[:, 2, 2])).unsqueeze(1)
+        c2 = (~(trace > 0) & ~(R[:, 0, 0] > R[:, 1, 1]) & (R[:, 1, 1] > R[:, 2, 2])).unsqueeze(1)
+
+        quat_base = torch.where(c0, q0, torch.where(c1, q1, torch.where(c2, q2, q3)))
+        quat_base = quat_base / torch.norm(quat_base, dim=1, keepdim=True).clamp(min=1e-8)
+        return pos_base, quat_base
+
+    def _fk_to_source_frame(
+        self, pos_base: torch.Tensor, quat_base: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Convert FK outputs from base_link frame to the FrameTransformer source frame."""
+        N = pos_base.shape[0]
+        inv_rot = quat_inv(self._source_rot_in_base.unsqueeze(0).expand(N, -1))
+        delta = pos_base - self._source_origin_in_base.unsqueeze(0)
+        pos_source = quat_apply(inv_rot, delta)
+        quat_source = quat_mul(inv_rot, quat_base)
+        return pos_source, quat_source
+
     def _sample_goal(self, env_ids: torch.Tensor | None = None):
-        """Sample random goal poses within a cylindrical volume around the robot base (source frame)."""
+        """Sample goal poses for the given environments."""
         if env_ids is None:
             env_ids = torch.arange(self._num_envs, dtype=torch.long, device=self.device)
         else:
             env_ids = env_ids.to(device=self.device, dtype=torch.long)
 
-        angle = torch.empty(len(env_ids), device=self.device).uniform_(
-            -torch.pi, torch.pi
-        )
-        radius = torch.empty(len(env_ids), device=self.device).uniform_(0.3, 0.75)
-        height = torch.empty(len(env_ids), device=self.device).uniform_(0.1, 0.6)
-
-        self.goal_pos_source[env_ids, 0] = self.robot_base_local[
-            0
-        ] + radius * torch.cos(angle)
-        self.goal_pos_source[env_ids, 1] = self.robot_base_local[
-            1
-        ] + radius * torch.sin(angle)
-        self.goal_pos_source[env_ids, 2] = height
-
-        delta_quat = torch.randn(len(env_ids), 4, device=self.device)
-        delta_quat = delta_quat / torch.norm(delta_quat, dim=1, keepdim=True)
-        self.goal_quat_source[env_ids] = delta_quat
-
-        # Reset goal timer for resampled envs
-        self.goal_steps_elapsed[env_ids] = 0
-
-        if self.cfg.debug:
-            marker_idx = torch.zeros(
-                len(env_ids), dtype=torch.int64, device=self.device
-            )
-            self.goal_marker.visualize(
+        n = len(env_ids)
+        if self.cfg.deterministic_goal_sampling:
+            if self._num_benchmark_goals <= 0:
+                raise RuntimeError(
+                    "deterministic_goal_sampling=True requires cfg.benchmark_goals to contain at least one goal."
+                )
+            goal_idx = self._benchmark_goal_idx % self._num_benchmark_goals
+            selected_goals = self.benchmark_goal_pos_quat[goal_idx].unsqueeze(0).expand(n, -1)
+            self.goal_pos_source[env_ids] = selected_goals[:, :3]
+            self.goal_quat_source[env_ids] = selected_goals[:, 3:7]
+            self._benchmark_goal_idx += 1
+            self.goal_steps_elapsed[env_ids] = 0
+            if self.cfg.debug:
+                marker_idx = torch.zeros(n, dtype=torch.int64, device=self.device)
+                self.goal_marker.visualize(
                     self.goal_pos_source[env_ids] + self.env_origins[env_ids],
                     self.goal_quat_source[env_ids],
                     marker_indices=marker_idx,
                 )
+            return
+
+        ratio = max(0.0, min(1.0, float(self.cfg.goal_sampling_random_ratio)))
+
+        if ratio >= 1.0:
+            random_mask = torch.ones(n, dtype=torch.bool, device=self.device)
+        elif ratio <= 0.0:
+            random_mask = torch.zeros(n, dtype=torch.bool, device=self.device)
+        else:
+            random_mask = torch.rand(n, device=self.device) < ratio
+
+        rand_ids = env_ids[random_mask]
+        fk_ids   = env_ids[~random_mask]
+
+        if len(rand_ids) > 0:
+            m = len(rand_ids)
+            angle  = torch.empty(m, device=self.device).uniform_(-torch.pi, torch.pi)
+            radius = torch.empty(m, device=self.device).uniform_(0.3, 0.75)
+            height = torch.empty(m, device=self.device).uniform_(0.1, 0.6)
+            self.goal_pos_source[rand_ids, 0] = self.robot_base_local[0] + radius * torch.cos(angle)
+            self.goal_pos_source[rand_ids, 1] = self.robot_base_local[1] + radius * torch.sin(angle)
+            self.goal_pos_source[rand_ids, 2] = height
+            delta_quat = torch.randn(m, 4, device=self.device)
+            delta_quat = delta_quat / torch.norm(delta_quat, dim=1, keepdim=True)
+            self.goal_quat_source[rand_ids] = delta_quat
+
+        if len(fk_ids) > 0:
+            arm_joints = sample_uniform(
+                self.robot_dof_lower_limits,
+                self.robot_dof_upper_limits,
+                (len(fk_ids), NUM_ARM_JOINTS),
+                self.device,
+            )
+            ps, qs = self._fk_to_source_frame(*self._ur5e_fk_batch(arm_joints))
+
+            below = ps[:, 2] < 0.0
+            if torch.any(below):
+                ps[below, 2] = -ps[below, 2]
+                s = 2 ** -0.5
+                q_mirror = torch.tensor(
+                    [0.0, s, s, 0.0], device=self.device, dtype=qs.dtype
+                ).unsqueeze(0).expand(int(below.sum()), -1)
+                qs[below] = quat_mul(q_mirror, qs[below])
+
+            self.goal_pos_source[fk_ids]  = ps
+            self.goal_quat_source[fk_ids] = qs
+
+        self.goal_steps_elapsed[env_ids] = 0
+
+        if self.cfg.debug:
+            marker_idx = torch.zeros(n, dtype=torch.int64, device=self.device)
+            self.goal_marker.visualize(
+                self.goal_pos_source[env_ids] + self.env_origins[env_ids],
+                self.goal_quat_source[env_ids],
+                marker_indices=marker_idx,
+            )
 
     # -- Debug helpers ------------------------------------------------------
 
@@ -719,21 +782,16 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             src_off = (
                 torch.tensor(
                     self.cfg.frame_transformer.source_frame_offset.pos,
-                    device=self.device,
-                    dtype=torch.float32,
+                    device=self.device, dtype=torch.float32,
                 )
-                .unsqueeze(0)
-                .expand(len(env_ids), -1)
+                .unsqueeze(0).expand(len(env_ids), -1)
             )
             src_rot = torch.tensor(
                 self.cfg.frame_transformer.source_frame_offset.rot,
-                device=self.device,
-                dtype=torch.float32,
+                device=self.device, dtype=torch.float32,
             )
-
             body_pos_w = self._robot.data.body_pos_w[env_ids, base_idx]
             body_quat_w = self._robot.data.body_quat_w[env_ids, base_idx]
-
             q_w = body_quat_w[:, 0:1]
             q_vec = body_quat_w[:, 1:4]
             rotated = src_off + 2.0 * torch.cross(
@@ -742,7 +800,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
             src_world = body_pos_w + rotated
             self.source_marker.visualize(src_world, src_rot, marker_indices=marker_idx)
         except Exception:
-            pass  # best-effort; don't break reset
+            pass
 
     # -- Contact metric -----------------------------------------------------
 
@@ -750,12 +808,11 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         """Max normal contact force per environment (N)."""
         if self._contact_sensor is None:
             return torch.zeros(self._num_envs, device=self.device)
-
         data = self._contact_sensor.data
         if data is None or data.net_forces_w is None:
             return torch.zeros(self._num_envs, device=self.device)
 
-        forces = data.net_forces_w  # (num_envs, num_bodies, 3)
+        forces = data.net_forces_w
         magnitudes = torch.norm(forces, dim=2)
         max_per_env, max_body_idx = magnitudes.max(dim=1)
 
@@ -765,10 +822,7 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
         ):
             body_names = self._contact_sensor.body_names
             env0_mags = magnitudes[0]
-            parts = [
-                f"{name}: {env0_mags[i].item():.2f}N"
-                for i, name in enumerate(body_names)
-            ]
+            parts = [f"{name}: {env0_mags[i].item():.2f}N" for i, name in enumerate(body_names)]
             top_body = body_names[max_body_idx[0].item()] if body_names else "?"
             print(
                 f"[Contact Debug step={self._debug_step_count}] "
@@ -776,93 +830,64 @@ class PoseOrientationSim2RealV2(DirectRLEnv):
                 f"all_envs max={max_per_env.max().item():.2f}N mean={max_per_env.mean().item():.2f}N\n"
                 f"  per-body: {', '.join(parts)}"
             )
-
         return max_per_env
 
+    # -- Reset helpers ------------------------------------------------------
+
     def _reset_to_home(self, env_ids: torch.Tensor):
-        """Reset around the home pose.
-
-        When ``progressive_reset`` is enabled the sampling range grows linearly
-        from ±0.125 rad around home to the full joint limits over
-        ``progressive_reset_steps`` training steps.  The bounds are asymmetric
-        per joint because the home position is not centred in joint space.
-        """
-        home = self._robot.data.default_joint_pos[env_ids]  # (N, nj)
-
-        if self.cfg.progressive_reset:
-            progress = min(1.0, self.common_step_counter / self.cfg.progressive_reset_steps)
-
-            # Tight initial bounds clamped to stay inside joint limits
-            initial_half = 0.125
-            tight_low = (home - initial_half).clamp(min=self.robot_dof_lower_limits)
-            tight_high = (home + initial_half).clamp(max=self.robot_dof_upper_limits)
-
-            # Linearly interpolate toward full joint limits
-            low = tight_low + progress * (self.robot_dof_lower_limits - tight_low)
-            high = tight_high + progress * (self.robot_dof_upper_limits - tight_high)
-
-            joint_pos = sample_uniform(
-                low, high,
-                (len(env_ids), self._robot.num_joints),
-                self.device,
-            )
-        else:
-            joint_pos = home + sample_uniform(
-                -0.125, 0.125,
-                (len(env_ids), self._robot.num_joints),
-                self.device,
-            )
-
+        """Reset around the home pose (arm joints randomised, gripper at default)."""
+        home = self._robot.data.default_joint_pos[env_ids]  # (N, 8)
+        arm_pos = home[:, :NUM_ARM_JOINTS] + sample_uniform(
+            -self.cfg.reset_range, self.cfg.reset_range,
+            (len(env_ids), NUM_ARM_JOINTS),
+            self.device,
+        )
+        joint_pos = torch.zeros(
+            (len(env_ids), self._num_total_joints), device=self.device, dtype=torch.float32
+        )
+        joint_pos[:, :NUM_ARM_JOINTS] = arm_pos
+        joint_pos[:, NUM_ARM_JOINTS:] = self._gripper_default_pos.unsqueeze(0)
         self.robot_dof_targets[env_ids] = joint_pos
         self._robot.data.joint_pos[env_ids] = joint_pos
         self._robot.data.joint_vel[env_ids] = 0.0
 
     def _reset_random(self, env_ids: torch.Tensor):
-        """Reset to a random pose within the joint limits."""
-        joint_pos = sample_uniform(
+        """Reset to a random arm pose within joint limits; gripper at default."""
+        arm_pos = sample_uniform(
             self.robot_dof_lower_limits.unsqueeze(0),
             self.robot_dof_upper_limits.unsqueeze(0),
-            (len(env_ids), self._robot.num_joints),
+            (len(env_ids), NUM_ARM_JOINTS),
             self.device,
         )
+        joint_pos = torch.zeros(
+            (len(env_ids), self._num_total_joints), device=self.device, dtype=torch.float32
+        )
+        joint_pos[:, :NUM_ARM_JOINTS] = arm_pos
+        joint_pos[:, NUM_ARM_JOINTS:] = self._gripper_default_pos.unsqueeze(0)
         self.robot_dof_targets[env_ids] = joint_pos
         self._robot.data.joint_pos[env_ids] = joint_pos
         self._robot.data.joint_vel[env_ids] = 0.0
 
-    def compute_tcp_states(self):
-        # 1. Récupérer les données mondiales du poignet (wrist)
-        wrist_quat_w = self._robot.data.body_link_quat_w[:, 6]
-        wrist_vel_w = self._robot.data.body_link_vel_w[:, 6] # [lin_x, lin_y, lin_z, ang_x, ang_y, ang_z]
+    # -- TCP velocity computation -------------------------------------------
 
+    def compute_tcp_states(self):
+        wrist_quat_w = self._robot.data.body_link_quat_w[:, self._wrist_body_idx]
+        wrist_vel_w = self._robot.data.body_link_vel_w[:, self._wrist_body_idx]
         lin_vel_wrist_w = wrist_vel_w[:, :3]
         ang_vel_wrist_w = wrist_vel_w[:, 3:]
 
-        # 2. Transformer l'offset local en vecteur mondial
-        # Batch-expand the local TCP offset to match number of envs (avoid shape mismatch)
         tcp_offset = (
             torch.tensor(TCP_OFFSET_LOCAL, device=self.device, dtype=torch.float32)
-            .unsqueeze(0)
-            .expand(wrist_quat_w.shape[0], -1)
+            .unsqueeze(0).expand(wrist_quat_w.shape[0], -1)
         )
-        r_offset_w = quat_apply_yaw(wrist_quat_w, tcp_offset)
-
-        # 3. Vitesse linéaire du TCP (Formule du transport des vitesses)
-        # v_tcp = v_wrist + omega x r
+        r_offset_w = quat_apply(wrist_quat_w, tcp_offset)
         v_tcp_w = lin_vel_wrist_w + torch.cross(ang_vel_wrist_w, r_offset_w, dim=-1)
 
-        # 4. (Optionnel) Rotation vers le repère du driver réel
-        # Si le driver ROS est décalé par rapport au monde Isaac
-        if True:
-            base_rot = (
-                torch.tensor(BASE_ROTATION_LOCAL, device=self.device, dtype=torch.float32)
-                .unsqueeze(0)
-                .expand(wrist_quat_w.shape[0], -1)
-            )
-            inv_base = quat_inv(base_rot)
-            v_tcp_final = quat_apply_yaw(inv_base, v_tcp_w)
-            ang_vel_final = quat_apply_yaw(inv_base, ang_vel_wrist_w)
-        else:
-            v_tcp_final = v_tcp_w
-            ang_vel_final = ang_vel_wrist_w
-
+        base_rot = (
+            torch.tensor(BASE_ROTATION_LOCAL, device=self.device, dtype=torch.float32)
+            .unsqueeze(0).expand(wrist_quat_w.shape[0], -1)
+        )
+        inv_base = quat_inv(base_rot)
+        v_tcp_final = quat_apply(inv_base, v_tcp_w)
+        ang_vel_final = quat_apply(inv_base, ang_vel_wrist_w)
         return v_tcp_final, ang_vel_final

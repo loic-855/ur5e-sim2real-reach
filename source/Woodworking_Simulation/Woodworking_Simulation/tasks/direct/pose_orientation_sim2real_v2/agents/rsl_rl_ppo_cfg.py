@@ -12,13 +12,14 @@ from isaaclab_rl.rsl_rl import (
 )
 
 
-# Smaller network configuration for single gripper robot (32-dim observation, 6-dim action)
+# UR5e + gripper, 24-dim observation, 12-dim action (position + velocity feedforward)
 @configclass
 class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 1500
     save_interval = 50
     experiment_name = "pose_orientation_sim2real_v2"
+    obs_groups = {"policy": ["policy"], "critic": ["policy"]}
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
         actor_obs_normalization=False,

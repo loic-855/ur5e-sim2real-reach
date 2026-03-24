@@ -12,13 +12,13 @@ from isaaclab_rl.rsl_rl import (
 )
 
 
-# Same network as V3 (24-dim observation, 12-dim action) – gripper present but not controlled
+# UR5e + gripper, 24-dim observation, 6-dim action (position increments only)
 @configclass
 class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 1500
     save_interval = 50
-    experiment_name = "pose_orientation_sim2real_v4"
+    experiment_name = "pose_orientation_sim2real_v1"
     obs_groups = {"policy": ["policy"], "critic": ["policy"]}
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
@@ -44,5 +44,5 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
     logger = "wandb"
-    wandb_project = "sim2real_v4"
+    wandb_project = "sim2real_v1"
     monitor_gym = True

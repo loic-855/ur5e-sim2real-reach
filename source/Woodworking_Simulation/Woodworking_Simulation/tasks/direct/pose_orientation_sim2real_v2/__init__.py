@@ -11,7 +11,7 @@ from . import agents
 # Register Gym environments.
 ##
 
-# V2
+# V2 – UR5e + gripper, arm controlled with position + velocity feedforward
 gym.register(
     id="WWSim-Pose-Orientation-Sim2Real-Direct-v2",
     entry_point=f"{__name__}.pose_orientation_sim2real_v2:PoseOrientationSim2RealV2",

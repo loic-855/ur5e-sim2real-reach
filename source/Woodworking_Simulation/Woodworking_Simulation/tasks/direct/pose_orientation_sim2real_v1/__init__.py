@@ -11,13 +11,13 @@ from . import agents
 # Register Gym environments.
 ##
 
-# V6 – LSTM policy (same observation/action space as V3)
+# V1 – UR5e + gripper, arm controlled with position-only actions (6-dim)
 gym.register(
-    id="WWSim-Pose-Orientation-Sim2Real-Direct-v6",
-    entry_point=f"{__name__}.pose_orientation_sim2real_v6:PoseOrientationSim2RealV6",
+    id="WWSim-Pose-Orientation-Sim2Real-Direct-v1",
+    entry_point=f"{__name__}.pose_orientation_sim2real_v1:PoseOrientationSim2RealV1",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.pose_orientation_sim2real_v6:PoseOrientationSim2RealV6Cfg",
+        "env_cfg_entry_point": f"{__name__}.pose_orientation_sim2real_v1:PoseOrientationSim2RealV1Cfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
     },
 )
