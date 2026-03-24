@@ -197,7 +197,7 @@ class PoseOrientationSim2RealV4Cfg(DirectRLEnvCfg):
     # Goal sampling: 0.0 = 100 % FK-based (all goals kinematically reachable),
     #                1.0 = 100 % random cylindrical (original behaviour).
     #                Values in-between give a stochastic mix.
-    goal_sampling_random_ratio: float = 0.0
+    goal_sampling_random_ratio: float = 0.3
     deterministic_goal_sampling: bool = False
     benchmark_goals: tuple[tuple[float, ...], ...] = ()
 
@@ -802,37 +802,6 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         quat_source = quat_mul(inv_rot, quat_base)  # (N, 4)
         return pos_source, quat_source
 
-    def _sample_spherical_goals(self, n: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Sample *n* goal poses using spherical coordinates relative to the robot base.
-
-        The goal is always above the table (z ≥ 0) by constraining the elevation
-        angle ``phi`` to ``[0, π/2]``.
-
-        Coordinates (all in source frame):
-            x = robot_base_local.x + r · cos(phi) · cos(theta)
-            y = robot_base_local.y + r · cos(phi) · sin(theta)
-            z = r · sin(phi)
-
-        Returns:
-            pos : ``(n, 3)`` – positions in the source frame.
-            quat : ``(n, 4)`` – uniformly random orientations (w, x, y, z).
-        """
-        r     = torch.empty(n, device=self.device).uniform_(0.25, 0.70)
-        theta = torch.empty(n, device=self.device).uniform_(-math.pi, math.pi)
-        phi   = torch.empty(n, device=self.device).uniform_(0.0, math.pi / 2.0)
-
-        cos_phi = torch.cos(phi)
-        pos = torch.stack([
-            self.robot_base_local[0] + r * cos_phi * torch.cos(theta),
-            self.robot_base_local[1] + r * cos_phi * torch.sin(theta),
-            r * torch.sin(phi),
-        ], dim=1)  # (n, 3)
-
-        quat = torch.randn(n, 4, device=self.device)
-        quat = quat / torch.norm(quat, dim=1, keepdim=True).clamp(min=1e-8)
-
-        return pos, quat
-
     def _sample_goal(self, env_ids: torch.Tensor | None = None):
         """Sample goal poses for the given environments.
 
@@ -884,16 +853,34 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
         rand_ids = env_ids[random_mask]
         fk_ids   = env_ids[~random_mask]
 
-        # --- Random spherical sampling ---
+        # --- Random cylindrical sampling (original) ---
         if len(rand_ids) > 0:
-            ps_rnd, qs_rnd = self._sample_spherical_goals(len(rand_ids))
-            self.goal_pos_source[rand_ids] = ps_rnd
-            self.goal_quat_source[rand_ids] = qs_rnd
+            m = len(rand_ids)
+            angle  = torch.empty(m, device=self.device).uniform_(-torch.pi, torch.pi)
+            radius = torch.empty(m, device=self.device).uniform_(0.3, 0.75)
+            height = torch.empty(m, device=self.device).uniform_(0.1, 0.6)
 
-        # --- FK-based sampling (kinematically reachable goals) ---
-        # Sample random joint angles → run batched analytical FK.
-        # If the resulting TCP position is below the table (z < 0 in source frame),
-        # fall back to a random spherical goal for that environment.
+            self.goal_pos_source[rand_ids, 0] = self.robot_base_local[0] + radius * torch.cos(angle)
+            self.goal_pos_source[rand_ids, 1] = self.robot_base_local[1] + radius * torch.sin(angle)
+            self.goal_pos_source[rand_ids, 2] = height
+
+            delta_quat = torch.randn(m, 4, device=self.device)
+            delta_quat = delta_quat / torch.norm(delta_quat, dim=1, keepdim=True)
+            self.goal_quat_source[rand_ids] = delta_quat
+
+        # --- FK-based sampling (all goals are kinematically reachable) ---
+        # Single-pass: sample joints → FK → mirror any below-table goals across
+        # the table surface (z=0 in source frame).
+        #
+        # FK_GOAL_MIN_HEIGHT = 0.0: goals exactly at the table surface are kept;
+        # the robot will learn to reach them without colliding with the table.
+        #
+        # Mirroring across z=0 for a goal below the table:
+        #   Position : only z is negated, x and y are unchanged.
+        #   Orientation: 180° rotation around (1,1,0)/√2, i.e.
+        #       q_mirror = (w=0, x=1/√2, y=1/√2, z=0)
+        #     This maps  z↓ → z↑,  x → y,  y → x,
+        #     which is the physically consistent mirrored frame.
 
         if len(fk_ids) > 0:
             arm_joints = sample_uniform(
@@ -906,11 +893,14 @@ class PoseOrientationSim2RealV4(DirectRLEnv):
 
             below = ps[:, 2] < 0.0
             if torch.any(below):
-                # Below-table goals are invalid – replace with random spherical goals
-                num_below = int(below.sum())
-                ps_rnd, qs_rnd = self._sample_spherical_goals(num_below)
-                ps[below] = ps_rnd
-                qs[below] = qs_rnd
+                # Flip z only
+                ps[below, 2] = -ps[below, 2]
+                # Apply q_mirror = (0, 1/√2, 1/√2, 0)  as  q_new = q_mirror * q_old
+                s = 2 ** -0.5  # 1/√2
+                q_mirror = torch.tensor(
+                    [0.0, s, s, 0.0], device=self.device, dtype=qs.dtype
+                ).unsqueeze(0).expand(int(below.sum()), -1)
+                qs[below] = quat_mul(q_mirror, qs[below])
 
             self.goal_pos_source[fk_ids]  = ps
             self.goal_quat_source[fk_ids] = qs
