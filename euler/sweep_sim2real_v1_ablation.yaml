@@ -1,7 +1,7 @@
-# Ablation sweep for sim2real v3
+# Ablation sweep for sim2real v1
 # 7 runs: no DR, all DR, and single-parameter toggles (including two delay variants)
 # Overrides are written as full hydra-style strings per-line to match other sweeps.
-# Usage:  python euler/generate_sweep.py --config euler/sweep_sim2real_v3_ablation.yaml --submit
+# Usage:  python euler/generate_sweep.py --config euler/sweep_sim2real_v1_ablation.yaml --submit
 # ============================================================================
 
 task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v1"
@@ -16,8 +16,8 @@ slurm:
 # Overrides applied to EVERY run
 base_overrides:
   - "agent.max_iterations=1500"
-  - "agent.wandb_project=sim2real_v3_ablation"
-  - "agent.experiment_name=sim2real_v3_ablation"
+  - "agent.wandb_project=sim2real_v1_ablation"
+  - "agent.experiment_name=sim2real_v1_ablation"
 
 
 dimensions:
