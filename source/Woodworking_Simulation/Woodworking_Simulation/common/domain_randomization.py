@@ -44,22 +44,33 @@ from isaaclab.assets import Articulation
 class DomainRandomizationV4Cfg:
     """All domain-randomisation knobs for the V4 sim-to-real pipeline.
 
-    Three independent toggles control which randomisation categories are active.
+    Four independent toggles control which randomisation categories are active:
+    - ``enable_actuator_rand``   – stiffness / damping / friction randomisation.
+    - ``enable_mass_com_rand``   – link mass / center of mass randomisation.
+    - ``enable_noise``           – additive Gaussian noise on actions and observations.
+    - ``enable_delay``           – per-env FIFO delay (+ packet loss) on actions and observations.
+    
     There is no global master switch – disable categories individually as needed.
+    All disabled toggles provide zero-overhead pass-through.
     """
 
     # -------------------------------------------------------------------------
-    # Toggle: physical robot characteristics (stiffness, damping, friction,
-    #         link masses, centers of mass)
+    # Toggle: actuator characteristics (stiffness, damping, friction)
     # -------------------------------------------------------------------------
-    enable_physical_rand: bool = True
-    """Enable per-env randomisation of actuator PD gains, joint friction,
-    link masses and centers of mass."""
+    enable_actuator_rand: bool = True
+    """Enable per-env randomisation of actuator PD gains (stiffness/damping)
+    and joint friction coefficients."""
+
+    # -------------------------------------------------------------------------
+    # Toggle: link physical properties (masses, centers of mass)
+    # -------------------------------------------------------------------------
+    enable_mass_com_rand: bool = False
+    """Enable per-env randomisation of link masses and centers of mass."""
 
     # -------------------------------------------------------------------------
     # Toggle: additive Gaussian noise on actions and observations
     # -------------------------------------------------------------------------
-    enable_noise: bool = True
+    enable_noise: bool = False
     """Enable additive Gaussian noise on actions and on observations."""
 
     # -------------------------------------------------------------------------
@@ -111,15 +122,15 @@ class DomainRandomizationV4Cfg:
     # -- Actuator randomisation ------------------------------------------------
     stiffness_scale_range: tuple[float, float] = (0.8, 1.2)
     """Multiplicative scale range applied to nominal joint stiffness.
-    Only active when ``enable_physical_rand=True``."""
+    Only active when ``enable_actuator_rand=True``."""
 
     damping_scale_range: tuple[float, float] = (0.8, 1.2)
     """Multiplicative scale range applied to nominal joint damping.
-    Only active when ``enable_physical_rand=True``."""
+    Only active when ``enable_actuator_rand=True``."""
 
     friction_variation: float = 0.35
     """Fractional variation (±) around default per-joint friction coefficients.
-    Only active when ``enable_physical_rand=True``."""
+    Only active when ``enable_actuator_rand=True``."""
 
     default_joint_friction: tuple[float, ...] = (8.24, 10.51, 7.9, 1.43, 1.05, 1.63)
     """Nominal static friction for each joint (shoulder_pan → wrist_3)."""
@@ -127,14 +138,14 @@ class DomainRandomizationV4Cfg:
     # -- Mass / CoM randomisation ----------------------------------------------
     mass_scale_range: tuple[float, float] = (0.85, 1.15)
     """Multiplicative scale range applied to default link masses (±15%).
-    Only active when ``enable_physical_rand=True``."""
+    Only active when ``enable_mass_com_rand=True``."""
 
     recompute_inertia: bool = True
     """Whether to recompute inertia tensors after changing mass (assumes uniform-density bodies)."""
 
     com_offset_range: tuple[float, float] = (-0.01, 0.01)
     """Additive uniform offset range (metres) applied independently to x, y, z of each
-    link's center of mass. Only active when ``enable_physical_rand=True``."""
+    link's center of mass. Only active when ``enable_mass_com_rand=True``."""
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +236,8 @@ class ActionBuffer:
         if self._skip_buffer:
             if self.cfg.enable_noise:
                 torch.randn(self._noise_buf.shape, device=self._noise_buf.device, dtype=self._noise_buf.dtype, out=self._noise_buf)
-                return actions + self._noise_buf * self._noise_std
+                actions = actions.clone()
+                actions.add_(self._noise_buf * self._noise_std)
             return actions
 
         # -- Full path: delay enabled --
@@ -233,7 +245,8 @@ class ActionBuffer:
         # Additive noise (in-place random fill avoids allocation)
         if self.cfg.enable_noise:
             torch.randn(self._noise_buf.shape, device=self._noise_buf.device, dtype=self._noise_buf.dtype, out=self._noise_buf)
-            actions = actions + self._noise_buf * self._noise_std
+            actions = actions.clone()
+            actions.add_(self._noise_buf * self._noise_std)
 
         # Write into ring-buffer
         idx = self.cursor % self.buffer_len
@@ -439,7 +452,7 @@ class ActuatorRandomizer:
     3. Writes the result into the physics simulation via the Articulation API.
 
     Effort limits are intentionally **not** randomised.
-    Only active when ``cfg.enable_physical_rand=True``.
+    Only active when ``cfg.enable_actuator_rand=True`` (otherwise zero-overhead pass-through).
     """
 
     def __init__(
@@ -454,17 +467,26 @@ class ActuatorRandomizer:
         self.num_envs = robot.num_instances
         self.num_joints = robot.num_joints
 
+        # -- Fast-path flag resolved once at construction time --
+        self._skip_all = not cfg.enable_actuator_rand
+
         # Snapshot nominal values from the simulation (after scene.clone_environments)
         # Shape: (num_envs, num_joints)
-        self.nominal_stiffness = robot.data.default_joint_stiffness.clone().to(self.device)
-        self.nominal_damping = robot.data.default_joint_damping.clone().to(self.device)
+        # Only allocate if randomization is enabled
+        if not self._skip_all:
+            self.nominal_stiffness = robot.data.default_joint_stiffness.clone().to(self.device)
+            self.nominal_damping = robot.data.default_joint_damping.clone().to(self.device)
 
-        # Build nominal friction tensor – pad/truncate if joint count differs
-        fric = list(cfg.default_joint_friction)
-        if len(fric) < self.num_joints:
-            fric.extend([fric[-1]] * (self.num_joints - len(fric)))
-        fric_t = torch.tensor(fric[: self.num_joints], dtype=torch.float32, device=self.device)
-        self.nominal_friction = fric_t.unsqueeze(0).expand(self.num_envs, -1).clone()
+            # Build nominal friction tensor – pad/truncate if joint count differs
+            fric = list(cfg.default_joint_friction)
+            if len(fric) < self.num_joints:
+                fric.extend([fric[-1]] * (self.num_joints - len(fric)))
+            fric_t = torch.tensor(fric[: self.num_joints], dtype=torch.float32, device=self.device)
+            self.nominal_friction = fric_t.unsqueeze(0).expand(self.num_envs, -1).clone()
+        else:
+            self.nominal_stiffness = None
+            self.nominal_damping = None
+            self.nominal_friction = None
 
     # -- public API ----------------------------------------------------------
 
@@ -472,11 +494,12 @@ class ActuatorRandomizer:
         """Sample new actuator parameters and write them to the physics sim.
 
         Should be called inside ``_reset_idx`` **after** ``scene.clone_environments``.
+        Zero-overhead pass-through if ``cfg.enable_actuator_rand=False``.
 
         Args:
             env_ids: 1-D long tensor of environment indices to randomise.
         """
-        if not self.cfg.enable_physical_rand:
+        if self._skip_all:
             return
 
         env_ids = env_ids.to(self.device, dtype=torch.long)
@@ -521,7 +544,7 @@ class MassComRandomizer:
        and writes to the physics simulation.
 
     Uses the ``root_physx_view`` API (CPU tensors only, same as Isaac Lab events).
-    Only active when ``cfg.enable_physical_rand=True``.
+    Only active when ``cfg.enable_mass_com_rand=True`` (otherwise zero-overhead pass-through).
     """
 
     def __init__(
@@ -536,11 +559,19 @@ class MassComRandomizer:
         self.num_envs = robot.num_instances
         self.num_bodies = robot.num_bodies
 
+        # -- Fast-path flag resolved once at construction time --
+        self._skip_all = not cfg.enable_mass_com_rand
+
         # PhysX view operates on CPU – keep snapshots on CPU
-        # Shape: (num_envs, num_bodies)
-        self.default_mass = robot.data.default_mass.clone().cpu()
-        # Shape: (num_envs, num_bodies, 7) – first 3: position, last 4: orientation
-        self.default_coms = robot.root_physx_view.get_coms().clone()  # already CPU
+        # Only allocate if randomization is enabled
+        if not self._skip_all:
+            # Shape: (num_envs, num_bodies)
+            self.default_mass = robot.data.default_mass.clone().cpu()
+            # Shape: (num_envs, num_bodies, 7) – first 3: position, last 4: orientation
+            self.default_coms = robot.root_physx_view.get_coms().clone()  # already CPU
+        else:
+            self.default_mass = None
+            self.default_coms = None
 
     # -- public API ----------------------------------------------------------
 
@@ -548,6 +579,7 @@ class MassComRandomizer:
         """Sample new mass/CoM parameters and write them to the physics sim.
 
         Should be called inside ``_reset_idx``.
+        Zero-overhead pass-through if ``cfg.enable_mass_com_rand=False``.
 
         .. note::
             The PhysX tensor API works exclusively on CPU.
@@ -555,7 +587,7 @@ class MassComRandomizer:
         Args:
             env_ids: 1-D long tensor of environment indices to randomise.
         """
-        if not self.cfg.enable_physical_rand:
+        if self._skip_all:
             return
 
         env_ids_cpu = env_ids.to("cpu", dtype=torch.long)

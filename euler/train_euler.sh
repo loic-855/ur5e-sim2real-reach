@@ -3,11 +3,11 @@
 #   euler/launch_sweep.sh  (generates & submits SLURM array jobs)
 
 #SBATCH -n 1
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=4
 #SBATCH --gpus=rtx_4090:1
-#SBATCH --time=7:45:00
-#SBATCH --mem-per-cpu=8000
-#SBATCH --job-name="WWSim-Grasping-Single-Robot-Direct-v1"
+#SBATCH --time=9:00:00
+#SBATCH --mem-per-cpu=6000
+#SBATCH --job-name="WWSim-Pose-Orientation-Sim2Real-Direct-v4"
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
 
@@ -84,20 +84,16 @@ apptainer exec --nv \
             agent.policy.critic_hidden_dims=[256,128,64] \
             agent.num_steps_per_env=512 \
             agent.algorithm.entropy_coef=0.0 \
+            env.domain_rand.enable_actuator_rand=False \
+            env.domain_rand.enable_mass_com_rand=False \
             env.domain_rand.enable_noise=False \
             env.domain_rand.action_delay_range=[1,2] \
             env.domain_rand.obs_delay_range=[0,1] \
-            env.action_penalty_scale=-0.005 \
-            env.velocity_action_penalty_scale=-0.005 \
-            env.velocity_penalty_scale=-0.005 \
-            env.ee_orientation_reward=0.0 \
-            env.ee_orientation_penalty=-0.7 \
-            env.ee_position_reward=1.8 \
+            env.ee_position_reward=2.0 \
             env.ee_position_penalty=-1.0 \
-            env.stability_reward_scale=0.0 \
-            env.enable_exp_curriculum=True \
-            env.orientation_exp_scale_start=0.0 \
-            env.orientation_exp_scale_end=0.0
+            env.ee_orientation_reward=0.0 \
+            env.ee_orientation_penalty=-0.7
+
     "
 
 # Cleanup Cache
