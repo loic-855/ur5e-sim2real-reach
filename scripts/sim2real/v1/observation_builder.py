@@ -1,9 +1,8 @@
 """
-Observation builder for sim2real transfer – **V3** (velocity feedforward).
+Observation builder for sim2real transfer – **V1** (normalised, error-based).
 
-Observations are identical to V2 (24 dims, normalised). The only change
-is in ``compute_dof_targets_v3`` which splits the 12-dim policy output
-into position increments (first 6) and velocity targets (last 6).
+Matches the exact observation layout from the IsaacSim
+``pose_orientation_sim2real_v2`` task (24 dims, normalised).
 
 Observation vector (24 dims):
   - to_target_norm       [3]: (goal_pos - tcp_pos) / MAX_REACH
@@ -146,13 +145,13 @@ class GoalState:
 
 
 # ============================================================================
-# Observation builder  (24-dim, normalised – identical to V2)
+# Observation builder  (24-dim, normalised – matches simulation exactly)
 # ============================================================================
 
 def build_observation(robot_state: RobotState, goal_state: GoalState) -> np.ndarray:
     """Build the 24-dim **normalised** observation vector.
 
-    Layout (must match IsaacSim ``_get_observations`` in v3 exactly):
+    Layout (must match IsaacSim ``_get_observations`` in v2 exactly):
       [0:3]   to_target_norm        – (goal - tcp) / MAX_REACH
       [3:6]   orientation_error_norm – quat_box_minus(goal_q, tcp_q) / π
       [6:12]  joint_pos_norm        – 2*(q - lower)/(upper - lower) - 1
@@ -168,11 +167,11 @@ def build_observation(robot_state: RobotState, goal_state: GoalState) -> np.ndar
         Observation vector [24] as float32.
     """
     # 1. Position error (normalised)
-    to_target_norm = (goal_state.position - robot_state.ee_position) / MAX_REACH
+    to_target_norm = (goal_state.position - robot_state.ee_position) / MAX_REACH  # (3,)
 
     # 2. Orientation error (normalised)
     orientation_error = quat_box_minus(goal_state.quaternion, robot_state.ee_quaternion)
-    orientation_error_norm = orientation_error / np.pi
+    orientation_error_norm = orientation_error / np.pi  # (3,)
 
     # 3. Joint positions (normalised to [-1, 1])
     joint_pos_norm = (
@@ -191,12 +190,12 @@ def build_observation(robot_state: RobotState, goal_state: GoalState) -> np.ndar
     tcp_angular_vel_norm = robot_state.tcp_angular_vel / np.pi
 
     obs = np.concatenate([
-        to_target_norm.astype(np.float32),
-        orientation_error_norm.astype(np.float32),
-        joint_pos_norm.astype(np.float32),
-        joint_vel_norm.astype(np.float32),
-        tcp_linear_vel_norm.astype(np.float32),
-        tcp_angular_vel_norm.astype(np.float32),
+        to_target_norm.astype(np.float32),         # [3]
+        orientation_error_norm.astype(np.float32),  # [3]
+        joint_pos_norm.astype(np.float32),          # [6]
+        joint_vel_norm.astype(np.float32),          # [6]
+        tcp_linear_vel_norm.astype(np.float32),     # [3]
+        tcp_angular_vel_norm.astype(np.float32),    # [3]
     ])
 
     assert obs.shape == (24,), f"Observation shape mismatch: expected (24,), got {obs.shape}"
@@ -204,51 +203,37 @@ def build_observation(robot_state: RobotState, goal_state: GoalState) -> np.ndar
 
 
 # ============================================================================
-# Action → DOF targets + velocity targets  (matches v3 _pre_physics_step)
+# Action → DOF targets  (matches v2 _pre_physics_step)
 # ============================================================================
 
 
-def compute_dof_targets_v3(
+def compute_dof_targets(
     current_targets: np.ndarray,
     actions: np.ndarray,
     dt: float = 1 / 60,
-    action_scale: float = 0.3,
-    velocity_scale: float = 0.7,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Compute new joint position targets AND velocity targets from 12-dim policy output.
+    action_scale: float = 3.0,
+) -> np.ndarray:
+    """Compute new joint position targets from policy actions.
 
-    The 12-dim action vector is split:
-      - actions[0:6]  → position increments  (same as V2)
-      - actions[6:12] → velocity targets (direct, not accumulated)
+    Formula (from IsaacSim v2):
+        inc = speed_scales * dt * dof_velocity_scale * actions * action_scale
+        targets = clamp(targets + inc, lower, upper)
 
-    Position formula (from IsaacSim v3):
-        inc = dt * pos_actions * action_scale
-        q_targets = clamp(q_targets + inc, lower, upper)
-
-    Velocity formula:
-        qdot_targets = vel_actions * velocity_scale
+    Note: v2 uses uniform speed_scales = 1.0 (no per-joint scaling).
 
     Args:
         current_targets: Current joint position targets [6]
-        actions: Policy output actions [12] in [-1, 1]
+        actions: Policy output actions [6] in [-1, 1]
         dt: Timestep (default 1/60 for 60 Hz)
-        action_scale: Scaling factor for position increments
-        velocity_scale: Scaling factor for velocity targets (rad/s)
+        action_scale: Scaling factor (default 3.0 as in sim)
 
     Returns:
-        Tuple of (new_position_targets [6], velocity_targets [6])
+        New joint position targets [6] (clamped to limits)
     """
     actions = np.clip(actions, -1.0, 1.0)
 
-    pos_actions = actions[:6]
-    vel_actions = actions[6:]
-
-    # Position increments (speed_scales=1)
-    inc = dt * action_scale * pos_actions
+    inc = dt * action_scale * actions  # speed_scales=1
     new_targets = current_targets + inc
     new_targets = np.clip(new_targets, JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER)
 
-    # Velocity targets (direct scaling, no accumulation)
-    velocity_targets = vel_actions * velocity_scale
-
-    return new_targets.astype(np.float32), velocity_targets.astype(np.float32)
+    return new_targets.astype(np.float32)

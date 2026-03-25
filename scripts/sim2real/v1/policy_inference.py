@@ -1,9 +1,6 @@
 """
-Policy inference wrapper for TorchScript models – **V3** (24-dim obs, 12-dim actions).
-
-Extends V2 to handle the 12-dim action output:
-  - actions[0:6]  → position increments
-  - actions[6:12] → velocity feedforward targets
+Policy inference wrapper for TorchScript models – **V1** (24-dim observations).
+Loads the exported policy and provides a simple interface for inference.
 """
 
 import torch
@@ -13,14 +10,14 @@ from typing import Optional, Union
 
 
 class PolicyInference:
-    """Wrapper for loading and running TorchScript policy inference (V3)."""
+    """Wrapper for loading and running TorchScript policy inference."""
 
     def __init__(
         self,
         model_path: Union[str, Path],
         device: str = "cuda",
         observation_dim: int = 24,
-        action_dim: int = 12,
+        action_dim: int = 6,
     ):
         self.model_path = Path(model_path)
         self.device = torch.device(device)
@@ -69,11 +66,6 @@ class PolicyInference:
                 raise RuntimeError(f"Model verification failed: {e}")
 
     def get_action(self, observation: np.ndarray) -> np.ndarray:
-        """Run inference and return the full 12-dim action vector.
-
-        Returns:
-            actions [12]: first 6 = position increments, last 6 = velocity targets
-        """
         squeeze_output = False
         if observation.ndim == 1:
             observation = observation[np.newaxis, :]
@@ -99,14 +91,14 @@ def load_policy(
     model_path: Optional[str] = None,
     device: str = "cuda",
 ) -> PolicyInference:
-    """Convenience function to load a V3 policy.
+    """Convenience function to load policy.
 
     Args:
-        model_path: Path to model. If None, raises an error.
+        model_path: Path to model. If None, uses a default exported policy.
         device: Device to run on.
 
     Returns:
-        PolicyInference instance (24-dim obs → 12-dim actions)
+        PolicyInference instance
     """
     if model_path is None:
         raise RuntimeError("No default model path defined. Please provide a model_path.")
@@ -115,7 +107,7 @@ def load_policy(
         model_path=model_path,
         device=device,
         observation_dim=24,
-        action_dim=12,
+        action_dim=6,
     )
 
 
@@ -126,7 +118,7 @@ def load_policy(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Test policy inference (v3)")
+    parser = argparse.ArgumentParser(description="Test policy inference (v1)")
     parser.add_argument("--model", type=str, default=None, help="Path to .pt model")
     parser.add_argument(
         "--device", type=str, default="cpu", choices=["cpu", "cuda"]
@@ -140,7 +132,5 @@ if __name__ == "__main__":
     action = policy.get_action(obs)
 
     print(f"Observation shape: {obs.shape}")
-    print(f"Action shape: {action.shape}")
-    print(f"Position actions (0-5): {action[:6]}")
-    print(f"Velocity actions (6-11): {action[6:]}")
+    print(f"Action: {action}")
     print(f"Action range: [{action.min():.3f}, {action.max():.3f}]")

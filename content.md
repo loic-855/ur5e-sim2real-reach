@@ -185,7 +185,7 @@ com_offset_range: (-0.01, 0.01)  # meters
 - `policy_inference.py`: Basic TorchScript loader
 - `sim2real_node.py`: ROS2 node orchestrating observation→policy→action
 
-#### [V2 - 24D Normalized](scripts/sim2real/v2/)
+#### [V1 - 24D Normalized](scripts/sim2real/v1/)
 - `observation_builder.py`: Convert joint states to 24D normalized vector (v2 layout)
 - `policy_inference.py`: Inference wrapper for v2 models
 - **V2 observation normalization**:
@@ -194,8 +194,8 @@ com_offset_range: (-0.01, 0.01)  # meters
   tcp_linear_vel / 2m/s, tcp_angular_vel / π
   ```
 
-#### [V3 - 12D Actions](scripts/sim2real/v3/)
-- `policy_inference_v3.py`: Handles 12D action output (position + velocity)
+#### [V2 - 12D Actions](scripts/sim2real/v2/)
+- `policy_inference.py`: Handles 12D action output (position + velocity)
 - Action parsing: `[0:6]` → position increments, `[6:12]` → velocity feedforward
 
 #### [V6 - LSTM Support](scripts/sim2real/v6/)

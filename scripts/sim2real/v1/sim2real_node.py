@@ -1,30 +1,33 @@
 #!/usr/bin/env python3
 """
-Sim2Real Node for UR5e pose control via RTDE – **V3** (velocity feedforward).
-
-Extension of V2: the policy outputs 12 actions instead of 6.
-  - actions[0:6]  → position increments (sent as q_des via registers 24-29)
-  - actions[6:12] → velocity feedforward targets (sent as qdot_des via registers 30-35)
+Sim2Real Node for UR5e pose control via RTDE – **V1** (normalised observations).
 
 This node:
 1. Connects to the UR5e robot via RTDE and runs a **dedicated reader
    thread at 125 Hz** that continuously caches the latest robot state
+   (actual_q, actual_qd, actual_TCP_pose, actual_TCP_speed)
 2. Subscribes to /goal_pose (ROS2) for target end-effector pose
-3. The **control loop runs at 60 Hz**, builds 24-dim normalised
-   observations, runs 12-dim policy inference
-4. Sends q_des AND qdot_des via RTDE input registers (continuous stream)
-5. URScript on the robot runs an impedance controller V3 with velocity
-   feedforward at 500 Hz
+3. The **control loop runs at 60 Hz**, reads the most recent cached
+   state, builds 24-dim normalised observations matching IsaacSim v2,
+   and runs policy inference
+4. Sends q_des via RTDE input registers (continuous stream)
+5. URScript on the robot runs an impedance controller with first-order
+   interpolation filter at 500 Hz for smooth motion
 
-Frame convention (same as V2):
+Decoupling the RTDE reader (125 Hz) from the policy loop (60 Hz)
+ensures observations are at most ~8 ms stale instead of ~16.7 ms.
+
+Frame convention:
   - RTDE TCP pose / velocity are in **robot-base** frame.
   - The policy expects everything in the **table-centre** frame.
   - Position conversion: simple offset ``ee_pos_table = ee_pos_base + ROBOT_BASE_LOCAL``
+  - Quaternion and velocities are used as-is (no rotation between frames).
+  - This matches the v1 sim2real_node convention (validated on real robot).
 
 Usage:
     source ~/wwro_ws/install/local_setup.bash
-    python3 sim2real_node_v3.py --robot gripper --model path/to/policy.pt
-    python3 scripts/sim2real/v3/sim2real_node_v3.py --robot gripper --rate 60 --action-scale 0.3 --velocity-scale 0.15 --model path/to/policy.pt
+    python3 sim2real_node.py --robot gripper
+    python3 sim2real_node.py --robot gripper --rate 60 --rtde-rate 125 --action-scale 3.0 --model path/to/policy.pt
 """
 
 import math
@@ -54,16 +57,16 @@ import rtde.rtde as rtde
 import rtde.rtde_config as rtde_config
 
 # Local imports
-from observation_builder_v3 import (
+from observation_builder import (
     RobotState, GoalState,
     build_observation,
-    compute_dof_targets_v3,
+    compute_dof_targets,
     quat_box_minus,
     JOINT_NAMES_SIM,
     JOINT_LIMITS_LOWER,
     JOINT_LIMITS_UPPER,
 )
-from policy_inference_v3 import load_policy
+from policy_inference import load_policy
 
 # ============================================================================
 # RTDE constants
@@ -74,15 +77,17 @@ ROBOT_PRIMARY_PORT = 30001
 
 # Paths relative to repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
-RTDE_CONFIG_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "rtde_input_v3.xml")
-#URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control_v3.script")
-URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control_test.script")
+RTDE_CONFIG_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "rtde_input_v2.xml")
+URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control.script")
 
 # Home position
 HOME_Q = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
 
 # ============================================================================
 # Robot base position relative to TABLE CENTRE (table frame origin).
+# actual_TCP_pose from RTDE is in the robot-base frame; we add this offset
+# to convert to the table-centre frame used by the policy / goal publisher.
+# Matches v1 sim2real_node (validated on real robot).
 # ============================================================================
 ROBOT_BASE_LOCAL = np.array([-0.52, 0.32, 0.02], dtype=np.float32)
 
@@ -102,11 +107,11 @@ def rotvec_to_quat(rx: float, ry: float, rz: float) -> np.ndarray:
 
 
 # ============================================================================
-# RTDE communication helper (V3: q_des + qdot_des)
+# RTDE communication helper
 # ============================================================================
 
 class RTDEController:
-    """Manages RTDE connection, URScript upload, q_des + qdot_des streaming,
+    """Manages RTDE connection, URScript upload, q_des streaming,
     and a background reader thread that caches robot state at 125 Hz."""
 
     def __init__(
@@ -127,8 +132,7 @@ class RTDEController:
         self.rtde_frequency = rtde_frequency
         self.control_rate = control_rate
         self.con: Optional[rtde.RTDE] = None
-        self.setp = None          # q_des registers 24-29
-        self.setp_vel = None      # qdot_des registers 30-35
+        self.setp = None
         self.stop_reg = None
         self.control_rate_reg = None
         self.connected = False
@@ -137,9 +141,9 @@ class RTDEController:
         self._state_lock = Lock()
         self._cached_q: Optional[np.ndarray] = None
         self._cached_qd: Optional[np.ndarray] = None
-        self._cached_tcp_pose: Optional[list] = None
-        self._cached_tcp_speed: Optional[list] = None
-        self._state_seq: int = 0
+        self._cached_tcp_pose: Optional[list] = None   # 6 floats
+        self._cached_tcp_speed: Optional[list] = None   # 6 floats
+        self._state_seq: int = 0          # monotonic counter
         self._reader_running = False
         self._reader_thread: Optional[Thread] = None
 
@@ -150,7 +154,6 @@ class RTDEController:
         conf = rtde_config.ConfigFile(self.config_file)
         output_names, output_types = conf.get_recipe("out")
         q_des_names, q_des_types = conf.get_recipe("q_des")
-        qdot_des_names, qdot_des_types = conf.get_recipe("qdot_des")
         stop_name, stop_type = conf.get_recipe("stop")
         control_rate_info, control_rate_type = conf.get_recipe("control_rate_info")
 
@@ -165,14 +168,10 @@ class RTDEController:
         if self.setp is None:
             raise RuntimeError("RTDE: unable to configure q_des input")
 
-        self.setp_vel = self.con.send_input_setup(qdot_des_names, qdot_des_types)
-        if self.setp_vel is None:
-            raise RuntimeError("RTDE: unable to configure qdot_des input")
-
         self.stop_reg = self.con.send_input_setup(stop_name, stop_type)
         if self.stop_reg is None:
             raise RuntimeError("RTDE: unable to configure stop signal")
-
+        
         self.control_rate_reg = self.con.send_input_setup(control_rate_info, control_rate_type)
         if self.control_rate_reg is None:
             raise RuntimeError("RTDE: unable to configure control rate info input")
@@ -181,34 +180,18 @@ class RTDEController:
             raise RuntimeError("RTDE: unable to start synchronisation")
 
         self.connected = True
-        print("[RTDE] Connected and synchronised (V3 – with qdot_des)")
+        print("[RTDE] Connected and synchronised")
 
     # -- URScript -----------------------------------------------------------
 
-    def send_home_movement(self, timeout: float = 5.0, wait_time: float = 5.2):
-        """Send a simple movej command to home position before impedance control."""
-        print("[RTDE] Sending home movement command...")
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect((self.robot_host, self.primary_port))
-            s.sendall(f"movej({HOME_Q}, a=0.7, v=0.6, t={timeout}, r=0)\n".encode("utf-8"))
-            s.close()
-            print("[RTDE] Home movement command sent")
-        except Exception as e:
-            raise RuntimeError(f"[RTDE] Failed to send home movement: {e}")
-
-        time.sleep(wait_time)
-        print(f"[RTDE] Home movement completed")
-
     def send_urscript(self):
-        """Upload and start the URScript impedance controller V3 on the robot."""
+        """Upload and start the URScript impedance controller on the robot."""
         self.stop_reg.input_bit_register_64 = False
         self.con.send(self.stop_reg)
-        self.control_rate_reg.input_int_register_36 = int(self.control_rate)
+        self.control_rate_reg.input_int_register_30 = int(self.control_rate)
         self.con.send(self.control_rate_reg)
 
         self._write_q_des(HOME_Q)
-        self._write_qdot_des([0.0] * 6)
 
         print(f"[RTDE] Sending URScript: {self.urscript_file}")
         try:
@@ -225,7 +208,7 @@ class RTDEController:
         time.sleep(3.0)
         print("[RTDE] URScript started on robot")
 
-    # -- q_des + qdot_des streaming -----------------------------------------
+    # -- q_des streaming ----------------------------------------------------
 
     def _write_q_des(self, q_des):
         """Write 6 joint values into RTDE input registers 24-29."""
@@ -233,23 +216,15 @@ class RTDEController:
             self.setp.__dict__[f"input_double_register_{24 + i}"] = float(q_des[i])
         self.con.send(self.setp)
 
-    def _write_qdot_des(self, qdot_des):
-        """Write 6 velocity values into RTDE input registers 30-35."""
-        for i in range(6):
-            self.setp_vel.__dict__[f"input_double_register_{30 + i}"] = float(qdot_des[i])
-        self.con.send(self.setp_vel)
-
-    def send_targets(self, q_des: np.ndarray, qdot_des: np.ndarray):
-        """Send both position and velocity targets in a single call."""
-        self._write_q_des(q_des.tolist())
-        self._write_qdot_des(qdot_des.tolist())
-
     def send_q_des(self, q_des: np.ndarray):
-        """Send position targets only (backward compatibility)."""
         self._write_q_des(q_des.tolist())
 
     def receive_state(self):
-        """Receive the latest robot state from RTDE (synchronous)."""
+        """Receive the latest robot state from RTDE (synchronous).
+
+        Returns:
+            RTDE state object, or None on failure.
+        """
         if self.con is None:
             return None
         return self.con.receive()
@@ -290,14 +265,19 @@ class RTDEController:
                         self._cached_tcp_speed = list(state.actual_TCP_speed)
                         self._state_seq += 1
             except Exception:
-                pass
+                pass  # transient RTDE error; next iteration will retry
+            # Sleep for the remainder of the period
             elapsed = time.monotonic() - t0
             sleep_time = period - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
     def get_cached_state(self):
-        """Return the latest cached state as a tuple, or None if not yet available."""
+        """Return the latest cached state as a tuple, or None if not yet available.
+
+        Returns:
+            (q, qd, tcp_pose, tcp_speed, seq) or None.
+        """
         with self._state_lock:
             if self._cached_q is None:
                 return None
@@ -316,8 +296,6 @@ class RTDEController:
         if self.con is None or not self.connected:
             return
         try:
-            # Zero velocity before stopping
-            self._write_qdot_des([0.0] * 6)
             self.stop_reg.input_bit_register_64 = True
             self.con.send(self.stop_reg)
             time.sleep(2.0)
@@ -339,11 +317,11 @@ class RTDEController:
 
 
 # ============================================================================
-# ROS2 + RTDE sim2real node (V3)
+# ROS2 + RTDE sim2real node
 # ============================================================================
 
 class Sim2RealNode(Node):
-    """ROS2 node for sim2real policy deployment with velocity feedforward."""
+    """ROS2 node for sim2real policy deployment using RTDE for joint control."""
 
     def __init__(
         self,
@@ -352,26 +330,24 @@ class Sim2RealNode(Node):
         control_rate: float = 60.0,
         rtde_rate: float = 125.0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
-        action_scale: float = 0.3,
-        velocity_scale: float = 0.7,
+        action_scale: float = 7.0,
         robot_host: str = ROBOT_HOST,
     ):
-        super().__init__("sim2real_policy_node_v3")
+        super().__init__("sim2real_policy_node_v1")
 
         self.robot_prefix = robot_prefix
         self.control_rate = control_rate
         self.dt = 1.0 / control_rate
         self.action_scale = action_scale
-        self.velocity_scale = velocity_scale
 
         # State variables (protected by lock)
         self.lock = Lock()
         self.joint_positions: Optional[np.ndarray] = None
         self.joint_velocities: Optional[np.ndarray] = None
-        self.ee_position: Optional[np.ndarray] = None
-        self.ee_quaternion: Optional[np.ndarray] = None
-        self.tcp_linear_vel: Optional[np.ndarray] = None
-        self.tcp_angular_vel: Optional[np.ndarray] = None
+        self.ee_position: Optional[np.ndarray] = None       # source frame
+        self.ee_quaternion: Optional[np.ndarray] = None      # source frame
+        self.tcp_linear_vel: Optional[np.ndarray] = None     # source frame
+        self.tcp_angular_vel: Optional[np.ndarray] = None    # source frame
         self.goal_position: Optional[np.ndarray] = None
         self.goal_quaternion: Optional[np.ndarray] = None
         self.old_goal: Optional[np.ndarray] = None
@@ -388,32 +364,30 @@ class Sim2RealNode(Node):
         self._benchmark_lock = Lock()
 
         # ==================================================================
-        # Load policy (24-dim obs → 12-dim actions)
+        # Load policy
         # ==================================================================
         self.get_logger().info(f"Loading policy from: {model_path or 'default'}")
         self.policy = load_policy(model_path=model_path, device=device)
         self.get_logger().info("Policy loaded successfully!")
 
         # ==================================================================
-        # RTDE controller V3  (reader runs at rtde_rate, decoupled from policy)
+        # RTDE controller  (reader runs at rtde_rate, decoupled from policy)
         # ==================================================================
         self.rtde = RTDEController(
             robot_host=robot_host,
             rtde_frequency=rtde_rate,
             control_rate=control_rate,
         )
-        self.get_logger().info("Connecting to robot via RTDE (V3)...")
+        self.get_logger().info("Connecting to robot via RTDE...")
         self.rtde.connect()
-        self.get_logger().info("Sending home movement...")
-        self.rtde.send_home_movement()
-        self.get_logger().info("Uploading URScript (impedance + velocity feedforward)...")
+        self.get_logger().info("Uploading URScript (impedance + first-order filter)...")
         self.rtde.send_urscript()
         self.get_logger().info("Starting RTDE reader thread...")
         self.rtde.start_reader()
         self.get_logger().info(
             f"RTDE ready!  reader={rtde_rate} Hz  policy={control_rate} Hz"
         )
-        self._last_state_seq = 0
+        self._last_state_seq = 0  # track if we got new data
 
         # ==================================================================
         # ROS2 Subscribers (goal pose)
@@ -441,10 +415,8 @@ class Sim2RealNode(Node):
             callback_group=self.callback_group,
         )
 
-        self.get_logger().info(f"Sim2Real V3 node initialised at {control_rate} Hz")
-        self.get_logger().info(
-            f"Action scale: {action_scale}  |  Velocity scale: {velocity_scale}"
-        )
+        self.get_logger().info(f"Sim2Real V1 node initialised at {control_rate} Hz")
+        self.get_logger().info(f"Action scale: {action_scale} (sim uses 2.0)")
 
     # -- Benchmarking helpers ----------------------------------------------
 
@@ -497,7 +469,16 @@ class Sim2RealNode(Node):
     # -- RTDE state reading (from cached reader thread) ---------------------
 
     def update_robot_state_from_cache(self) -> bool:
-        """Fetch the latest cached RTDE state and convert to table-centre frame."""
+        """Fetch the latest cached RTDE state (written by the 125 Hz reader
+        thread) and convert to the table-centre frame.
+
+        Position: simple offset ``ee_pos = ee_pos_base + ROBOT_BASE_LOCAL``
+        Quaternion / velocities: used as-is (no rotation between frames).
+        This matches the v1 sim2real_node (validated on real robot).
+
+        Returns:
+            True if state was updated successfully.
+        """
         cached = self.rtde.get_cached_state()
         if cached is None:
             self.get_logger().warn(
@@ -508,14 +489,20 @@ class Sim2RealNode(Node):
 
         positions, velocities, tcp, tcp_speed, seq = cached
 
+        # Skip if we already consumed this exact sample
         if seq == self._last_state_seq:
-            return True
+            return True  # state unchanged but still valid
         self._last_state_seq = seq
 
+        # TCP pose: (x, y, z, rx, ry, rz) in robot-base frame
         ee_pos_base = np.array([tcp[0], tcp[1], tcp[2]], dtype=np.float32)
         ee_quat = rotvec_to_quat(tcp[3], tcp[4], tcp[5])
+
+        # Shift position from robot-base frame to table-centre frame
+        # (same as v1 – no rotation, just translation)
         ee_pos_table = ee_pos_base + ROBOT_BASE_LOCAL
 
+        # TCP velocity: (vx, vy, vz, wx, wy, wz) – used as-is (no rotation)
         tcp_lin_vel = np.array([tcp_speed[0], tcp_speed[1], tcp_speed[2]], dtype=np.float32)
         tcp_ang_vel = np.array([tcp_speed[3], tcp_speed[4], tcp_speed[5]], dtype=np.float32)
 
@@ -564,7 +551,7 @@ class Sim2RealNode(Node):
         if not self.is_running:
             return
 
-        # 1. Read latest cached state
+        # 1. Read latest cached state (updated by 125 Hz reader thread)
         if not self.update_robot_state_from_cache():
             return
 
@@ -597,30 +584,27 @@ class Sim2RealNode(Node):
             )
             current_targets = self.dof_targets.copy()
 
-        # 3. Build observation (24-dim, normalised – same as V2)
+        # 3. Build observation (24-dim, normalised)
         observation = build_observation(robot_state, goal_state)
 
-        # Benchmark recording
+        # If benchmarking: record sample
         if self._benchmark:
             try:
                 self._record_benchmark_sample(robot_state, goal_state)
             except Exception:
                 pass
 
-        # 4. Policy inference (12-dim output)
+        # 4. Policy inference
         actions = self.policy.get_action(observation)
 
-        # 5. Compute new position targets + velocity targets
-        new_targets, velocity_targets = compute_dof_targets_v3(
-            current_targets, actions, self.dt,
-            self.action_scale, self.velocity_scale,
-        )
+        # 5. Compute new DOF targets
+        new_targets = compute_dof_targets(current_targets, actions, self.dt, self.action_scale)
 
         with self.lock:
             self.dof_targets = new_targets
 
-        # 6. Send q_des + qdot_des via RTDE
-        self.rtde.send_targets(new_targets, velocity_targets)
+        # 6. Send q_des via RTDE
+        self.rtde.send_q_des(new_targets)
 
         # DEBUG log at ~2 Hz
         pos_err = np.linalg.norm(goal_state.position - robot_state.ee_position)
@@ -629,8 +613,7 @@ class Sim2RealNode(Node):
             f"pos_err={pos_err:.4f}m  ori_err={ori_err:.3f}rad | "
             f"EE=({robot_state.ee_position[0]:.3f},{robot_state.ee_position[1]:.3f},{robot_state.ee_position[2]:.3f}) "
             f"Goal=({goal_state.position[0]:.3f},{goal_state.position[1]:.3f},{goal_state.position[2]:.3f}) | "
-            f"PosAct=({actions[0]:.2f},{actions[1]:.2f},{actions[2]:.2f},{actions[3]:.2f},{actions[4]:.2f},{actions[5]:.2f}) "
-            f"VelAct=({actions[6]:.2f},{actions[7]:.2f},{actions[8]:.2f},{actions[9]:.2f},{actions[10]:.2f},{actions[11]:.2f})",
+            f"Act=({actions[0]:.2f},{actions[1]:.2f},{actions[2]:.2f},{actions[3]:.2f},{actions[4]:.2f},{actions[5]:.2f})",
             throttle_duration_sec=0.5,
         )
 
@@ -651,7 +634,7 @@ class Sim2RealNode(Node):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Sim2Real V3 Policy Deployment (RTDE + velocity feedforward)")
+    parser = argparse.ArgumentParser(description="Sim2Real V1 Policy Deployment (RTDE)")
     parser.add_argument(
         "--robot", type=str, default="gripper",
         choices=["gripper", "screwdriver"],
@@ -671,12 +654,8 @@ def main():
         help="Device for policy inference",
     )
     parser.add_argument(
-        "--action-scale", type=float, default=0.3,
-        help="Action scaling factor for position increments",
-    )
-    parser.add_argument(
-        "--velocity-scale", type=float, default=0.7,
-        help="Velocity scaling factor for feedforward (rad/s)",
+        "--action-scale", type=float, default=0.5,
+        help="Action scaling factor (sim v1 uses 2.0)",
     )
     parser.add_argument(
         "--rtde-rate", type=float, default=125.0,
@@ -703,19 +682,18 @@ def main():
             rtde_rate=args.rtde_rate,
             device=args.device,
             action_scale=args.action_scale,
-            velocity_scale=args.velocity_scale,
             robot_host=args.robot_ip,
         )
 
         node.start()
 
         if args.benchmark:
-            BENCHMARK_DURATION = 20.0
+            BENCHMARK_DURATION = 90.0
             node.get_logger().info(f"Starting benchmark for {BENCHMARK_DURATION}s...")
             node._benchmark = True
 
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
-            out_path = str(REPO_ROOT / "logs" / "benchmarks" / f"policy_bench_v3_{ts}.json")
+            out_path = str(REPO_ROOT / "logs" / "benchmarks" / f"policy_bench_v1_{ts}.json")
 
             def _bench_thread():
                 try:
@@ -730,9 +708,8 @@ def main():
                     "robot": args.robot,
                     "rate_hz": args.rate,
                     "action_scale": args.action_scale,
-                    "velocity_scale": args.velocity_scale,
                     "duration_s": BENCHMARK_DURATION,
-                    "version": "v3",
+                    "version": "v1",
                 }
                 try:
                     node._save_benchmark_results(out_path, metadata)
