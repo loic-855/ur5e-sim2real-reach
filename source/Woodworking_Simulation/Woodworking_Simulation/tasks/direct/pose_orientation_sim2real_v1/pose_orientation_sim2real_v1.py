@@ -167,6 +167,7 @@ class PoseOrientationSim2RealV1Cfg(DirectRLEnvCfg):
     # action and coef scaling
     action_scale = 2.0
     reset_range = 0.125
+    goal_timeout_s = 5.0
 
     # reward weights
     ee_position_penalty = -1.0
@@ -313,7 +314,7 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         self.goal_steps_elapsed = torch.zeros(
             self.num_envs, dtype=torch.long, device=self.device
         )
-        self.goal_max_steps = int(5.0 / self.dt)
+        self.goal_max_steps = int(self.cfg.goal_timeout_s / self.dt)
 
         # visualisation markers
         if self.cfg.debug:
