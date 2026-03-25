@@ -1,7 +1,7 @@
 # Ablation sweep for sim2real v1
 # 7 runs: no DR, all DR, and single-parameter toggles (including two delay variants)
 # Overrides are written as full hydra-style strings per-line to match other sweeps.
-# Usage:  python euler/generate_sweep.py --config euler/sweep_sim2real_v1_ablation.yaml --submit
+# Usage:  python euler/generate_sweep.py --config euler/sweep_sim2real_v1_ablation_10s_timeout.yaml --submit
 # ============================================================================
 
 task_name: "WWSim-Pose-Orientation-Sim2Real-Direct-v1"
