@@ -14,18 +14,10 @@
     <field name="input_double_register_28" type="DOUBLE"/>
     <field name="input_double_register_29" type="DOUBLE"/>
   </recipe>
-  <recipe key="qdot_des">
-    <field name="input_double_register_30" type="DOUBLE"/>
-    <field name="input_double_register_31" type="DOUBLE"/>
-    <field name="input_double_register_32" type="DOUBLE"/>
-    <field name="input_double_register_33" type="DOUBLE"/>
-    <field name="input_double_register_34" type="DOUBLE"/>
-    <field name="input_double_register_35" type="DOUBLE"/>
-  </recipe>
   <recipe key="stop">
     <field name="input_bit_register_64" type="BOOL"/>
-  </recipe>
-  <recipe key="control_rate_info">
-    <field name="input_int_register_36" type="INT32"/>
-  </recipe>
+</recipe>
+<recipe key="control_rate_info">
+    <field name="input_int_register_30" type="INT32"/>
+</recipe>
 </rtde_config>

@@ -77,7 +77,7 @@ ROBOT_PRIMARY_PORT = 30001
 
 # Paths relative to repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
-RTDE_CONFIG_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "rtde_input_v2.xml")
+RTDE_CONFIG_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "rtde_input_v1.xml")
 URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control.script")
 
 # Home position
