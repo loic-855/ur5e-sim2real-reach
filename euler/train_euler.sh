@@ -12,7 +12,7 @@
 #SBATCH --error=logs/train_%j.err
 
 # --- CONFIGURATION ---
-TASK_NAME="WWSim-Pose-Orientation-Sim2Real-Direct-v4"  # Must match a task_name in your config files (e.g. source/wwsim/configs/pose_orientation_sim2real_direct.yaml)
+TASK_NAME="WWSim-Pose-Orientation-Sim2Real-Direct-v1"  # Must match a task_name in your config files (e.g. source/wwsim/configs/pose_orientation_sim2real_direct.yaml)
 # UPDATE THIS PATH to where you uploaded your .sif file
 SIF_PATH="/cluster/scratch/$USER/isaac_euler_salziegl.sif"
 
@@ -72,32 +72,22 @@ apptainer exec --nv \
         echo 'Installing Project...'
         /isaac-sim/python.sh -m pip install --user -e /workspace/isaaclab/$PROJECT_NAME/source/$PROJECT_NAME
 
-        # 2. Run Training - Sweep option 1 (noise disabled, minimal delays, low penalties)
-        echo 'Starting Training (Sweep Option 1)...'
+        # 2. Run Training
+        echo 'Starting Training'
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \
             --headless \
-            agent.wandb_project=sim2real_v4_new_network \
+            --run_name=_rand-False_10s-Timeout \
             agent.max_iterations=1500 \
-            agent.experiment_name=pose_orientation_sim2real_v4_new_network \
-            agent.policy.actor_hidden_dims=[256,128,64] \
-            agent.policy.critic_hidden_dims=[256,128,64] \
-            agent.num_steps_per_env=512 \
-            agent.algorithm.entropy_coef=0.0 \
-            env.domain_rand.enable_actuator_rand=True \
+            agent.wandb_project=sim2real_v1_ablation \
+            agent.experiment_name=sim2real_v1_ablation \
+            env.domain_rand.enable_actuator_rand=False \
             env.domain_rand.enable_mass_com_rand=False \
             env.domain_rand.enable_noise=False \
             env.domain_rand.enable_delay=False \
-            env.domain_rand.action_delay_range=[1,2] \
-            env.domain_rand.obs_delay_range=[0,1] \
-            env.ee_position_reward=2.0 \
-            env.ee_position_penalty=-1.0 \
-            env.ee_orientation_reward=0.0 \
-            env.ee_orientation_penalty=-0.8 \
-            env.action_penalty_scale=-0.025 \
-            env.velocity_action_penalty_scale=-0.025 \
-            env.velocity_penalty_scale=-0.025
-
+            env.domain_rand.action_delay_range=[0,0] \
+            env.domain_rand.obs_delay_range=[0,0] \
+            env.goal_timeout_s=10.0
     "
 
 # Cleanup Cache
