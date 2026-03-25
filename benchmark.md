@@ -9,7 +9,7 @@
 - Utiliser 10 goals définis manuellement.
 - Format des goals : `[x, y, z, qw, qx, qy, qz]`.
 - Campagne déterministe avec une seed.
-- Temps maximal par goal : 10 s.
+- Temps maximal par goal : 5 s pour le benchmark sim actuel.
 - `in_area` : 5 cm et 15°.
 - `on_goal` : 2 cm et 10°.
 
@@ -31,12 +31,13 @@
 - Simplification du reset V4 vers un reset home unique.
 - Ajout d'un mode booléen `deterministic_goal_sampling` dans [source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_sim2real_v4/pose_orientation_sim2real_v4.py](source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_sim2real_v4/pose_orientation_sim2real_v4.py).
 - Ajout d'un tenseur interne minimal pour stocker des goals explicites.
-- Ajout d'un fichier par défaut [scripts/rsl_rl/default_benchmark_goals.json](scripts/rsl_rl/default_benchmark_goals.json).
+- Ajout d'un fichier par défaut [scripts/benchmark_settings/default_benchmark_goals.json](scripts/benchmark_settings/default_benchmark_goals.json).
 - Ajout d'une CLI `--goals-file` pour injecter les goals explicites dans le runner sim.
 - Implémentation des métriques `in_area` et `on_goal` dans [scripts/rsl_rl/test.py](scripts/rsl_rl/test.py).
 - Export automatique d'un JSON de benchmark dans `logs/benchmarks/`.
 - Le runner sim utilise maintenant la longueur réelle du tuple de goals pour déterminer le nombre de goals à exécuter.
-- Arrêt automatique du runner sim après un passage complet sur la liste de goals par défaut.
+- Le runner sim exécute un seul passage complet sur la liste de goals, sans reset intermédiaire de l'environnement.
+- Le runner sim accepte maintenant soit un checkpoint `.pt`, soit un fichier JSON de checkpoints comme [scripts/benchmark_settings/default_benchmark_checkpoints.json](scripts/benchmark_settings/default_benchmark_checkpoints.json).
 
 ### En cours / à faire
 
@@ -51,5 +52,16 @@ python scripts/rsl_rl/test.py \
   --checkpoint logs/rsl_rl/.../model_1499.pt \
   --num_envs 1 \
   --seed 12 \
-  --goals-file scripts/rsl_rl/default_benchmark_goals.json
+  --goals-file scripts/benchmark_settings/default_benchmark_goals.json
+```
+
+## Format JSON pour plusieurs checkpoints
+
+```json
+{
+  "checkpoints": [
+    "logs/rsl_rl/run_a/model_1499.pt",
+    "logs/rsl_rl/run_b/model_1499.pt"
+  ]
+}
 ```

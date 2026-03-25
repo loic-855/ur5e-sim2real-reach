@@ -9,15 +9,21 @@ This is a small variant of ``play.py`` intended for deterministic
 benchmark preparation in simulation.
 
 Example:
-    ./isaaclab.sh -p scripts/rsl_rl/test.py \
-        --task Woodworking_Simulation-Pose-Orientation-Sim2Real-V4-Direct-v0 \
-        --checkpoint logs/rsl_rl/<run>/model_2499.pt \
+    python scripts/rsl_rl/test.py \
+        --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 \
+        --checkpoint logs/rsl_rl/sim2real_v1_ablation/2026-03-25_00-53-16_rand-False/model_1499.pt\
         --num_envs 1 \
         --seed 1234 \
-        --goals-file scripts/rsl_rl/default_benchmark_goals.json
+        --goals-file scripts/benchmark_settings/default_benchmark_goals.json
+
+    python scripts/rsl_rl/test.py \
+        --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 \
+        --checkpoint scripts/benchmark_settings/default_benchmark_checkpoints.json \
+        --num_envs 1
 """
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -32,13 +38,14 @@ import cli_args  # isort: skip
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_GOALS_FILE = REPO_ROOT / "scripts" / "rsl_rl" / "default_benchmark_goals.json"
+DEFAULT_GOALS_FILE = REPO_ROOT / "scripts" / "benchmark_settings" / "default_benchmark_goals.json"
+DEFAULT_CHECKPOINTS_FILE = REPO_ROOT / "scripts" / "benchmark_settings" / "default_benchmark_checkpoints.json"
 
 GOAL_TIMEOUT_S = 10.0
-IN_AREA_POS_M = 0.05
+IN_AREA_POS_M = 0.08
 IN_AREA_ROT_RAD = 15.0 * math.pi / 180.0
-ON_GOAL_POS_M = 0.02
-ON_GOAL_ROT_RAD = 10.0 * math.pi / 180.0
+ON_GOAL_POS_M = 0.03
+ON_GOAL_ROT_RAD = 8.0 * math.pi / 180.0
 
 
 parser = argparse.ArgumentParser(description="Test an RSL-RL checkpoint in Isaac Sim.")
@@ -115,15 +122,63 @@ def _load_benchmark_goals(goals_file: str) -> tuple[tuple[float, ...], ...]:
     return tuple(parsed_goals)
 
 
+def _load_checkpoints(checkpoint_arg: str) -> list[str]:
+    checkpoint_path = Path(checkpoint_arg)
+    if checkpoint_path.suffix == ".pt":
+        return [checkpoint_arg]
+
+    with open(checkpoint_path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    if isinstance(payload, dict):
+        payload = payload.get("checkpoints")
+
+    if not isinstance(payload, list) or len(payload) == 0:
+        raise ValueError(
+            "Checkpoint file must be a non-empty JSON list of checkpoint paths or an object with a 'checkpoints' list."
+        )
+
+    checkpoints: list[str] = []
+    for entry in payload:
+        if isinstance(entry, str):
+            entry_path = Path(entry)
+        elif isinstance(entry, dict) and isinstance(entry.get("path"), str):
+            entry_path = Path(entry["path"])
+        else:
+            raise ValueError("Each checkpoint entry must be a string or an object containing a 'path' field.")
+        if not entry_path.is_absolute():
+            entry_path = REPO_ROOT / entry_path
+        checkpoints.append(str(entry_path))
+    return checkpoints
+
+
+def _extract_run_name_from_checkpoint(resume_path: str) -> str:
+    agent_yaml_path = Path(resume_path).resolve().parent / "params" / "agent.yaml"
+    if not agent_yaml_path.is_file():
+        raise FileNotFoundError(f"Could not find agent config file: {agent_yaml_path}")
+
+    with open(agent_yaml_path, "r", encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+            if stripped.startswith("run_name:"):
+                run_name = stripped.split(":", 1)[1].strip()
+                if run_name:
+                    return run_name
+
+    raise ValueError(f"Could not find 'run_name' in {agent_yaml_path}")
+
+
 def _apply_runtime_env_overrides(env_cfg):
     env_cfg.reset_range = 0.0
     env_cfg.deterministic_goal_sampling = True
     env_cfg.benchmark_goals = _load_benchmark_goals(args_cli.goals_file)
-    env_cfg.domain_rand.enable_physical_rand = False
+    env_cfg.goal_timeout_s = GOAL_TIMEOUT_S
+    env_cfg.domain_rand.enable_actuator_rand = False
     env_cfg.domain_rand.enable_noise = False
     env_cfg.domain_rand.enable_delay = False
+    env_cfg.domain_rand.enable_mass_com_rand = False
     env_cfg.debug = True
-    env_cfg.episode_length_s = 10.0 * len(env_cfg.benchmark_goals)
+    env_cfg.episode_length_s = GOAL_TIMEOUT_S * len(env_cfg.benchmark_goals)
 
 
 def _make_goal_result(goal_index: int) -> dict:
@@ -131,23 +186,37 @@ def _make_goal_result(goal_index: int) -> dict:
         "goal_index": goal_index,
         "time_to_in_area_s": None,
         "time_to_on_goal_s": None,
+        "samples_total": 0,
         "samples_in_area": 0,
         "samples_on_goal": 0,
+        "sum_pos_err": 0.0,
+        "sum_rot_err": 0.0,
         "sum_pos_err_in_area": 0.0,
         "sum_rot_err_in_area": 0.0,
+        "min_pos_err_m": None,
+        "min_rot_err_rad": None,
         "reached_in_area": False,
         "reached_on_goal": False,
     }
 
 
 def _finalize_goal_result(goal_result: dict) -> dict:
+    samples_total = int(goal_result["samples_total"])
     samples_in_area = int(goal_result["samples_in_area"])
+    if samples_total > 0:
+        goal_result["mean_pos_err_m"] = goal_result["sum_pos_err"] / samples_total
+        goal_result["mean_rot_err_rad"] = goal_result["sum_rot_err"] / samples_total
+    else:
+        goal_result["mean_pos_err_m"] = None
+        goal_result["mean_rot_err_rad"] = None
     if samples_in_area > 0:
         goal_result["mean_pos_err_in_area_m"] = goal_result["sum_pos_err_in_area"] / samples_in_area
         goal_result["mean_rot_err_in_area_rad"] = goal_result["sum_rot_err_in_area"] / samples_in_area
     else:
         goal_result["mean_pos_err_in_area_m"] = None
         goal_result["mean_rot_err_in_area_rad"] = None
+    del goal_result["sum_pos_err"]
+    del goal_result["sum_rot_err"]
     del goal_result["sum_pos_err_in_area"]
     del goal_result["sum_rot_err_in_area"]
     return goal_result
@@ -165,6 +234,14 @@ def _read_pose_errors(task) -> tuple[float, float]:
 
 
 def _update_goal_result(goal_result: dict, goal_time_s: float, pos_err: float, rot_err: float):
+    goal_result["samples_total"] += 1
+    goal_result["sum_pos_err"] += pos_err
+    goal_result["sum_rot_err"] += rot_err
+    if goal_result["min_pos_err_m"] is None or pos_err < goal_result["min_pos_err_m"]:
+        goal_result["min_pos_err_m"] = pos_err
+    if goal_result["min_rot_err_rad"] is None or rot_err < goal_result["min_rot_err_rad"]:
+        goal_result["min_rot_err_rad"] = rot_err
+
     in_area = pos_err <= IN_AREA_POS_M and rot_err <= float(IN_AREA_ROT_RAD)
     on_goal = pos_err <= ON_GOAL_POS_M and rot_err <= float(ON_GOAL_ROT_RAD)
 
@@ -186,6 +263,8 @@ def _update_goal_result(goal_result: dict, goal_time_s: float, pos_err: float, r
 def _build_episode_summary(episode_index: int, goal_results: list[dict]) -> dict:
     in_area_times = [g["time_to_in_area_s"] for g in goal_results if g["time_to_in_area_s"] is not None]
     on_goal_times = [g["time_to_on_goal_s"] for g in goal_results if g["time_to_on_goal_s"] is not None]
+    mean_pos = [g["mean_pos_err_m"] for g in goal_results if g["mean_pos_err_m"] is not None]
+    mean_rot = [g["mean_rot_err_rad"] for g in goal_results if g["mean_rot_err_rad"] is not None]
     mean_pos_in_area = [g["mean_pos_err_in_area_m"] for g in goal_results if g["mean_pos_err_in_area_m"] is not None]
     mean_rot_in_area = [g["mean_rot_err_in_area_rad"] for g in goal_results if g["mean_rot_err_in_area_rad"] is not None]
     goal_count = len(goal_results)
@@ -196,6 +275,8 @@ def _build_episode_summary(episode_index: int, goal_results: list[dict]) -> dict
         "goals": goal_results,
         "goals_reached_in_area": sum(1 for g in goal_results if g["reached_in_area"]),
         "goals_reached_on_goal": sum(1 for g in goal_results if g["reached_on_goal"]),
+        "mean_pos_err_m": sum(mean_pos) / len(mean_pos) if mean_pos else None,
+        "mean_rot_err_rad": sum(mean_rot) / len(mean_rot) if mean_rot else None,
         "mean_time_to_in_area_s": sum(in_area_times) / len(in_area_times) if in_area_times else None,
         "mean_time_to_on_goal_s": sum(on_goal_times) / len(on_goal_times) if on_goal_times else None,
         "mean_pos_err_in_area_m": sum(mean_pos_in_area) / len(mean_pos_in_area) if mean_pos_in_area else None,
@@ -204,13 +285,16 @@ def _build_episode_summary(episode_index: int, goal_results: list[dict]) -> dict
 
 
 def _save_benchmark_results(log_dir: str, resume_path: str, goals: tuple[tuple[float, ...], ...], results: list[dict]):
-    benchmark_dir = REPO_ROOT / "logs" / "benchmarks"
+    benchmark_dir = REPO_ROOT / "logs" / "benchmarks" / "sim_pose"
     benchmark_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
-    out_path = benchmark_dir / f"_{timestamp}_sim_pose_benchmark.json"
+    run_name = _extract_run_name_from_checkpoint(resume_path)
+    out_path = benchmark_dir / f"{timestamp}_{run_name}.json"
 
     all_in_area_times = [g["time_to_in_area_s"] for ep in results for g in ep["goals"] if g["time_to_in_area_s"] is not None]
     all_on_goal_times = [g["time_to_on_goal_s"] for ep in results for g in ep["goals"] if g["time_to_on_goal_s"] is not None]
+    all_pos = [g["mean_pos_err_m"] for ep in results for g in ep["goals"] if g["mean_pos_err_m"] is not None]
+    all_rot = [g["mean_rot_err_rad"] for ep in results for g in ep["goals"] if g["mean_rot_err_rad"] is not None]
     all_pos_in_area = [g["mean_pos_err_in_area_m"] for ep in results for g in ep["goals"] if g["mean_pos_err_in_area_m"] is not None]
     all_rot_in_area = [g["mean_rot_err_in_area_rad"] for ep in results for g in ep["goals"] if g["mean_rot_err_in_area_rad"] is not None]
 
@@ -218,6 +302,7 @@ def _save_benchmark_results(log_dir: str, resume_path: str, goals: tuple[tuple[f
         "metadata": {
             "task": args_cli.task,
             "checkpoint": resume_path,
+            "run_name": run_name,
             "log_dir": log_dir,
             "seed": args_cli.seed,
             "goal_count": len(goals),
@@ -232,6 +317,8 @@ def _save_benchmark_results(log_dir: str, resume_path: str, goals: tuple[tuple[f
             "episodes_completed": len(results),
             "goal_count": len(goals),
             "total_goals_executed": sum(len(ep["goals"]) for ep in results),
+            "mean_pos_err_m": sum(all_pos) / len(all_pos) if all_pos else None,
+            "mean_rot_err_rad": sum(all_rot) / len(all_rot) if all_rot else None,
             "mean_time_to_in_area_s": sum(all_in_area_times) / len(all_in_area_times) if all_in_area_times else None,
             "mean_time_to_on_goal_s": sum(all_on_goal_times) / len(all_on_goal_times) if all_on_goal_times else None,
             "mean_pos_err_in_area_m": sum(all_pos_in_area) / len(all_pos_in_area) if all_pos_in_area else None,
@@ -248,28 +335,11 @@ def _save_benchmark_results(log_dir: str, resume_path: str, goals: tuple[tuple[f
     print(f"[INFO] Benchmark results saved to: {out_path}")
 
 
-
-@hydra_task_config(args_cli.task, args_cli.agent)
-def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
-    agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
-    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
-    env_cfg.seed = agent_cfg.seed
-    env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
-    _apply_runtime_env_overrides(env_cfg)
-
-    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
-    log_root_path = os.path.abspath(log_root_path)
-    print(f"[INFO] Loading experiment from directory: {log_root_path}")
-
-    resume_path = retrieve_file_path(args_cli.checkpoint)
-    if os.path.isdir(resume_path):
-        raise ValueError(
-            f"Provided --checkpoint is a directory ({resume_path}).\n"
-            "Please provide the explicit checkpoint file path, e.g. "
-            "logs/rsl_rl/<run>/model_2499.pt"
-        )
-
-    log_dir = os.path.dirname(resume_path)
+def _create_benchmark_env(
+    env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
+    agent_cfg: RslRlBaseRunnerCfg,
+    log_dir: str,
+):
     env_cfg.log_dir = log_dir
 
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -289,7 +359,16 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
-    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    return RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+
+
+def _run_single_checkpoint_benchmark(
+    env,
+    env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
+    agent_cfg: RslRlBaseRunnerCfg,
+    resume_path: str,
+):
+    log_dir = os.path.dirname(resume_path)
 
     print(f"[INFO] Loading model checkpoint from: {resume_path}")
     if agent_cfg.class_name == "OnPolicyRunner":
@@ -311,12 +390,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     )
     print(
         "[INFO] Domain randomization: "
-        f"physical={env_cfg.domain_rand.enable_physical_rand}, "
+        f"actuator={env_cfg.domain_rand.enable_actuator_rand}, "
+        f"mass_com={env_cfg.domain_rand.enable_mass_com_rand}, "
         f"noise={env_cfg.domain_rand.enable_noise}, "
         f"delay={env_cfg.domain_rand.enable_delay}"
     )
 
-    obs = env.get_observations()
+    obs, _ = env.reset()
     timestep = 0
     episode_idx = 0
     episode_step = 0
@@ -327,15 +407,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     benchmark_results: list[dict] = []
     current_goal_result = _make_goal_result(0)
 
-    while simulation_app.is_running() and episode_idx < len(env_cfg.benchmark_goals):
+    while simulation_app.is_running() and episode_idx < 1:
         start_time = time.time()
         goal_time_s = (episode_step % goal_timeout_steps) * env.unwrapped.step_dt
         pos_err, rot_err = _read_pose_errors(env.unwrapped)
         _update_goal_result(current_goal_result, goal_time_s, pos_err, rot_err)
 
-        with torch.inference_mode():
+        with torch.no_grad():
             actions = policy(obs)
-            obs, _, _, _ = env.step(actions)
+        obs, _, _, _ = env.step(actions)
 
         timestep += 1
         episode_step += 1
@@ -348,7 +428,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
         if episode_step >= steps_per_episode:
             benchmark_results.append(_build_episode_summary(episode_idx, episode_goal_results))
-            print(f"[INFO] Completed benchmark episode {episode_idx + 1}/{len(env_cfg.benchmark_goals)}")
+            print(f"[INFO] Completed benchmark episode {episode_idx + 1}/1")
             episode_idx += 1
             episode_step = 0
             episode_goal_results = []
@@ -362,7 +442,49 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             time.sleep(sleep_time)
 
     _save_benchmark_results(log_dir, resume_path, env_cfg.benchmark_goals, benchmark_results)
-    env.close()
+
+
+
+@hydra_task_config(args_cli.task, args_cli.agent)
+def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
+    agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
+    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+    env_cfg.seed = agent_cfg.seed
+    env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    _apply_runtime_env_overrides(env_cfg)
+
+    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+    log_root_path = os.path.abspath(log_root_path)
+    print(f"[INFO] Loading experiment from directory: {log_root_path}")
+
+    checkpoint_paths = _load_checkpoints(args_cli.checkpoint)
+    print(f"[INFO] Running benchmark for {len(checkpoint_paths)} checkpoint(s)")
+
+    first_resume_path = retrieve_file_path(checkpoint_paths[0])
+    if os.path.isdir(first_resume_path):
+        raise ValueError(
+            f"Provided checkpoint is a directory ({first_resume_path}).\n"
+            "Please provide the explicit checkpoint file path, e.g. logs/rsl_rl/<run>/model_2499.pt"
+        )
+
+    env = _create_benchmark_env(copy.deepcopy(env_cfg), copy.deepcopy(agent_cfg), os.path.dirname(first_resume_path))
+
+    try:
+        for checkpoint_idx, checkpoint_arg in enumerate(checkpoint_paths, start=1):
+            resume_path = retrieve_file_path(checkpoint_arg)
+            if os.path.isdir(resume_path):
+                raise ValueError(
+                    f"Provided checkpoint is a directory ({resume_path}).\n"
+                    "Please provide the explicit checkpoint file path, e.g. logs/rsl_rl/<run>/model_2499.pt"
+                )
+
+            print(f"[INFO] Benchmark {checkpoint_idx}/{len(checkpoint_paths)}")
+            _run_single_checkpoint_benchmark(env, copy.deepcopy(env_cfg), copy.deepcopy(agent_cfg), resume_path)
+
+            if not simulation_app.is_running():
+                break
+    finally:
+        env.close()
 
 
 if __name__ == "__main__":

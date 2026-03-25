@@ -96,10 +96,27 @@ python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v2 -
 
 python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v2 --num_envs 10 env.debug=True agent.policy.actor_hidden_dims=[256,128,64] agent.policy.critic_hidden_dims=[256,128,64] env.domain_rand.enable_actuator_rand=False env.domain_rand.enable_delay=False --checkpoint logs/rsl_rl/pose_orientation_sim2real_v4_new_network/2026-03-20_15-03-34/model_1499.pt
 
+## Commands for running the ablation study without velocity FF and with no randomisation in the simulation:
 
+Rando false: 
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 --num_envs 10 env.domain_rand.enable_actuator_rand=False env.debug=True env.domain_rand.enable_delay=False env.domain_rand.enable_noise=False env.domain_rand.enable_mass_com_rand=False --checkpoint logs/rsl_rl/sim2real_v1_ablation/2026-03-25_00-53-16_rand-False/model_1499.pt
 
+noise only:
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 --num_envs 10 env.domain_rand.enable_actuator_rand=False env.debug=True env.domain_rand.enable_delay=False env.domain_rand.enable_noise=False env.domain_rand.enable_mass_com_rand=False --checkpoint logs/rsl_rl/sim2real_v1_ablation/2026-03-25_00-53-16_rand-noise_only/model_1499.pt
 
+acutator only:
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 --num_envs 10 env.domain_rand.enable_actuator_rand=False env.debug=True env.domain_rand.enable_delay=False env.domain_rand.enable_noise=False env.domain_rand.enable_mass_com_rand=False --checkpoint logs/rsl_rl/sim2real_v1_ablation/2026-03-25_00-53-17_rand-actuator_only/model_1499.pt
 
+all enabled:
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 --num_envs 10 env.domain_rand.enable_actuator_rand=False env.debug=True env.domain_rand.enable_delay=False env.domain_rand.enable_noise=False env.domain_rand.enable_mass_com_rand=False --checkpoint
+
+delay only action 1-2
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 --num_envs 10 env.domain_rand.enable_actuator_rand=False env.debug=True env.domain_rand.enable_delay=False env.domain_rand.enable_noise=False env.domain_rand.enable_mass_com_rand=False --checkpoint
+
+masscom_only
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 --num_envs 10 env.domain_rand.enable_actuator_rand=False env.debug=True env.domain_rand.enable_delay=False env.domain_rand.enable_noise=False env.domain_rand.enable_mass_com_rand=False --checkpoint
+
+python scripts/rsl_rl/play.py --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 --num_envs 10 env.domain_rand.enable_actuator_rand=False env.debug=True env.domain_rand.enable_delay=False env.domain_rand.enable_noise=False env.domain_rand.enable_mass_com_rand=False --checkpoint
 
 
 
