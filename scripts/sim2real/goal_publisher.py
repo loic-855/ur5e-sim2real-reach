@@ -58,6 +58,7 @@ class GoalPublisher(Node):
         random_update_interval: float | None = None,
         cycling_goals: list[tuple[float, ...]] | None = None,
         cycling_goal_interval: float | None = None,
+        stop_after_single_cycle: bool = False,
     ):
         super().__init__("goal_publisher")
         
@@ -85,6 +86,8 @@ class GoalPublisher(Node):
         self.cycling_goals = cycling_goals if cycling_goals is not None else []
         self.current_goal_index = 0
         self.goal_cycle_timer = None
+        self.stop_after_single_cycle = stop_after_single_cycle
+        self.finished_cycling = False
 
         self.get_logger().info("Goal publisher started")
         self.get_logger().info("RViz: Add a Marker display with topic '/visualization_marker' to see the goal coordinate frame")
@@ -185,7 +188,7 @@ class GoalPublisher(Node):
     
     def cycle_to_next_goal(self):
         """Switch to next goal in the cycling goals list."""
-        if not self.cycling_goals:
+        if not self.cycling_goals or self.finished_cycling:
             return
         
         goal = self.cycling_goals[self.current_goal_index]
@@ -193,6 +196,15 @@ class GoalPublisher(Node):
             self.set_goal(goal[0], goal[1], goal[2], goal[3], goal[4], goal[5], goal[6])
         else:
             self.set_goal(goal[0], goal[1], goal[2])
+
+        is_last_goal = self.current_goal_index == len(self.cycling_goals) - 1
+        if self.stop_after_single_cycle and is_last_goal:
+            self.finished_cycling = True
+            if self.goal_cycle_timer is not None:
+                self.goal_cycle_timer.cancel()
+            self.get_logger().info("Completed one goal cycle from file; exiting.")
+            return
+
         self.current_goal_index = (self.current_goal_index + 1) % len(self.cycling_goals)
     
     
@@ -212,10 +224,9 @@ class GoalPublisher(Node):
             self.goal_quaternion /= norm
         
         self.get_logger().info(
-            f"Goal set: pos=[{x:.3f}, {y:.3f}, {z:.3f}], "
-            f"quat=[{self.goal_quaternion[0]:.3f}, {self.goal_quaternion[1]:.3f}, {self.goal_quaternion[2]:.3f}, {self.goal_quaternion[3]:.3f}] (w,x,y,z)"
+            f"Goal set: pos=[{x:.3f}, {y:.3f}, {z:.3f}, {self.goal_quaternion[0]:.3f}, {self.goal_quaternion[1]:.3f}, {self.goal_quaternion[2]:.3f}, {self.goal_quaternion[3]:.3f}] (w,x,y,z)], "
         )
-    
+        
     def publish_goal(self):
         """Publish current goal pose."""
         msg = PoseStamped()
@@ -267,6 +278,15 @@ def main():
     parser.add_argument("--update", type=float, default=10.0, help="Update goal every N seconds in random mode")
     parser.add_argument("--goals-file", type=str, default=None, help="JSON file containing [x, y, z, qw, qx, qy, qz] goals")
     args = parser.parse_args()
+
+    static_goal_requested = all(value is not None for value in (args.x, args.y, args.z))
+    partial_static_goal = any(value is not None for value in (args.x, args.y, args.z)) and not static_goal_requested
+
+    if partial_static_goal:
+        parser.error("Provide --x, --y, and --z together for a static goal.")
+
+    if args.interactive and (static_goal_requested or args.random or args.goals_file is not None):
+        parser.error("--interactive cannot be combined with static, random, or goals-file modes.")
     
     rclpy.init()
     
@@ -282,7 +302,7 @@ def main():
     random_update_interval = None
     cycling_goal_interval = None
     
-    if args.x is not None and args.y is not None and args.z is not None:
+    if static_goal_requested:
         # Static goal specified
         cycling_goals = None
         random_update_interval = None
@@ -304,10 +324,11 @@ def main():
         random_update_interval=random_update_interval,
         cycling_goals=cycling_goals,
         cycling_goal_interval=cycling_goal_interval,
+        stop_after_single_cycle=args.goals_file is not None,
     )
     
     # Set static goal if specified
-    if args.x is not None and args.y is not None and args.z is not None:
+    if static_goal_requested:
         node.set_goal(args.x, args.y, args.z, args.qw, args.qx, args.qy, args.qz)
     
     if args.interactive:
@@ -328,7 +349,8 @@ def main():
                 cmd = input("Goal> ").strip()
                 if cmd.lower() == 'q':
                     break
-                
+                cmd = cmd.replace(",", " ").replace("["," ").replace("]"," ")  # Allow comma-separated input
+
                 parts = cmd.split()
                 if len(parts) >= 3:
                     x, y, z = float(parts[0]), float(parts[1]), float(parts[2])
@@ -345,7 +367,8 @@ def main():
     else:
         # Static or cycling mode
         try:
-            rclpy.spin(node)
+            while rclpy.ok() and not node.finished_cycling:
+                rclpy.spin_once(node, timeout_sec=0.1)
         except KeyboardInterrupt:
             pass
     
