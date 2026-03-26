@@ -314,6 +314,11 @@ def main():
         # Random goal mode
         cycling_goals = None
         random_update_interval = args.update
+    elif args.interactive:
+        # Interactive mode
+        cycling_goals = None
+        random_update_interval = None
+        cycling_goal_interval = None
     else:
         # Default: cycle through three positions
         cycling_goals = default_cycling_goals
