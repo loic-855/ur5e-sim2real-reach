@@ -27,13 +27,14 @@ Frame convention:
 Usage:
     python3 sim2real_node.py 
     python3 sim2real_node.py --rate 60 --action-scale 0.5 --model path/to/policy.pt
-
+For benchmarking:
     python scripts/sim2real/v1/sim2real_node.py \
     --model logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_10-20-56__rand-False_10s-Timeout/exported/policy.pt \
     --action-scale=0.3 \
     --benchmark \
     --goal-timeout-s 10 \
     --num-goals 7
+Then publish goals using goal_publisher.py. Make sure to start it once this node is waiting for goals.
 """
 
 import math
