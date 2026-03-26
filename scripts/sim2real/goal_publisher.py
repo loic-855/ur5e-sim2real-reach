@@ -88,6 +88,7 @@ class GoalPublisher(Node):
         self.goal_cycle_timer = None
         self.stop_after_single_cycle = stop_after_single_cycle
         self.finished_cycling = False
+        self.shutdown_after_publish = False
 
         self.get_logger().info("Goal publisher started")
         self.get_logger().info("RViz: Add a Marker display with topic '/visualization_marker' to see the goal coordinate frame")
@@ -199,7 +200,7 @@ class GoalPublisher(Node):
 
         is_last_goal = self.current_goal_index == len(self.cycling_goals) - 1
         if self.stop_after_single_cycle and is_last_goal:
-            self.finished_cycling = True
+            self.shutdown_after_publish = True
             if self.goal_cycle_timer is not None:
                 self.goal_cycle_timer.cancel()
             self.get_logger().info("Completed one goal cycle from file; exiting.")
@@ -243,6 +244,10 @@ class GoalPublisher(Node):
         msg.pose.orientation.z = float(self.goal_quaternion[3])
         
         self.publisher.publish(msg)
+
+        if self.shutdown_after_publish:
+            self.shutdown_after_publish = False
+            self.finished_cycling = True
         
         # Also publish visualization markers
         self.publish_coordinate_frame()
