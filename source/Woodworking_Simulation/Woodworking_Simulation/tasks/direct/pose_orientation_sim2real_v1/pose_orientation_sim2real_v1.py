@@ -197,6 +197,7 @@ class PoseOrientationSim2RealV1Cfg(DirectRLEnvCfg):
     goal_sampling_random_ratio: float = 0.3
     deterministic_goal_sampling: bool = False
     benchmark_goals: tuple[tuple[float, ...], ...] = ()
+    goal_height = [0.1, 0.6]
 
     # --- Debug ---
     debug = False
@@ -714,7 +715,7 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
             m = len(rand_ids)
             angle  = torch.empty(m, device=self.device).uniform_(-torch.pi, torch.pi)
             radius = torch.empty(m, device=self.device).uniform_(0.3, 0.75)
-            height = torch.empty(m, device=self.device).uniform_(0.1, 0.6)
+            height = torch.empty(m, device=self.device).uniform_(self.cfg.goal_height[0], self.cfg.goal_height[1])
             self.goal_pos_source[rand_ids, 0] = self.robot_base_local[0] + radius * torch.cos(angle)
             self.goal_pos_source[rand_ids, 1] = self.robot_base_local[1] + radius * torch.sin(angle)
             self.goal_pos_source[rand_ids, 2] = height
