@@ -27,7 +27,7 @@ Frame convention:
 Usage:
     source ~/wwro_ws/install/local_setup.bash
     python3 sim2real_node.py --robot gripper
-    python3 sim2real_node.py --robot gripper --rate 60 --rtde-rate 125 --action-scale 3.0 --model path/to/policy.pt
+    python3 sim2real_node.py --robot gripper --rate 60 --action-scale 0.5 --model path/to/policy.pt
 """
 
 import math
@@ -184,6 +184,20 @@ class RTDEController:
 
     # -- URScript -----------------------------------------------------------
 
+    def send_home_movement(self, timeout: float = 5.0, wait_time: float = 5.2):
+        """Send a simple movej command to home position before impedance control."""
+        print("[RTDE] Sending home movement command...")
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((self.robot_host, self.primary_port))
+            s.sendall(f"movej({HOME_Q}, a=0.7, v=0.6, t={timeout}, r=0)\n".encode("utf-8"))
+            s.close()
+            print("[RTDE] Home movement command sent")
+        except Exception as e:
+            raise RuntimeError(f"[RTDE] Failed to send home movement: {e}")
+
+        time.sleep(wait_time)
+        print(f"[RTDE] Home movement completed")
     def send_urscript(self):
         """Upload and start the URScript impedance controller on the robot."""
         self.stop_reg.input_bit_register_64 = False
@@ -380,14 +394,16 @@ class Sim2RealNode(Node):
         )
         self.get_logger().info("Connecting to robot via RTDE...")
         self.rtde.connect()
-        self.get_logger().info("Uploading URScript (impedance + first-order filter)...")
+        self.get_logger().info("Sending home movement...")
+        self.rtde.send_home_movement()
+        self.get_logger().info("Uploading URScript (impedance)...")
         self.rtde.send_urscript()
         self.get_logger().info("Starting RTDE reader thread...")
         self.rtde.start_reader()
         self.get_logger().info(
             f"RTDE ready!  reader={rtde_rate} Hz  policy={control_rate} Hz"
         )
-        self._last_state_seq = 0  # track if we got new data
+        self._last_state_seq = 0
 
         # ==================================================================
         # ROS2 Subscribers (goal pose)
@@ -416,7 +432,9 @@ class Sim2RealNode(Node):
         )
 
         self.get_logger().info(f"Sim2Real V1 node initialised at {control_rate} Hz")
-        self.get_logger().info(f"Action scale: {action_scale} (sim uses 2.0)")
+        self.get_logger().info(
+            f"Action scale: {action_scale}"
+        )
 
     # -- Benchmarking helpers ----------------------------------------------
 
@@ -611,8 +629,8 @@ class Sim2RealNode(Node):
         ori_err = np.linalg.norm(quat_box_minus(goal_state.quaternion, robot_state.ee_quaternion))
         self.get_logger().info(
             f"pos_err={pos_err:.4f}m  ori_err={ori_err:.3f}rad | "
-            f"EE=({robot_state.ee_position[0]:.3f},{robot_state.ee_position[1]:.3f},{robot_state.ee_position[2]:.3f}) "
-            f"Goal=({goal_state.position[0]:.3f},{goal_state.position[1]:.3f},{goal_state.position[2]:.3f}) | "
+            f"EE=({robot_state.ee_position[0]:.3f},{robot_state.ee_position[1]:.3f},{robot_state.ee_position[2]:.3f},"
+            f"{robot_state.ee_quaternion[0]:.3f},{robot_state.ee_quaternion[1]:.3f},{robot_state.ee_quaternion[2]:.3f},{robot_state.ee_quaternion[3]:.3f}) \n"
             f"Act=({actions[0]:.2f},{actions[1]:.2f},{actions[2]:.2f},{actions[3]:.2f},{actions[4]:.2f},{actions[5]:.2f})",
             throttle_duration_sec=0.5,
         )
@@ -637,7 +655,7 @@ def main():
     parser = argparse.ArgumentParser(description="Sim2Real V1 Policy Deployment (RTDE)")
     parser.add_argument(
         "--robot", type=str, default="gripper",
-        choices=["gripper", "screwdriver"],
+        choices=["gripper"],
         help="Robot prefix",
     )
     parser.add_argument(
@@ -688,7 +706,7 @@ def main():
         node.start()
 
         if args.benchmark:
-            BENCHMARK_DURATION = 90.0
+            BENCHMARK_DURATION = 20.0
             node.get_logger().info(f"Starting benchmark for {BENCHMARK_DURATION}s...")
             node._benchmark = True
 

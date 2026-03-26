@@ -9,6 +9,7 @@ Extension of V2: the policy outputs 12 actions instead of 6.
 This node:
 1. Connects to the UR5e robot via RTDE and runs a **dedicated reader
    thread at 125 Hz** that continuously caches the latest robot state
+   (actual_q, actual_qd, actual_TCP_pose, actual_TCP_speed)
 2. Subscribes to /goal_pose (ROS2) for target end-effector pose
 3. The **control loop runs at 60 Hz**, builds 24-dim normalised
    observations, runs 12-dim policy inference
@@ -24,7 +25,7 @@ Frame convention (same as V2):
 Usage:
     source ~/wwro_ws/install/local_setup.bash
     python3 sim2real_node.py --robot gripper --model path/to/policy.pt
-    python3 scripts/sim2real/v2/sim2real_node.py --robot gripper --rate 60 --action-scale 0.3 --velocity-scale 0.15 --model path/to/policy.pt
+    python3 scripts/sim2real/v2/sim2real_node.py --robot gripper --rate 60 --action-scale 0.5 --velocity-scale 0.15 --model path/to/policy.pt
 """
 
 import math
@@ -249,7 +250,11 @@ class RTDEController:
         self._write_q_des(q_des.tolist())
 
     def receive_state(self):
-        """Receive the latest robot state from RTDE (synchronous)."""
+        """Receive the latest robot state from RTDE (synchronous).
+
+        Returns:
+            RTDE state object, or None on failure.
+        """
         if self.con is None:
             return None
         return self.con.receive()
@@ -297,7 +302,11 @@ class RTDEController:
                 time.sleep(sleep_time)
 
     def get_cached_state(self):
-        """Return the latest cached state as a tuple, or None if not yet available."""
+        """Return the latest cached state as a tuple, or None if not yet available.
+
+        Returns:
+            (q, qd, tcp_pose, tcp_speed, seq) or None.
+        """
         with self._state_lock:
             if self._cached_q is None:
                 return None
@@ -628,7 +637,7 @@ class Sim2RealNode(Node):
         self.get_logger().info(
             f"pos_err={pos_err:.4f}m  ori_err={ori_err:.3f}rad | "
             f"EE=({robot_state.ee_position[0]:.3f},{robot_state.ee_position[1]:.3f},{robot_state.ee_position[2]:.3f}) "
-            f"Goal=({goal_state.position[0]:.3f},{goal_state.position[1]:.3f},{goal_state.position[2]:.3f}) | "
+            f"{robot_state.ee_quaternion[0]:.3f},{robot_state.ee_quaternion[1]:.3f},{robot_state.ee_quaternion[2]:.3f},{robot_state.ee_quaternion[3]:.3f}) \n"
             f"PosAct=({actions[0]:.2f},{actions[1]:.2f},{actions[2]:.2f},{actions[3]:.2f},{actions[4]:.2f},{actions[5]:.2f}) "
             f"VelAct=({actions[6]:.2f},{actions[7]:.2f},{actions[8]:.2f},{actions[9]:.2f},{actions[10]:.2f},{actions[11]:.2f})",
             throttle_duration_sec=0.5,
@@ -654,7 +663,7 @@ def main():
     parser = argparse.ArgumentParser(description="Sim2Real V2 Policy Deployment (RTDE + velocity feedforward)")
     parser.add_argument(
         "--robot", type=str, default="gripper",
-        choices=["gripper", "screwdriver"],
+        choices=["gripper"],
         help="Robot prefix",
     )
     parser.add_argument(
@@ -671,11 +680,11 @@ def main():
         help="Device for policy inference",
     )
     parser.add_argument(
-        "--action-scale", type=float, default=0.3,
+        "--action-scale", type=float, default=0.5,
         help="Action scaling factor for position increments",
     )
     parser.add_argument(
-        "--velocity-scale", type=float, default=0.7,
+        "--velocity-scale", type=float, default=0.25,
         help="Velocity scaling factor for feedforward (rad/s)",
     )
     parser.add_argument(
