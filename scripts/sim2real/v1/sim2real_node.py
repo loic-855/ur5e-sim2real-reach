@@ -32,6 +32,7 @@ For benchmarking:
     --model logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_10-20-56__rand-False_10s-Timeout/exported/policy.pt \
     --action-scale=0.3 \
     --benchmark \
+     --goals-file scripts/benchmark_settings/benchmark_goals_handmade.json \
     --goal-timeout-s 10 \
     --num-goals 7
 Then publish goals using goal_publisher.py. Make sure to start it once this node is waiting for goals.
@@ -463,6 +464,7 @@ class Sim2RealNode(Node):
         self._benchmark = benchmark
         self._goal_timeout_s = goal_timeout_s
         self._benchmark_num_goals = num_goals
+        self._benchmark_goals_file = goals_file
         self._benchmark_goals = load_benchmark_goals(goals_file) if goals_file is not None else ()
         if self._benchmark_num_goals == 0 and self._benchmark_goals:
             self._benchmark_num_goals = len(self._benchmark_goals)
@@ -602,6 +604,7 @@ class Sim2RealNode(Node):
                 "robot": self.robot_prefix,
                 "rate_hz": self.control_rate,
                 "action_scale": self.action_scale,
+                "goals_file": self._benchmark_goals_file,
                 "goal_count": self._benchmark_num_goals,
                 "goal_timeout_s": self._goal_timeout_s,
                 "goal_convention": "x y z qw qx qy qz",
