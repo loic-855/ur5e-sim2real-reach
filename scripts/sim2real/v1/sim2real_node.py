@@ -25,9 +25,15 @@ Frame convention:
   - This matches the v1 sim2real_node convention (validated on real robot).
 
 Usage:
-    source ~/wwro_ws/install/local_setup.bash
-    python3 sim2real_node.py --robot gripper
-    python3 sim2real_node.py --robot gripper --rate 60 --action-scale 0.5 --model path/to/policy.pt
+    python3 sim2real_node.py 
+    python3 sim2real_node.py --rate 60 --action-scale 0.5 --model path/to/policy.pt
+
+    python scripts/sim2real/v1/sim2real_node.py \
+    --model logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_10-20-56__rand-False_10s-Timeout/exported/policy.pt \
+    --action-scale=0.3 \
+    --benchmark \
+    --goal-timeout-s 10 \
+    --num-goals 7
 """
 
 import math
@@ -90,6 +96,7 @@ HOME_Q = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
 # Matches v1 sim2real_node (validated on real robot).
 # ============================================================================
 ROBOT_BASE_LOCAL = np.array([-0.52, 0.32, 0.02], dtype=np.float32)
+IN_AREA_POS_M = 0.08
 
 
 # ============================================================================
@@ -104,6 +111,81 @@ def rotvec_to_quat(rx: float, ry: float, rz: float) -> np.ndarray:
     half = angle / 2.0
     s = math.sin(half) / angle
     return np.array([math.cos(half), rx * s, ry * s, rz * s], dtype=np.float32)
+
+
+def load_benchmark_goals(goals_file: str) -> tuple[tuple[float, ...], ...]:
+    path = Path(goals_file)
+    with open(path, "r", encoding="utf-8") as f:
+        goals = json.load(f)
+
+    if not isinstance(goals, list) or len(goals) == 0:
+        raise ValueError("Goals file must contain a non-empty list of goals.")
+
+    parsed_goals = []
+    for goal in goals:
+        if not isinstance(goal, list) or len(goal) != 7:
+            raise ValueError("Each goal must be [x, y, z, qw, qx, qy, qz].")
+        parsed_goals.append(tuple(float(value) for value in goal))
+    return tuple(parsed_goals)
+
+
+def yaml_scalar(value):
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(value)
+
+
+def yaml_dump(value, indent: int = 0) -> str:
+    indent_str = " " * indent
+    if isinstance(value, dict):
+        lines = []
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                lines.append(f"{indent_str}{key}:")
+                lines.append(yaml_dump(item, indent + 2))
+            else:
+                lines.append(f"{indent_str}{key}: {yaml_scalar(item)}")
+        return "\n".join(lines)
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            if isinstance(item, (dict, list)):
+                lines.append(f"{indent_str}-")
+                lines.append(yaml_dump(item, indent + 2))
+            else:
+                lines.append(f"{indent_str}- {yaml_scalar(item)}")
+        return "\n".join(lines)
+    return f"{indent_str}{yaml_scalar(value)}"
+
+
+def format_goal_line(goal: tuple[float, ...]) -> str:
+    return "[" + ",".join(f"{value:.3f}" for value in goal) + "]"
+
+
+def extract_run_name_from_model_path(model_path: Optional[str]) -> str:
+    if model_path is None:
+        return "default_policy"
+
+    model = Path(model_path).resolve()
+    candidate_paths = [
+        model.parent / "params" / "agent.yaml",
+        model.parent.parent / "params" / "agent.yaml",
+    ]
+    for agent_yaml_path in candidate_paths:
+        if not agent_yaml_path.is_file():
+            continue
+        with open(agent_yaml_path, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped.startswith("run_name:"):
+                    run_name = stripped.split(":", 1)[1].strip()
+                    if run_name:
+                        return run_name
+    return model.stem
 
 
 # ============================================================================
@@ -346,6 +428,10 @@ class Sim2RealNode(Node):
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         action_scale: float = 7.0,
         robot_host: str = ROBOT_HOST,
+        benchmark: bool = False,
+        goal_timeout_s: float = 10.0,
+        num_goals: int = 0,
+        goals_file: Optional[str] = None,
     ):
         super().__init__("sim2real_policy_node_v1")
 
@@ -373,9 +459,19 @@ class Sim2RealNode(Node):
         self.is_running = False
 
         # Benchmarking
-        self._benchmark = False
-        self._benchmark_samples = []
-        self._benchmark_lock = Lock()
+        self._benchmark = benchmark
+        self._goal_timeout_s = goal_timeout_s
+        self._benchmark_num_goals = num_goals
+        self._benchmark_goals = load_benchmark_goals(goals_file) if goals_file is not None else ()
+        if self._benchmark_num_goals == 0 and self._benchmark_goals:
+            self._benchmark_num_goals = len(self._benchmark_goals)
+        self._benchmark_started_at: Optional[float] = None
+        self._benchmark_current_goal_index = -1
+        self._benchmark_results: list[dict] = []
+        self._current_goal_result: Optional[dict] = None
+        self._benchmark_completed = False
+        self._benchmark_output_dir = REPO_ROOT / "logs" / "benchmarks" / "sim_pose_real"
+        self._model_path = model_path
 
         # ==================================================================
         # Load policy
@@ -438,51 +534,151 @@ class Sim2RealNode(Node):
 
     # -- Benchmarking helpers ----------------------------------------------
 
-    def _record_benchmark_sample(self, robot_state: RobotState, goal_state: GoalState):
-        pos_err = float(np.linalg.norm(robot_state.ee_position - goal_state.position))
-        ori_err_vec = quat_box_minus(goal_state.quaternion, robot_state.ee_quaternion)
-        ori_err = float(np.linalg.norm(ori_err_vec))
-
-        with self._benchmark_lock:
-            self._benchmark_samples.append((time.time(), pos_err, ori_err))
-
-    def _save_benchmark_results(self, out_path: str, metadata: dict):
-        with self._benchmark_lock:
-            samples = list(self._benchmark_samples)
-
-        if len(samples) == 0:
-            self.get_logger().warn("No benchmark samples collected; nothing to save")
-            return
-
-        pos_errs = [s[1] for s in samples]
-        ori_errs = [s[2] for s in samples]
-
-        results = {
-            "metadata": metadata,
-            "samples_count": len(samples),
-            "mean_position_error_m": float(np.mean(pos_errs)),
-            "median_position_error_m": float(np.median(pos_errs)),
-            "mean_orientation_error_rad": float(np.mean(ori_errs)),
-            "median_orientation_error_rad": float(np.median(ori_errs)),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+    def _make_goal_result(self, goal_index: int) -> dict:
+        return {
+            "goal_index": goal_index,
+            "time_to_area_s": None,
+            "samples_total": 0,
+            "samples_area": 0,
+            "sum_pos_err_area": 0.0,
+            "sum_rot_err_area": 0.0,
+            "reached_area": False,
         }
 
+    def _update_goal_result(self, goal_result: dict, goal_time_s: float, pos_err: float, rot_err: float):
+        goal_result["samples_total"] += 1
+        in_area = pos_err <= IN_AREA_POS_M
+        if in_area:
+            goal_result["reached_area"] = True
+            if goal_result["time_to_area_s"] is None:
+                goal_result["time_to_area_s"] = goal_time_s
+            goal_result["samples_area"] += 1
+            goal_result["sum_pos_err_area"] += pos_err
+            goal_result["sum_rot_err_area"] += rot_err
+
+    def _finalize_goal_result(self, goal_result: dict) -> dict:
+        samples_area = int(goal_result["samples_area"])
+        goal_result["mean_pos_err_area_m"] = (
+            goal_result["sum_pos_err_area"] / samples_area if samples_area > 0 else None
+        )
+        goal_result["mean_rot_err_area_rad"] = (
+            goal_result["sum_rot_err_area"] / samples_area if samples_area > 0 else None
+        )
+        del goal_result["sum_pos_err_area"]
+        del goal_result["sum_rot_err_area"]
+        return goal_result
+
+    def _build_episode_summary(self) -> dict:
+        goal_results = self._benchmark_results[: self._benchmark_num_goals]
+        area_times = [g["time_to_area_s"] for g in goal_results if g["time_to_area_s"] is not None]
+        area_pos = [g["mean_pos_err_area_m"] for g in goal_results if g["mean_pos_err_area_m"] is not None]
+        area_rot = [g["mean_rot_err_area_rad"] for g in goal_results if g["mean_rot_err_area_rad"] is not None]
+        return {
+            "episode_index": 0,
+            "goal_count": len(goal_results),
+            "goals": goal_results,
+            "goals_reached_area": sum(1 for g in goal_results if g["reached_area"]),
+            "mean_time_to_area_s": sum(area_times) / len(area_times) if area_times else None,
+            "mean_pos_err_area_m": sum(area_pos) / len(area_pos) if area_pos else None,
+            "mean_rot_err_area_rad": sum(area_rot) / len(area_rot) if area_rot else None,
+        }
+
+    def _save_benchmark_results(self):
+        if len(self._benchmark_results) == 0:
+            self.get_logger().warn("No benchmark goal results collected; nothing to save")
+            return None
+
+        self._benchmark_output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
+        run_name = extract_run_name_from_model_path(self._model_path)
+        out_path = self._benchmark_output_dir / f"{timestamp}_{run_name}.yaml"
+
+        episode = self._build_episode_summary()
+        payload = {
+            "metadata": {
+                "model_path": self._model_path,
+                "run_name": run_name,
+                "robot": self.robot_prefix,
+                "rate_hz": self.control_rate,
+                "action_scale": self.action_scale,
+                "goal_count": self._benchmark_num_goals,
+                "goal_timeout_s": self._goal_timeout_s,
+                "goal_convention": "x y z qw qx qy qz",
+                "thresholds": {
+                    "area": {"pos_m": IN_AREA_POS_M},
+                },
+            },
+            "summary": {
+                "episodes_completed": 1,
+                "goal_count": len(self._benchmark_results),
+                "total_goals_executed": len(self._benchmark_results),
+                "mean_time_to_area_s": episode["mean_time_to_area_s"],
+                "mean_pos_err_area_m": episode["mean_pos_err_area_m"],
+                "mean_rot_err_area_rad": episode["mean_rot_err_area_rad"],
+                "goals_reached_area": episode["goals_reached_area"],
+            },
+            "episodes": [episode],
+            "goals": [format_goal_line(goal) for goal in self._benchmark_goals[: self._benchmark_num_goals]],
+        }
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(yaml_dump(payload))
+            f.write("\n")
+        self.get_logger().info(f"Benchmark results saved: {out_path}")
+        return out_path
+
+    def _start_benchmark_if_ready(self):
+        if not self._benchmark or self._benchmark_started_at is not None:
+            return
+        if self.goal_position is None or self.goal_quaternion is None:
+            return
+        self._benchmark_started_at = time.time()
+        self._benchmark_current_goal_index = 0
+        self._current_goal_result = self._make_goal_result(0)
+        self.get_logger().info("Benchmark started on first received goal")
+
+    def _complete_benchmark(self):
+        if self._benchmark_completed:
+            return
+        self._benchmark_completed = True
+        if self._current_goal_result is not None and len(self._benchmark_results) < self._benchmark_num_goals:
+            self._benchmark_results.append(self._finalize_goal_result(self._current_goal_result))
+            self._current_goal_result = None
+        self._benchmark_results = self._benchmark_results[: self._benchmark_num_goals]
+        self._save_benchmark_results()
+        self.get_logger().info("Benchmark finished; shutting down.")
+        self.shutdown()
         try:
-            mp = results["mean_position_error_m"]
-            mo = results["mean_orientation_error_rad"]
-            results["global_error"] = float((mp + mo) / 2.0)
+            rclpy.shutdown()
         except Exception:
-            results["global_error"] = None
+            pass
 
-        try:
-            Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(out_path, "w") as f:
-                json.dump(results, f, indent=2)
-            self.get_logger().info(f"Benchmark results saved: {out_path}")
-        except Exception as e:
-            self.get_logger().error(f"Failed to save benchmark results: {e}")
+    def _update_benchmark(self, robot_state: RobotState, goal_state: GoalState):
+        if not self._benchmark or self._benchmark_completed:
+            return
+        self._start_benchmark_if_ready()
+        if self._benchmark_started_at is None or self._current_goal_result is None:
+            return
+        if self._benchmark_num_goals <= 0:
+            return
 
-        return results
+        elapsed = time.time() - self._benchmark_started_at
+        total_duration = self._benchmark_num_goals * self._goal_timeout_s
+        target_goal_index = min(int(elapsed / self._goal_timeout_s), self._benchmark_num_goals - 1)
+
+        while self._benchmark_current_goal_index < target_goal_index and len(self._benchmark_results) < self._benchmark_num_goals - 1:
+            self._benchmark_results.append(self._finalize_goal_result(self._current_goal_result))
+            self._benchmark_current_goal_index += 1
+            self._current_goal_result = self._make_goal_result(self._benchmark_current_goal_index)
+            self.get_logger().info(f"Benchmark goal window {self._benchmark_current_goal_index + 1}/{self._benchmark_num_goals}")
+
+        pos_err = float(np.linalg.norm(robot_state.ee_position - goal_state.position))
+        ori_err = float(np.linalg.norm(quat_box_minus(goal_state.quaternion, robot_state.ee_quaternion)))
+        goal_time_s = elapsed - self._benchmark_current_goal_index * self._goal_timeout_s
+        self._update_goal_result(self._current_goal_result, goal_time_s, pos_err, ori_err)
+
+        if elapsed >= total_duration:
+            self._complete_benchmark()
 
     # -- RTDE state reading (from cached reader thread) ---------------------
 
@@ -562,6 +758,8 @@ class Sim2RealNode(Node):
                 self.get_logger().info(f"New goal: {pos_s}, {quat_s}")
             self.old_goal = self.goal_position.copy()
 
+        self._start_benchmark_if_ready()
+
     # -- Main control loop --------------------------------------------------
 
     def control_loop(self):
@@ -605,12 +803,9 @@ class Sim2RealNode(Node):
         # 3. Build observation (24-dim, normalised)
         observation = build_observation(robot_state, goal_state)
 
-        # If benchmarking: record sample
-        if self._benchmark:
-            try:
-                self._record_benchmark_sample(robot_state, goal_state)
-            except Exception:
-                pass
+        self._update_benchmark(robot_state, goal_state)
+        if self._benchmark_completed:
+            return
 
         # 4. Policy inference
         actions = self.policy.get_action(observation)
@@ -685,8 +880,11 @@ def main():
     )
     parser.add_argument(
         "--benchmark", action="store_true", default=False,
-        help="Run policy for a fixed duration and record errors",
+        help="Run the real benchmark with timed goal windows",
     )
+    parser.add_argument("--goal-timeout-s", type=float, default=10.0, help="Benchmark timeout per goal in seconds")
+    parser.add_argument("--num-goals", type=int, default=None, help="Number of benchmark goals to evaluate")
+    parser.add_argument("--goals-file", type=str, default=None, help="Optional JSON goals file for benchmark metadata")
     args = parser.parse_args()
 
     rclpy.init()
@@ -701,58 +899,20 @@ def main():
             device=args.device,
             action_scale=args.action_scale,
             robot_host=args.robot_ip,
+            benchmark=args.benchmark,
+            goal_timeout_s=args.goal_timeout_s,
+            num_goals=args.num_goals,
+            goals_file=args.goals_file,
         )
 
         node.start()
 
         if args.benchmark:
-            BENCHMARK_DURATION = 20.0
-            node.get_logger().info(f"Starting benchmark for {BENCHMARK_DURATION}s...")
-            node._benchmark = True
-
-            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
-            out_path = str(REPO_ROOT / "logs" / "benchmarks" / f"policy_bench_v1_{ts}.json")
-
-            def _bench_thread():
-                try:
-                    time.sleep(BENCHMARK_DURATION)
-                except Exception:
-                    pass
-
-                node._benchmark = False
-                metadata = {
-                    "model": Path(args.model).name if args.model else "default_policy",
-                    "model_path": args.model,
-                    "robot": args.robot,
-                    "rate_hz": args.rate,
-                    "action_scale": args.action_scale,
-                    "duration_s": BENCHMARK_DURATION,
-                    "version": "v1",
-                }
-                try:
-                    node._save_benchmark_results(out_path, metadata)
-                except Exception as e:
-                    node.get_logger().error(f"Benchmark thread error: {e}")
-                finally:
-                    try:
-                        node.get_logger().info("Benchmark finished; shutting down.")
-                    except Exception:
-                        pass
-                    try:
-                        node.shutdown()
-                    except Exception:
-                        pass
-                    try:
-                        rclpy.shutdown()
-                    except Exception:
-                        pass
-                    try:
-                        os._exit(0)
-                    except Exception:
-                        pass
-
-            t = Thread(target=_bench_thread, daemon=True)
-            t.start()
+            if args.num_goals <= 0 and args.goals_file is None:
+                raise ValueError("Benchmark mode requires --num-goals or --goals-file.")
+            node.get_logger().info(
+                f"Benchmark armed: goal_timeout_s={args.goal_timeout_s}, num_goals={node._benchmark_num_goals}. Waiting for first goal..."
+            )
 
             rclpy.spin(node)
         else:
