@@ -89,7 +89,7 @@ apptainer exec --nv \
             env.domain_rand.obs_delay_range=[0,0] \
             env.goal_sampling_random_ratio=1.0 \
             env.goal_timeout_s=10.0 \
-            env.goal_height=[0.1,0.6]
+            env.goal_height=[0.04,0.6]
     "
 
 # Cleanup Cache
