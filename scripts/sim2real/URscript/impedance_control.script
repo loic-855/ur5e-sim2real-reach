@@ -17,15 +17,16 @@ def impedance_control():
     # Default / initial position
     q_des  = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
     q_filt = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
-
+    q_dot   = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     # Impedance gains
-    kp = [250.0, 250.0, 250.0, 60.0, 60.0, 60.0]
-    kd = [30.0, 30.0, 30.0, 15.0, 15.0, 15.0]
+    kp = [800.0, 800.0, 800.0, 350.0, 350.0, 350.0]
+    kd = [28.3, 56.6, 28.3, 7.5, 7.5, 7.5]
     max_error = 0.20
 
     # First-order filter coefficient
-    # alpha = 1 - exp(-dt / tau),  dt = 0.002 s,  tau = 0.02 s
-    alpha = 0.05
+    # alpha = 1 - exp(-dt / tau),  dt = 0.002 s,  tau = 0.02 s tau =
+    
+    alpha = 0.3
 
     policy_rate = read_input_integer_register(30)  # handshake: wait for policy to write something to register 0
     textmsg("Policy control rate (Hz): ", policy_rate)
@@ -79,7 +80,7 @@ def impedance_control():
 
         # Compute torque: τ = Kp * e - Kd * q_dot
         tau = kp * e - kd * q_dot
-        direct_torque(tau)
+        direct_torque(tau, friction_comp=False)
 
         if stop:
             textmsg("Back to home position...")
