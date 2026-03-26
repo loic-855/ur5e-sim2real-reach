@@ -77,7 +77,7 @@ apptainer exec --nv \
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \
             --headless \
-            --run_name=rand-False_10s-Timeout \
+            --run_name=rand-False_10s-Timeout_v2 \
             agent.max_iterations=1500 \
             agent.wandb_project=sim2real_v1_ablation \
             agent.experiment_name=sim2real_v1_ablation \
@@ -87,6 +87,7 @@ apptainer exec --nv \
             env.domain_rand.enable_delay=False \
             env.domain_rand.action_delay_range=[0,0] \
             env.domain_rand.obs_delay_range=[0,0] \
+            env.goal_sampling_random_ratio=1.0 \
             env.goal_timeout_s=10.0
     "
 

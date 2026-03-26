@@ -167,7 +167,7 @@ class PoseOrientationSim2RealV1Cfg(DirectRLEnvCfg):
     # action and coef scaling
     action_scale = 2.0
     reset_range = 0.125
-    goal_timeout_s = 5.0
+    goal_timeout_s = 10.0
 
     # reward weights
     ee_position_penalty = -1.0

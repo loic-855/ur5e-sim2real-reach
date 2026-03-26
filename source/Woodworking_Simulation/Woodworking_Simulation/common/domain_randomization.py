@@ -57,7 +57,7 @@ class DomainRandomizationV4Cfg:
     # -------------------------------------------------------------------------
     # Toggle: actuator characteristics (stiffness, damping, friction)
     # -------------------------------------------------------------------------
-    enable_actuator_rand: bool = True
+    enable_actuator_rand: bool = False
     """Enable per-env randomisation of actuator PD gains (stiffness/damping)
     and joint friction coefficients."""
 
@@ -76,7 +76,7 @@ class DomainRandomizationV4Cfg:
     # -------------------------------------------------------------------------
     # Toggle: per-env FIFO delay and packet loss on actions / observations
     # -------------------------------------------------------------------------
-    enable_delay: bool = True
+    enable_delay: bool = False
     """Enable per-env action delay, action packet-loss and observation delay."""
 
     # -- Action buffer ---------------------------------------------------------
