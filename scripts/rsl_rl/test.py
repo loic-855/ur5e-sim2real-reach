@@ -41,11 +41,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_GOALS_FILE = REPO_ROOT / "scripts" / "benchmark_settings" / "default_benchmark_goals.json"
 DEFAULT_CHECKPOINTS_FILE = REPO_ROOT / "scripts" / "benchmark_settings" / "default_benchmark_checkpoints.json"
 
-GOAL_TIMEOUT_S = 10.0
+GOAL_TIMEOUT_S = 1.0
 IN_AREA_POS_M = 0.08
 IN_AREA_ROT_RAD = 15.0 * math.pi / 180.0
 ON_GOAL_POS_M = 0.03
-ON_GOAL_ROT_RAD = 8.0 * math.pi / 180.0
+ON_GOAL_ROT_RAD = 5.0 * math.pi / 180.0
 
 
 parser = argparse.ArgumentParser(description="Test an RSL-RL checkpoint in Isaac Sim.")
@@ -54,7 +54,7 @@ parser.add_argument("--video_length", type=int, default=200, help="Length of the
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
-parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
+parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
     "--agent", type=str, default="rsl_rl_cfg_entry_point", help="Name of the RL agent configuration entry point."
@@ -98,7 +98,7 @@ from isaaclab.envs import (
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.math import quat_error_magnitude
-from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
+from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
@@ -370,6 +370,7 @@ def _run_single_checkpoint_benchmark(
 ):
     log_dir = os.path.dirname(resume_path)
 
+
     print(f"[INFO] Loading model checkpoint from: {resume_path}")
     if agent_cfg.class_name == "OnPolicyRunner":
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
@@ -380,6 +381,28 @@ def _run_single_checkpoint_benchmark(
     runner.load(resume_path)
 
     policy = runner.get_inference_policy(device=env.unwrapped.device)
+
+    # extract the neural network module
+    # we do this in a try-except to maintain backwards compatibility.
+    try:
+        # version 2.3 onwards
+        policy_nn = runner.alg.policy
+    except AttributeError:
+        # version 2.2 and below
+        policy_nn = runner.alg.actor_critic
+
+    # extract the normalizer
+    if hasattr(policy_nn, "actor_obs_normalizer"):
+        normalizer = policy_nn.actor_obs_normalizer
+    elif hasattr(policy_nn, "student_obs_normalizer"):
+        normalizer = policy_nn.student_obs_normalizer
+    else:
+        normalizer = None
+
+    # export policy to onnx/jit
+    export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
+    export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
+    export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
 
     print(
         "[INFO] Runtime overrides: "
