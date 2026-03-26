@@ -28,7 +28,9 @@ RViz Setup:
 """
 
 import argparse
+import json
 import numpy as np
+from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
@@ -50,7 +52,13 @@ ROBOT_BASE_LOCAL = np.array([-0.52, -0.32, 0.0])
 class GoalPublisher(Node):
     """Simple goal pose publisher for testing with RViz visualization."""
     
-    def __init__(self, rate: float = 10.0, update_interval: float = None, cycling_goals: list = None):
+    def __init__(
+        self,
+        rate: float = 10.0,
+        random_update_interval: float | None = None,
+        cycling_goals: list[tuple[float, ...]] | None = None,
+        cycling_goal_interval: float | None = None,
+    ):
         super().__init__("goal_publisher")
         
         self.publisher = self.create_publisher(
@@ -77,23 +85,24 @@ class GoalPublisher(Node):
         self.cycling_goals = cycling_goals if cycling_goals is not None else []
         self.current_goal_index = 0
         self.goal_cycle_timer = None
+
+        self.get_logger().info("Goal publisher started")
+        self.get_logger().info("RViz: Add a Marker display with topic '/visualization_marker' to see the goal coordinate frame")
         
         # Timer to publish goal
         self.timer = self.create_timer(1.0 / rate, self.publish_goal)
         
         # Timer for random goal updates if enabled
         self.update_timer = None
-        if update_interval is not None:
-            self.update_timer = self.create_timer(update_interval, self.update_random_goal)
+        if random_update_interval is not None:
+            self.update_timer = self.create_timer(random_update_interval, self.update_random_goal)
             self.update_random_goal()  # Set initial random goal
         
-        # Timer for cycling through goals (8 seconds per goal)
+        # Timer for cycling through goals
         if self.cycling_goals:
-            self.goal_cycle_timer = self.create_timer(8.0, self.cycle_to_next_goal)
+            goal_cycle_interval = cycling_goal_interval if cycling_goal_interval is not None else 8.0
+            self.goal_cycle_timer = self.create_timer(goal_cycle_interval, self.cycle_to_next_goal)
             self.cycle_to_next_goal()  # Set initial goal
-        
-        self.get_logger().info("Goal publisher started")
-        self.get_logger().info("RViz: Add a Marker display with topic '/visualization_marker' to see the goal coordinate frame")
     
     def update_random_goal(self):
         """Update to a new random goal pose."""
@@ -180,7 +189,10 @@ class GoalPublisher(Node):
             return
         
         goal = self.cycling_goals[self.current_goal_index]
-        self.set_goal(goal[0], goal[1], goal[2])
+        if len(goal) == 7:
+            self.set_goal(goal[0], goal[1], goal[2], goal[3], goal[4], goal[5], goal[6])
+        else:
+            self.set_goal(goal[0], goal[1], goal[2])
         self.current_goal_index = (self.current_goal_index + 1) % len(self.cycling_goals)
     
     
@@ -226,6 +238,21 @@ class GoalPublisher(Node):
 
 
 def main():
+    def load_goals_file(goals_file: str) -> list[tuple[float, ...]]:
+        path = Path(goals_file)
+        with open(path, "r", encoding="utf-8") as f:
+            goals = json.load(f)
+
+        if not isinstance(goals, list) or len(goals) == 0:
+            raise ValueError("Goals file must contain a non-empty list of goals.")
+
+        parsed_goals = []
+        for goal in goals:
+            if not isinstance(goal, list) or len(goal) != 7:
+                raise ValueError("Each goal must be [x, y, z, qw, qx, qy, qz].")
+            parsed_goals.append(tuple(float(value) for value in goal))
+        return parsed_goals
+
     parser = argparse.ArgumentParser(description="Goal pose publisher")
     parser.add_argument("--x", type=float, default=None, help="Goal X position")
     parser.add_argument("--y", type=float, default=None, help="Goal Y position")
@@ -238,6 +265,7 @@ def main():
     parser.add_argument("--rate", type=float, default=10.0, help="Publish rate Hz")
     parser.add_argument("--random", action="store_true", help="Use random goal position")
     parser.add_argument("--update", type=float, default=10.0, help="Update goal every N seconds in random mode")
+    parser.add_argument("--goals-file", type=str, default=None, help="JSON file containing [x, y, z, qw, qx, qy, qz] goals")
     args = parser.parse_args()
     
     rclpy.init()
@@ -251,22 +279,32 @@ def main():
     
     # Determine behavior based on arguments
     cycling_goals = None
-    update_interval = None
+    random_update_interval = None
+    cycling_goal_interval = None
     
     if args.x is not None and args.y is not None and args.z is not None:
         # Static goal specified
         cycling_goals = None
-        update_interval = None
+        random_update_interval = None
+        cycling_goal_interval = None
+    elif args.goals_file is not None:
+        cycling_goals = load_goals_file(args.goals_file)
+        cycling_goal_interval = args.update
     elif args.random:
         # Random goal mode
         cycling_goals = None
-        update_interval = args.update
+        random_update_interval = args.update
     else:
         # Default: cycle through three positions
         cycling_goals = default_cycling_goals
-        update_interval = None
+        cycling_goal_interval = None
     
-    node = GoalPublisher(rate=args.rate, update_interval=update_interval, cycling_goals=cycling_goals)
+    node = GoalPublisher(
+        rate=args.rate,
+        random_update_interval=random_update_interval,
+        cycling_goals=cycling_goals,
+        cycling_goal_interval=cycling_goal_interval,
+    )
     
     # Set static goal if specified
     if args.x is not None and args.y is not None and args.z is not None:
