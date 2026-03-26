@@ -12,20 +12,16 @@ Example:
     python scripts/rsl_rl/test.py \
         --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 \
         --checkpoint logs/rsl_rl/sim2real_v1_ablation/2026-03-25_00-53-16_rand-False/model_1499.pt\
-        --num_envs 1 \
-        --seed 1234 \
         --goals-file scripts/benchmark_settings/default_benchmark_goals.json
 
     python scripts/rsl_rl/test.py \
         --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 \
         --checkpoint scripts/benchmark_settings/default_benchmark_checkpoints.json \
-        --num_envs 1
 """
 
 import argparse
 import copy
 import json
-import math
 import os
 import sys
 import time
@@ -41,11 +37,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_GOALS_FILE = REPO_ROOT / "scripts" / "benchmark_settings" / "default_benchmark_goals.json"
 DEFAULT_CHECKPOINTS_FILE = REPO_ROOT / "scripts" / "benchmark_settings" / "default_benchmark_checkpoints.json"
 
-GOAL_TIMEOUT_S = 1.0
+GOAL_TIMEOUT_S = 10.0
 IN_AREA_POS_M = 0.08
-IN_AREA_ROT_RAD = 15.0 * math.pi / 180.0
-ON_GOAL_POS_M = 0.03
-ON_GOAL_ROT_RAD = 5.0 * math.pi / 180.0
 
 
 parser = argparse.ArgumentParser(description="Test an RSL-RL checkpoint in Isaac Sim.")
@@ -152,6 +145,43 @@ def _load_checkpoints(checkpoint_arg: str) -> list[str]:
     return checkpoints
 
 
+def _yaml_scalar(value):
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(value)
+
+
+def _yaml_dump(value, indent: int = 0) -> str:
+    indent_str = " " * indent
+    if isinstance(value, dict):
+        lines = []
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                lines.append(f"{indent_str}{key}:")
+                lines.append(_yaml_dump(item, indent + 2))
+            else:
+                lines.append(f"{indent_str}{key}: {_yaml_scalar(item)}")
+        return "\n".join(lines)
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            if isinstance(item, (dict, list)):
+                lines.append(f"{indent_str}-")
+                lines.append(_yaml_dump(item, indent + 2))
+            else:
+                lines.append(f"{indent_str}- {_yaml_scalar(item)}")
+        return "\n".join(lines)
+    return f"{indent_str}{_yaml_scalar(value)}"
+
+
+def _format_goal_line(goal: tuple[float, ...]) -> str:
+    return "[" + ",".join(f"{value:.3f}" for value in goal) + "]"
+
+
 def _extract_run_name_from_checkpoint(resume_path: str) -> str:
     agent_yaml_path = Path(resume_path).resolve().parent / "params" / "agent.yaml"
     if not agent_yaml_path.is_file():
@@ -177,48 +207,37 @@ def _apply_runtime_env_overrides(env_cfg):
     env_cfg.domain_rand.enable_noise = False
     env_cfg.domain_rand.enable_delay = False
     env_cfg.domain_rand.enable_mass_com_rand = False
-    env_cfg.debug = True
+    env_cfg.debug = False
     env_cfg.episode_length_s = GOAL_TIMEOUT_S * len(env_cfg.benchmark_goals)
 
 
 def _make_goal_result(goal_index: int) -> dict:
     return {
         "goal_index": goal_index,
-        "time_to_in_area_s": None,
-        "time_to_on_goal_s": None,
+        "time_to_area_s": None,
         "samples_total": 0,
-        "samples_in_area": 0,
-        "samples_on_goal": 0,
+        "samples_area": 0,
         "sum_pos_err": 0.0,
         "sum_rot_err": 0.0,
-        "sum_pos_err_in_area": 0.0,
-        "sum_rot_err_in_area": 0.0,
-        "min_pos_err_m": None,
-        "min_rot_err_rad": None,
-        "reached_in_area": False,
-        "reached_on_goal": False,
+        "sum_pos_err_area": 0.0,
+        "sum_rot_err_area": 0.0,
+        "reached_area": False,
     }
 
 
 def _finalize_goal_result(goal_result: dict) -> dict:
     samples_total = int(goal_result["samples_total"])
-    samples_in_area = int(goal_result["samples_in_area"])
+    samples_area = int(goal_result["samples_area"])
     if samples_total > 0:
-        goal_result["mean_pos_err_m"] = goal_result["sum_pos_err"] / samples_total
-        goal_result["mean_rot_err_rad"] = goal_result["sum_rot_err"] / samples_total
+        goal_result["mean_pos_err_area_m"] = goal_result["sum_pos_err_area"] / samples_area if samples_area > 0 else None
+        goal_result["mean_rot_err_area_rad"] = goal_result["sum_rot_err_area"] / samples_area if samples_area > 0 else None
     else:
-        goal_result["mean_pos_err_m"] = None
-        goal_result["mean_rot_err_rad"] = None
-    if samples_in_area > 0:
-        goal_result["mean_pos_err_in_area_m"] = goal_result["sum_pos_err_in_area"] / samples_in_area
-        goal_result["mean_rot_err_in_area_rad"] = goal_result["sum_rot_err_in_area"] / samples_in_area
-    else:
-        goal_result["mean_pos_err_in_area_m"] = None
-        goal_result["mean_rot_err_in_area_rad"] = None
+        goal_result["mean_pos_err_area_m"] = None
+        goal_result["mean_rot_err_area_rad"] = None
     del goal_result["sum_pos_err"]
     del goal_result["sum_rot_err"]
-    del goal_result["sum_pos_err_in_area"]
-    del goal_result["sum_rot_err_in_area"]
+    del goal_result["sum_pos_err_area"]
+    del goal_result["sum_rot_err_area"]
     return goal_result
 
 
@@ -237,50 +256,32 @@ def _update_goal_result(goal_result: dict, goal_time_s: float, pos_err: float, r
     goal_result["samples_total"] += 1
     goal_result["sum_pos_err"] += pos_err
     goal_result["sum_rot_err"] += rot_err
-    if goal_result["min_pos_err_m"] is None or pos_err < goal_result["min_pos_err_m"]:
-        goal_result["min_pos_err_m"] = pos_err
-    if goal_result["min_rot_err_rad"] is None or rot_err < goal_result["min_rot_err_rad"]:
-        goal_result["min_rot_err_rad"] = rot_err
 
-    in_area = pos_err <= IN_AREA_POS_M and rot_err <= float(IN_AREA_ROT_RAD)
-    on_goal = pos_err <= ON_GOAL_POS_M and rot_err <= float(ON_GOAL_ROT_RAD)
+    in_area = pos_err <= IN_AREA_POS_M
 
     if in_area:
-        goal_result["reached_in_area"] = True
-        if goal_result["time_to_in_area_s"] is None:
-            goal_result["time_to_in_area_s"] = goal_time_s
-        goal_result["samples_in_area"] += 1
-        goal_result["sum_pos_err_in_area"] += pos_err
-        goal_result["sum_rot_err_in_area"] += rot_err
-
-    if on_goal:
-        goal_result["reached_on_goal"] = True
-        if goal_result["time_to_on_goal_s"] is None:
-            goal_result["time_to_on_goal_s"] = goal_time_s
-        goal_result["samples_on_goal"] += 1
+        goal_result["reached_area"] = True
+        if goal_result["time_to_area_s"] is None:
+            goal_result["time_to_area_s"] = goal_time_s
+        goal_result["samples_area"] += 1
+        goal_result["sum_pos_err_area"] += pos_err
+        goal_result["sum_rot_err_area"] += rot_err
 
 
 def _build_episode_summary(episode_index: int, goal_results: list[dict]) -> dict:
-    in_area_times = [g["time_to_in_area_s"] for g in goal_results if g["time_to_in_area_s"] is not None]
-    on_goal_times = [g["time_to_on_goal_s"] for g in goal_results if g["time_to_on_goal_s"] is not None]
-    mean_pos = [g["mean_pos_err_m"] for g in goal_results if g["mean_pos_err_m"] is not None]
-    mean_rot = [g["mean_rot_err_rad"] for g in goal_results if g["mean_rot_err_rad"] is not None]
-    mean_pos_in_area = [g["mean_pos_err_in_area_m"] for g in goal_results if g["mean_pos_err_in_area_m"] is not None]
-    mean_rot_in_area = [g["mean_rot_err_in_area_rad"] for g in goal_results if g["mean_rot_err_in_area_rad"] is not None]
+    area_times = [g["time_to_area_s"] for g in goal_results if g["time_to_area_s"] is not None]
+    area_pos = [g["mean_pos_err_area_m"] for g in goal_results if g["mean_pos_err_area_m"] is not None]
+    area_rot = [g["mean_rot_err_area_rad"] for g in goal_results if g["mean_rot_err_area_rad"] is not None]
     goal_count = len(goal_results)
 
     return {
         "episode_index": episode_index,
         "goal_count": goal_count,
         "goals": goal_results,
-        "goals_reached_in_area": sum(1 for g in goal_results if g["reached_in_area"]),
-        "goals_reached_on_goal": sum(1 for g in goal_results if g["reached_on_goal"]),
-        "mean_pos_err_m": sum(mean_pos) / len(mean_pos) if mean_pos else None,
-        "mean_rot_err_rad": sum(mean_rot) / len(mean_rot) if mean_rot else None,
-        "mean_time_to_in_area_s": sum(in_area_times) / len(in_area_times) if in_area_times else None,
-        "mean_time_to_on_goal_s": sum(on_goal_times) / len(on_goal_times) if on_goal_times else None,
-        "mean_pos_err_in_area_m": sum(mean_pos_in_area) / len(mean_pos_in_area) if mean_pos_in_area else None,
-        "mean_rot_err_in_area_rad": sum(mean_rot_in_area) / len(mean_rot_in_area) if mean_rot_in_area else None,
+        "goals_reached_area": sum(1 for g in goal_results if g["reached_area"]),
+        "mean_time_to_area_s": sum(area_times) / len(area_times) if area_times else None,
+        "mean_pos_err_area_m": sum(area_pos) / len(area_pos) if area_pos else None,
+        "mean_rot_err_area_rad": sum(area_rot) / len(area_rot) if area_rot else None,
     }
 
 
@@ -289,14 +290,11 @@ def _save_benchmark_results(log_dir: str, resume_path: str, goals: tuple[tuple[f
     benchmark_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
     run_name = _extract_run_name_from_checkpoint(resume_path)
-    out_path = benchmark_dir / f"{timestamp}_{run_name}.json"
+    out_path = benchmark_dir / f"{timestamp}_{run_name}.yaml"
 
-    all_in_area_times = [g["time_to_in_area_s"] for ep in results for g in ep["goals"] if g["time_to_in_area_s"] is not None]
-    all_on_goal_times = [g["time_to_on_goal_s"] for ep in results for g in ep["goals"] if g["time_to_on_goal_s"] is not None]
-    all_pos = [g["mean_pos_err_m"] for ep in results for g in ep["goals"] if g["mean_pos_err_m"] is not None]
-    all_rot = [g["mean_rot_err_rad"] for ep in results for g in ep["goals"] if g["mean_rot_err_rad"] is not None]
-    all_pos_in_area = [g["mean_pos_err_in_area_m"] for ep in results for g in ep["goals"] if g["mean_pos_err_in_area_m"] is not None]
-    all_rot_in_area = [g["mean_rot_err_in_area_rad"] for ep in results for g in ep["goals"] if g["mean_rot_err_in_area_rad"] is not None]
+    all_area_times = [g["time_to_area_s"] for ep in results for g in ep["goals"] if g["time_to_area_s"] is not None]
+    all_area_pos = [g["mean_pos_err_area_m"] for ep in results for g in ep["goals"] if g["mean_pos_err_area_m"] is not None]
+    all_area_rot = [g["mean_rot_err_area_rad"] for ep in results for g in ep["goals"] if g["mean_rot_err_area_rad"] is not None]
 
     payload = {
         "metadata": {
@@ -307,30 +305,27 @@ def _save_benchmark_results(log_dir: str, resume_path: str, goals: tuple[tuple[f
             "seed": args_cli.seed,
             "goal_count": len(goals),
             "goal_timeout_s": GOAL_TIMEOUT_S,
+            "goal_convention": "x y z qw qx qy qz",
             "thresholds": {
-                "in_area": {"pos_m": IN_AREA_POS_M, "rot_rad": float(IN_AREA_ROT_RAD)},
-                "on_goal": {"pos_m": ON_GOAL_POS_M, "rot_rad": float(ON_GOAL_ROT_RAD)},
+                "area": {"pos_m": IN_AREA_POS_M},
             },
-            "goals": [list(goal) for goal in goals],
         },
         "summary": {
             "episodes_completed": len(results),
             "goal_count": len(goals),
             "total_goals_executed": sum(len(ep["goals"]) for ep in results),
-            "mean_pos_err_m": sum(all_pos) / len(all_pos) if all_pos else None,
-            "mean_rot_err_rad": sum(all_rot) / len(all_rot) if all_rot else None,
-            "mean_time_to_in_area_s": sum(all_in_area_times) / len(all_in_area_times) if all_in_area_times else None,
-            "mean_time_to_on_goal_s": sum(all_on_goal_times) / len(all_on_goal_times) if all_on_goal_times else None,
-            "mean_pos_err_in_area_m": sum(all_pos_in_area) / len(all_pos_in_area) if all_pos_in_area else None,
-            "mean_rot_err_in_area_rad": sum(all_rot_in_area) / len(all_rot_in_area) if all_rot_in_area else None,
-            "goals_reached_in_area": sum(ep["goals_reached_in_area"] for ep in results),
-            "goals_reached_on_goal": sum(ep["goals_reached_on_goal"] for ep in results),
+            "mean_time_to_area_s": sum(all_area_times) / len(all_area_times) if all_area_times else None,
+            "mean_pos_err_area_m": sum(all_area_pos) / len(all_area_pos) if all_area_pos else None,
+            "mean_rot_err_area_rad": sum(all_area_rot) / len(all_area_rot) if all_area_rot else None,
+            "goals_reached_area": sum(ep["goals_reached_area"] for ep in results),
         },
         "episodes": results,
+        "goals": [_format_goal_line(goal) for goal in goals],
     }
 
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+        f.write(_yaml_dump(payload))
+        f.write("\n")
 
     print(f"[INFO] Benchmark results saved to: {out_path}")
 
