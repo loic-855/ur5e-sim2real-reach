@@ -32,7 +32,9 @@ def impedance_control_v3():
     max_error = 0.20
 
     # Torque limits (Nm) – UR5e specs: 120 shoulder, 60 wrist
-    max_tau = [120.0, 120.0, 120.0, 60.0, 60.0, 60.0]
+    force_limit_factor = 0.3  # scale down the force limits for safety
+    max_tau = [120.0, 120.0, 120.0, 60.0, 60.0, 60.0] * force_limit_factor
+
 
     # First-order filter coefficients
     alpha_pos = 0.4
@@ -40,7 +42,7 @@ def impedance_control_v3():
 
     policy_rate = read_input_integer_register(36)
     textmsg("Policy control rate (Hz): ", policy_rate)
-    textmsg("Torque limits: shoulder=120 Nm, wrist=60 Nm")
+    textmsg("Torque limits: ", max_tau)
 
     stop = False
     j = 0
