@@ -1,6 +1,5 @@
 {
   "checkpoints": [
-    "logs/rsl_rl/sim2real_v1_ablation/2026-03-25_00-53-16_rand-False/model_1499.pt",
-    "logs/rsl_rl/sim2real_v1_ablation/2026-03-25_00-53-16_rand-noise_only/model_1499.pt"
+        "logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_10-20-56__rand-False_10s-Timeout/model_1499.pt"
   ]
 }

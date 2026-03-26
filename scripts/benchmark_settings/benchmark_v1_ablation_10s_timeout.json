@@ -1,0 +1,11 @@
+{
+  "checkpoints": [
+    "logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_10-20-56__rand-False_10s-Timeout/model_1499.pt",
+    "logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_11-17-12_rand-all_enabled_10s-Timeout/model_1499.pt",
+    "logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_11-17-12_rand-delay_only_action_1_2_10s-Timeout/model_1499.pt",
+    "logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_11-17-12_rand-masscom_only_10s-Timeout/model_1499.pt",
+    "logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_17-30-57_rand-delay_only_action_0_1_10s-Timeout/model_1499.pt",
+    "logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_18-41-36_rand-noise_only_10s-Timeout/model_1499.pt",
+    "logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_19-50-31_rand-actuator_only_10s-Timeout/model_1300.pt"
+  ]
+}
