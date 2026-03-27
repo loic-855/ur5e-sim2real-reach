@@ -1,0 +1,162 @@
+def impedance_control_tuning():
+    # ===================================================================
+    # Impedance controller for AUTOMATIC GAIN TUNING
+    #
+    # Same torque law as V3:
+    #   tau = Kp * (q_filt - q) + Kd * (qdot_filt - q_dot)
+    #
+    # Key difference: Kp is read from RTDE registers 37-42 every tick.
+    # Damping ratio zeta is read from register 43.
+    # Kd is computed as:  Kd = 2 * zeta * sqrt(Kp)
+    #   zeta = 1.0 → critical damping
+    #   zeta < 1.0 → under-damped (faster, allows overshoot)
+    #   zeta > 1.0 → over-damped (slower, no overshoot)
+    #
+    # This allows the Python auto-tuner to sweep Kp and zeta values
+    # without re-uploading the URScript.
+    # ===================================================================
+
+    # Default / initial position and velocity
+    q_des      = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+    q_filt     = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+    qdot_des   = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    qdot_filt  = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    # Gains (initial defaults, overwritten by RTDE each tick)
+    kp = [200.0, 800.0, 200.0, 40.0, 40.0, 40.0]
+    kd = [28.3, 56.6, 28.3, 12.6, 12.6, 12.6]
+    max_error = 0.20
+
+    # zeta set by step response identification
+    zeta = [0.5, 1.0, 0.5, 0.2, 0.2, 0.2]
+    textmsg("Using fixed zeta values: ", zeta)
+    # Torque limits (Nm) – UR5e specs
+    max_tau = [120.0, 120.0, 120.0, 60.0, 60.0, 60.0]
+
+    # First-order filter coefficients (same as tuned V3)
+    alpha_pos = 0.4
+    alpha_vel = 0.0
+
+    # Damping ratio (read from RTDE register 43, default 1.0 = critical)
+    #zeta = 1.0
+
+    policy_rate = read_input_integer_register(36)
+    textmsg("Tuning mode – Policy rate (Hz): ", policy_rate)
+    textmsg("Kd = 2*zeta*sqrt(Kp) – Kp from regs 37-42, zeta from reg 43")
+
+    stop = False
+    go_home = False
+
+    while True:
+        # ----- Read q_des from RTDE input registers 24-29 -----
+        q_des[0] = read_input_float_register(24)
+        q_des[1] = read_input_float_register(25)
+        q_des[2] = read_input_float_register(26)
+        q_des[3] = read_input_float_register(27)
+        q_des[4] = read_input_float_register(28)
+        q_des[5] = read_input_float_register(29)
+
+        # ----- Read qdot_des from RTDE input registers 30-35 -----
+        qdot_des[0] = read_input_float_register(30)
+        qdot_des[1] = read_input_float_register(31)
+        qdot_des[2] = read_input_float_register(32)
+        qdot_des[3] = read_input_float_register(33)
+        qdot_des[4] = read_input_float_register(34)
+        qdot_des[5] = read_input_float_register(35)
+
+        # ----- Read Kp from RTDE input registers 37-42 -----
+        kp[0] = read_input_float_register(37)
+        kp[1] = read_input_float_register(38)
+        kp[2] = read_input_float_register(39)
+        kp[3] = read_input_float_register(40)
+        kp[4] = read_input_float_register(41)
+        kp[5] = read_input_float_register(42)
+
+        # ----- Read damping ratio from RTDE register 43 ----- DEactivated
+
+
+        # ----- Compute Kd = 2 * zeta * sqrt(Kp) -----
+        kd[0] = 2.0 * zeta[0] * sqrt(kp[0])
+        kd[1] = 2.0 * zeta[1] * sqrt(kp[1])
+        kd[2] = 2.0 * zeta[2] * sqrt(kp[2])
+        kd[3] = 2.0 * zeta[3] * sqrt(kp[3])
+        kd[4] = 2.0 * zeta[4] * sqrt(kp[4])
+        kd[5] = 2.0 * zeta[5] * sqrt(kp[5])
+
+        stop = read_input_boolean_register(64)
+        go_home = read_input_boolean_register(65)
+
+        # ===============================================================
+        # 0. Go-home request: movej to home, reset filters, then resume
+        # ===============================================================
+        if go_home:
+            textmsg("Go-home requested – moving to home...")
+            stopj(2)
+            movej([-0.0, -1.57, 0.0, -1.57, 0, 0], a=0.7, v=0.6, t=0, r=0)
+            # Reset filter states to home position
+            q_filt  = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+            qdot_filt = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            textmsg("Go-home done – waiting for flag clear...")
+            # Wait until Python clears the go_home flag
+            while read_input_boolean_register(65):
+                sync()
+            end
+            textmsg("Resuming impedance control")
+        end
+
+        # ===============================================================
+        # 1. First-order filter on POSITION
+        # ===============================================================
+        q_filt = alpha_pos * q_des + (1.0 - alpha_pos) * q_filt
+
+        # ===============================================================
+        # 2. First-order filter on VELOCITY
+        # ===============================================================
+        qdot_filt = alpha_vel * qdot_des + (1.0 - alpha_vel) * qdot_filt
+
+        # ----- Read current joint states -----
+        q = get_actual_joint_positions()
+        q_dot = get_actual_joint_speeds()
+
+        # ===============================================================
+        # 3. Position error with saturation
+        # ===============================================================
+        e = q_filt - q
+        i = 0
+        while i < 6:
+            if e[i] > max_error:
+                e[i] = max_error
+            elif e[i] < -max_error:
+                e[i] = -max_error
+            end
+            i = i + 1
+        end
+
+        # ===============================================================
+        # 4. Compute torque: τ = Kp * e + Kd * (qdot_filt - q_dot)
+        # ===============================================================
+        tau = kp * e + kd * (qdot_filt - q_dot)
+
+        # ===============================================================
+        # 5. Torque saturation
+        # ===============================================================
+        i = 0
+        while i < 6:
+            if tau[i] > max_tau[i]:
+                tau[i] = max_tau[i]
+            elif tau[i] < -max_tau[i]:
+                tau[i] = -max_tau[i]
+            end
+            i = i + 1
+        end
+
+        direct_torque(tau, friction_comp=False)
+
+        if stop:
+            textmsg("Back to home position...")
+            movej([-0.0, -1.57, 0.0, -1.57, 0, 0], a=0.7, v=0.6, t=0, r=0)
+            break
+        end
+    end
+    stopj(2)
+end

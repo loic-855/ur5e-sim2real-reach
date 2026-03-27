@@ -1,0 +1,107 @@
+def impedance_control():
+    # ===================================================================
+    # Impedance controller with first-order interpolation filter
+    #
+    # The policy sends q_des via RTDE at 60 Hz (registers 24-29).
+    # This controller runs at 500 Hz on the robot and uses a first-order
+    # low-pass filter to smoothly interpolate between successive q_des
+    # commands, avoiding jerky motion.
+    #
+    # Filter:  q_filt(k+1) = alpha * q_des + (1 - alpha) * q_filt(k)
+    #   where  alpha = 1 - exp(-dt_ctrl / tau)
+    #
+    # With dt_ctrl = 1/500 = 0.002 s and tau = 0.02 s (≈ 1 policy step)
+    #   => alpha ≈ 0.095
+    # ===================================================================
+
+    # Default / initial position
+    q_des  = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+    q_filt = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
+    q_dot   = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # Impedance gains
+    kp = [600.0, 1200.0, 600.0, 200.0, 200.0, 200.0]
+    kd = [24.5, 69.3, 24.5, 6.5, 6.5, 6.5]
+    max_error = 0.20
+
+    # Torque limits (Nm) – UR5e specs: 120 shoulder, 60 wrist
+    force_limit_factor = 0.3  # scale down the force limits for safety
+    max_tau = [120.0, 120.0, 120.0, 60.0, 60.0, 60.0] * force_limit_factor
+
+    # First-order filter coefficient
+    # alpha = 1 - exp(-dt / tau),  dt = 0.002 s,  tau = 0.02 s tau =
+    alpha = 0.4
+
+    policy_rate = read_input_integer_register(30)  # handshake: wait for policy to write something to register 0
+    textmsg("Policy control rate (Hz): ", policy_rate)
+    textmsg("Torque limits: ", max_tau)
+
+    stop = False
+    j = 0
+    while True:
+        # ----- Read q_des from RTDE input registers 24-29 -----
+        q_des[0] = read_input_float_register(24)
+        q_des[1] = read_input_float_register(25)
+        q_des[2] = read_input_float_register(26)
+        q_des[3] = read_input_float_register(27)
+        q_des[4] = read_input_float_register(28)
+        q_des[5] = read_input_float_register(29)
+        stop = read_input_boolean_register(64)
+
+        
+        # ===============================================================
+        # 1. First-order filter on POSITION
+        #    q_filt = alpha * q_des + (1 - alpha) * q_filt
+        # ===============================================================
+        i = 0
+        while i < 6:
+            q_filt[i] = alpha * q_des[i] + (1.0 - alpha) * q_filt[i]
+            i = i + 1
+        end
+
+        # ----- Read current joint states -----
+        q = get_actual_joint_positions()
+        q_dot = get_actual_joint_speeds()
+
+        # ===============================================================
+        # 2. Position error (filtered target) with saturation
+        # ===============================================================
+        e = q_filt - q
+        i = 0
+        while i < 6:
+            if e[i] > max_error:
+                e[i] = max_error
+            elif e[i] < -max_error:
+                e[i] = -max_error
+            end
+            i = i + 1
+        end
+
+        # ===============================================================
+        # 3. Compute torque: τ = Kp * e + Kd * (qdot_filt - q_dot)
+        # ===============================================================
+        tau = kp * e + kd * (- q_dot)
+
+        # ===============================================================
+        # 4. Torque saturation
+        # ===============================================================
+        i = 0
+        while i < 6:
+            if tau[i] > max_tau[i]:
+                tau[i] = max_tau[i]
+            elif tau[i] < -max_tau[i]:
+                tau[i] = -max_tau[i]
+            end
+            i = i + 1
+        end
+
+        direct_torque(tau, friction_comp=False)
+
+        if stop:
+            textmsg("Back to home position...")
+            movej([-0.0, -1.57, 0.0, -1.57, 0, 0], a=0.7, v=0.6, t=0, r=0)
+            break
+        end
+        j = j + 1
+    end
+    stopj(2)
+end
