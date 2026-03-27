@@ -30,12 +30,14 @@ Usage:
     python3 sim2real_node.py --robot-gain tuned
 For benchmarking:
     python scripts/sim2real/v1/sim2real_node.py \
-    --model logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_10-20-56__rand-False_10s-Timeout/exported/policy.pt \
-    --action-scale=0.3 \
     --benchmark \
-     --goals-file scripts/benchmark_settings/benchmark_goals_handmade.json \
+    --goals-file scripts/benchmark_settings/goals_handmade.json \
     --goal-timeout-s 10 \
-    --num-goals 7
+    --num-goals 7 \
+    --robot-gain naive \
+    --action-scale 0.3 \
+    --model logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_10-20-56__rand-False_10s-Timeout/exported/policy.pt \
+
 Then publish goals using goal_publisher.py. Make sure to start it once this node is waiting for goals.
 """
 
@@ -479,6 +481,7 @@ class Sim2RealNode(Node):
         self._benchmark_completed = False
         self._benchmark_output_dir = REPO_ROOT / "logs" / "benchmarks" / "sim_pose_real"
         self._model_path = model_path
+        self._robot_gain = robot_gain
         if robot_gain == "naive":
             urscript_file = URSCRIPT_FILE_NAIVE
         else:
@@ -611,6 +614,7 @@ class Sim2RealNode(Node):
                 "model_path": self._model_path,
                 "run_name": run_name,
                 "robot": self.robot_prefix,
+                "robot_gain": self._robot_gain,
                 "rate_hz": self.control_rate,
                 "action_scale": self.action_scale,
                 "goals_file": self._benchmark_goals_file,
