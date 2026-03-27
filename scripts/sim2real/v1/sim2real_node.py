@@ -27,6 +27,7 @@ Frame convention:
 Usage:
     python3 sim2real_node.py 
     python3 sim2real_node.py --rate 60 --action-scale 0.5 --model path/to/policy.pt
+    python3 sim2real_node.py --robot-gain tuned
 For benchmarking:
     python scripts/sim2real/v1/sim2real_node.py \
     --model logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_10-20-56__rand-False_10s-Timeout/exported/policy.pt \
@@ -87,6 +88,8 @@ ROBOT_PRIMARY_PORT = 30001
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RTDE_CONFIG_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "rtde_input_v1.xml")
 URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control.script")
+URSCRIPT_FILE_TUNED = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control_tuned.script")
+URSCRIPT_FILE_NAIVE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control_naive.script")
 
 # Home position
 HOME_Q = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
@@ -430,6 +433,7 @@ class Sim2RealNode(Node):
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         action_scale: float = 7.0,
         robot_host: str = ROBOT_HOST,
+        robot_gain: str = "tuned",
         benchmark: bool = False,
         goal_timeout_s: float = 10.0,
         num_goals: int = 0,
@@ -475,6 +479,10 @@ class Sim2RealNode(Node):
         self._benchmark_completed = False
         self._benchmark_output_dir = REPO_ROOT / "logs" / "benchmarks" / "sim_pose_real"
         self._model_path = model_path
+        if robot_gain == "naive":
+            urscript_file = URSCRIPT_FILE_NAIVE
+        else:
+            urscript_file = URSCRIPT_FILE_TUNED
 
         # ==================================================================
         # Load policy
@@ -490,6 +498,7 @@ class Sim2RealNode(Node):
             robot_host=robot_host,
             rtde_frequency=rtde_rate,
             control_rate=control_rate,
+            urscript_file=urscript_file,
         )
         self.get_logger().info("Connecting to robot via RTDE...")
         self.rtde.connect()
@@ -883,6 +892,11 @@ def main():
         help=f"Robot IP address (default {ROBOT_HOST})",
     )
     parser.add_argument(
+        "--robot-gain", type=str, default="tuned",
+        choices=["tuned", "naive"],
+        help="Select the URScript gain profile to upload",
+    )
+    parser.add_argument(
         "--benchmark", action="store_true", default=False,
         help="Run the real benchmark with timed goal windows",
     )
@@ -903,6 +917,7 @@ def main():
             device=args.device,
             action_scale=args.action_scale,
             robot_host=args.robot_ip,
+            robot_gain=args.robot_gain,
             benchmark=args.benchmark,
             goal_timeout_s=args.goal_timeout_s,
             num_goals=args.num_goals,
