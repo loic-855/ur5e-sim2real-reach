@@ -36,7 +36,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped, Point, Vector3
 from visualization_msgs.msg import Marker
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, String
 
 # Table dimensions - NOTE: In ROS, "table" frame origin is at TABLE CENTER SURFACE (0,0,0)
 # So all coordinates here are relative to the center of the table surface!
@@ -59,6 +59,7 @@ class GoalPublisher(Node):
         cycling_goals: list[tuple[float, ...]] | None = None,
         cycling_goal_interval: float | None = None,
         stop_after_single_cycle: bool = False,
+        benchmark_mode: bool = False,
     ):
         super().__init__("goal_publisher")
         
@@ -89,6 +90,15 @@ class GoalPublisher(Node):
         self.stop_after_single_cycle = stop_after_single_cycle
         self.finished_cycling = False
         self.shutdown_after_publish = False
+        self._benchmark_mode = benchmark_mode
+        self._cycling_goal_interval = cycling_goal_interval if cycling_goal_interval is not None else 8.0
+        self._publishing_active = not benchmark_mode  # In benchmark mode, wait for "start"
+
+        # Benchmark control subscription
+        if benchmark_mode:
+            self._benchmark_control_sub = self.create_subscription(
+                String, "/benchmark_control", self._benchmark_control_callback, 10
+            )
 
         self.get_logger().info("Goal publisher started")
         self.get_logger().info("RViz: Add a Marker display with topic '/visualization_marker' to see the goal coordinate frame")
@@ -98,12 +108,13 @@ class GoalPublisher(Node):
         
         # Timer for random goal updates if enabled
         self.update_timer = None
-        if random_update_interval is not None:
+        self._random_update_interval = random_update_interval
+        if random_update_interval is not None and not benchmark_mode:
             self.update_timer = self.create_timer(random_update_interval, self.update_random_goal)
             self.update_random_goal()  # Set initial random goal
         
-        # Timer for cycling through goals
-        if self.cycling_goals:
+        # Timer for cycling through goals (skip in benchmark mode; "start" signal will trigger)
+        if self.cycling_goals and not benchmark_mode:
             goal_cycle_interval = cycling_goal_interval if cycling_goal_interval is not None else 8.0
             self.goal_cycle_timer = self.create_timer(goal_cycle_interval, self.cycle_to_next_goal)
             self.cycle_to_next_goal()  # Set initial goal
@@ -200,10 +211,13 @@ class GoalPublisher(Node):
 
         is_last_goal = self.current_goal_index == len(self.cycling_goals) - 1
         if self.stop_after_single_cycle and is_last_goal:
-            self.shutdown_after_publish = True
             if self.goal_cycle_timer is not None:
                 self.goal_cycle_timer.cancel()
-            self.get_logger().info("Completed one goal cycle from file; exiting.")
+            if self._benchmark_mode:
+                self.get_logger().info("Goal cycle completed; waiting for next 'start' signal")
+            else:
+                self.shutdown_after_publish = True
+                self.get_logger().info("Completed one goal cycle from file; exiting.")
             return
 
         self.current_goal_index = (self.current_goal_index + 1) % len(self.cycling_goals)
@@ -228,8 +242,40 @@ class GoalPublisher(Node):
             f"Goal set: pos=[{x:.3f}, {y:.3f}, {z:.3f}, {self.goal_quaternion[0]:.3f}, {self.goal_quaternion[1]:.3f}, {self.goal_quaternion[2]:.3f}, {self.goal_quaternion[3]:.3f}] (w,x,y,z)], "
         )
         
+    def _benchmark_control_callback(self, msg: String):
+        """Handle benchmark control signals from sim2real node."""
+        if msg.data != "start":
+            return
+
+        self._publishing_active = True
+
+        # Cycling goals mode
+        if self.cycling_goals:
+            self.current_goal_index = 0
+            self.finished_cycling = False
+            self.shutdown_after_publish = False
+            if self.goal_cycle_timer is not None:
+                self.goal_cycle_timer.cancel()
+            self.goal_cycle_timer = self.create_timer(
+                self._cycling_goal_interval, self.cycle_to_next_goal
+            )
+            self.cycle_to_next_goal()  # publish first goal immediately
+            self.get_logger().info("Benchmark control: started goal cycle")
+
+        # Random goals mode
+        elif self._random_update_interval is not None:
+            if self.update_timer is not None:
+                self.update_timer.cancel()
+            self.update_timer = self.create_timer(
+                self._random_update_interval, self.update_random_goal
+            )
+            self.update_random_goal()  # publish first random goal immediately
+            self.get_logger().info("Benchmark control: started random goals")
+
     def publish_goal(self):
         """Publish current goal pose."""
+        if not self._publishing_active:
+            return
         msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "table"  # Reference frame
@@ -282,6 +328,7 @@ def main():
     parser.add_argument("--random", action="store_true", help="Use random goal position")
     parser.add_argument("--update", type=float, default=10.0, help="Update goal every N seconds in random mode")
     parser.add_argument("--goals-file", type=str, default=None, help="JSON file containing [x, y, z, qw, qx, qy, qz] goals")
+    parser.add_argument("--benchmark", action="store_true", default=False, help="Benchmark mode: wait for start signals from sim2real node")
     args = parser.parse_args()
 
     static_goal_requested = all(value is not None for value in (args.x, args.y, args.z))
@@ -334,7 +381,8 @@ def main():
         random_update_interval=random_update_interval,
         cycling_goals=cycling_goals,
         cycling_goal_interval=cycling_goal_interval,
-        stop_after_single_cycle=args.goals_file is not None,
+        stop_after_single_cycle=args.goals_file is not None or args.benchmark,
+        benchmark_mode=args.benchmark,
     )
     
     # Set static goal if specified
@@ -377,8 +425,11 @@ def main():
     else:
         # Static or cycling mode
         try:
-            while rclpy.ok() and not node.finished_cycling:
-                rclpy.spin_once(node, timeout_sec=0.1)
+            if args.benchmark:
+                rclpy.spin(node)  # Stay alive; controlled by /benchmark_control
+            else:
+                while rclpy.ok() and not node.finished_cycling:
+                    rclpy.spin_once(node, timeout_sec=0.1)
         except KeyboardInterrupt:
             pass
     

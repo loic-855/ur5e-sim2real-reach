@@ -34,11 +34,13 @@ For benchmarking:
     --goals-file scripts/benchmark_settings/goals_handmade.json \
     --goal-timeout-s 10 \
     --num-goals 7 \
+    --num-takes 3 \
     --robot-gain naive \
     --action-scale 0.3 \
     --model logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-25_10-20-56__rand-False_10s-Timeout/exported/policy.pt \
 
-Then publish goals using goal_publisher.py. Make sure to start it once this node is waiting for goals.
+Then publish goals using goal_publisher.py in benchmark mode:
+    python scripts/sim2real/goal_publisher.py --goals-file scripts/benchmark_settings/goals_handmade.json --update 10 --benchmark
 """
 
 import math
@@ -63,6 +65,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import String
 
 import rtde.rtde as rtde
 import rtde.rtde_config as rtde_config
@@ -436,6 +439,7 @@ class Sim2RealNode(Node):
         action_scale: float = 7.0,
         robot_host: str = ROBOT_HOST,
         robot_gain: str = "tuned",
+        num_takes: int = 1,
         benchmark: bool = False,
         goal_timeout_s: float = 10.0,
         num_goals: int = 0,
@@ -482,6 +486,9 @@ class Sim2RealNode(Node):
         self._benchmark_output_dir = REPO_ROOT / "logs" / "benchmarks" / "sim_pose_real"
         self._model_path = model_path
         self._robot_gain = robot_gain
+        self._num_takes = num_takes
+        self._current_take = 0
+        self._all_episode_results: list[list[dict]] = []
         if robot_gain == "naive":
             urscript_file = URSCRIPT_FILE_NAIVE
         else:
@@ -532,6 +539,10 @@ class Sim2RealNode(Node):
             qos,
         )
 
+        # Benchmark control publisher (for coordinating with goal_publisher)
+        if self._benchmark:
+            self._benchmark_control_pub = self.create_publisher(String, "/benchmark_control", 10)
+
         # ==================================================================
         # Control timer
         # ==================================================================
@@ -546,6 +557,25 @@ class Sim2RealNode(Node):
         self.get_logger().info(
             f"Action scale: {action_scale}"
         )
+
+        # Delayed initial "start" signal for benchmark goal publisher
+        if self._benchmark and self._num_takes > 0:
+            self._initial_start_timer = self.create_timer(
+                2.0, self._publish_initial_start, callback_group=self.callback_group
+            )
+
+    # -- Benchmark control signals -----------------------------------------
+
+    def _publish_initial_start(self):
+        """One-shot: publish initial 'start' to goal publisher, then cancel."""
+        self._publish_start_signal()
+        self._initial_start_timer.cancel()
+
+    def _publish_start_signal(self):
+        msg = String()
+        msg.data = "start"
+        self._benchmark_control_pub.publish(msg)
+        self.get_logger().info("Published benchmark 'start' signal to goal publisher")
 
     # -- Benchmarking helpers ----------------------------------------------
 
@@ -583,13 +613,13 @@ class Sim2RealNode(Node):
         del goal_result["sum_rot_err_area"]
         return goal_result
 
-    def _build_episode_summary(self) -> dict:
-        goal_results = self._benchmark_results[: self._benchmark_num_goals]
+    def _build_episode_summary(self, episode_index: int = 0, results: Optional[list[dict]] = None) -> dict:
+        goal_results = (results if results is not None else self._benchmark_results)[: self._benchmark_num_goals]
         area_times = [g["time_to_area_s"] for g in goal_results if g["time_to_area_s"] is not None]
         area_pos = [g["mean_pos_err_area_m"] for g in goal_results if g["mean_pos_err_area_m"] is not None]
         area_rot = [g["mean_rot_err_area_rad"] for g in goal_results if g["mean_rot_err_area_rad"] is not None]
         return {
-            "episode_index": 0,
+            "episode_index": episode_index,
             "goal_count": len(goal_results),
             "goals": goal_results,
             "goals_reached_area": sum(1 for g in goal_results if g["reached_area"]),
@@ -599,8 +629,8 @@ class Sim2RealNode(Node):
         }
 
     def _save_benchmark_results(self):
-        if len(self._benchmark_results) == 0:
-            self.get_logger().warn("No benchmark goal results collected; nothing to save")
+        if not self._all_episode_results:
+            self.get_logger().warn("No benchmark results collected; nothing to save")
             return None
 
         self._benchmark_output_dir.mkdir(parents=True, exist_ok=True)
@@ -608,7 +638,17 @@ class Sim2RealNode(Node):
         run_name = extract_run_name_from_model_path(self._model_path)
         out_path = self._benchmark_output_dir / f"{timestamp}_{run_name}.yaml"
 
-        episode = self._build_episode_summary()
+        episodes = []
+        for take_idx, take_results in enumerate(self._all_episode_results):
+            episodes.append(self._build_episode_summary(take_idx, take_results))
+
+        # Aggregate across all episodes
+        all_area_times = [ep["mean_time_to_area_s"] for ep in episodes if ep["mean_time_to_area_s"] is not None]
+        all_area_pos = [ep["mean_pos_err_area_m"] for ep in episodes if ep["mean_pos_err_area_m"] is not None]
+        all_area_rot = [ep["mean_rot_err_area_rad"] for ep in episodes if ep["mean_rot_err_area_rad"] is not None]
+        total_reached = sum(ep["goals_reached_area"] for ep in episodes)
+        total_goals = sum(ep["goal_count"] for ep in episodes)
+
         payload = {
             "metadata": {
                 "model_path": self._model_path,
@@ -620,21 +660,22 @@ class Sim2RealNode(Node):
                 "goals_file": self._benchmark_goals_file,
                 "goal_count": self._benchmark_num_goals,
                 "goal_timeout_s": self._goal_timeout_s,
+                "num_takes": self._num_takes,
                 "goal_convention": "x y z qw qx qy qz",
                 "thresholds": {
                     "area": {"pos_m": IN_AREA_POS_M},
                 },
             },
             "summary": {
-                "episodes_completed": 1,
-                "goal_count": len(self._benchmark_results),
-                "total_goals_executed": len(self._benchmark_results),
-                "mean_time_to_area_s": episode["mean_time_to_area_s"],
-                "mean_pos_err_area_m": episode["mean_pos_err_area_m"],
-                "mean_rot_err_area_rad": episode["mean_rot_err_area_rad"],
-                "goals_reached_area": episode["goals_reached_area"],
+                "episodes_completed": len(episodes),
+                "goal_count": total_goals,
+                "total_goals_executed": total_goals,
+                "mean_time_to_area_s": sum(all_area_times) / len(all_area_times) if all_area_times else None,
+                "mean_pos_err_area_m": sum(all_area_pos) / len(all_area_pos) if all_area_pos else None,
+                "mean_rot_err_area_rad": sum(all_area_rot) / len(all_area_rot) if all_area_rot else None,
+                "goals_reached_area": total_reached,
             },
-            "episodes": [episode],
+            "episodes": episodes,
             "goals": [format_goal_line(goal) for goal in self._benchmark_goals[: self._benchmark_num_goals]],
         }
 
@@ -657,18 +698,57 @@ class Sim2RealNode(Node):
     def _complete_benchmark(self):
         if self._benchmark_completed:
             return
-        self._benchmark_completed = True
+        # Finalize current take's results
         if self._current_goal_result is not None and len(self._benchmark_results) < self._benchmark_num_goals:
             self._benchmark_results.append(self._finalize_goal_result(self._current_goal_result))
             self._current_goal_result = None
         self._benchmark_results = self._benchmark_results[: self._benchmark_num_goals]
-        self._save_benchmark_results()
-        self.get_logger().info("Benchmark finished; shutting down.")
-        self.shutdown()
-        try:
-            rclpy.shutdown()
-        except Exception:
-            pass
+        self._all_episode_results.append(self._benchmark_results)
+        self._current_take += 1
+        self.get_logger().info(f"Take {self._current_take}/{self._num_takes} completed")
+
+        if self._current_take >= self._num_takes:
+            self._benchmark_completed = True
+            self._save_benchmark_results()
+            self.get_logger().info("All takes completed; shutting down.")
+            self.shutdown()
+            try:
+                rclpy.shutdown()
+            except Exception:
+                pass
+        else:
+            # Start next take in background thread
+            Thread(target=self._reset_for_next_take, daemon=True, name="take_reset").start()
+
+    def _reset_for_next_take(self):
+        """Home robot, re-upload URScript, reset state, signal goal publisher."""
+        self.is_running = False
+        self.get_logger().info("Homing robot between takes...")
+
+        # Stop URScript (robot goes home)
+        self.rtde.stop_robot()
+        time.sleep(3.0)
+
+        # Re-upload URScript
+        self.rtde.send_urscript()
+
+        # Reset benchmark state
+        with self.lock:
+            self.goal_position = None
+            self.goal_quaternion = None
+            self.old_goal = None
+            self.dof_targets = None
+
+        self._benchmark_started_at = None
+        self._benchmark_current_goal_index = -1
+        self._benchmark_results = []
+        self._current_goal_result = None
+
+        self.is_running = True
+
+        # Signal goal publisher to start next cycle
+        self._publish_start_signal()
+        self.get_logger().info(f"Take {self._current_take + 1}/{self._num_takes} armed. Waiting for goals...")
 
     def _update_benchmark(self, robot_state: RobotState, goal_state: GoalState):
         if not self._benchmark or self._benchmark_completed:
@@ -906,6 +986,7 @@ def main():
     )
     parser.add_argument("--goal-timeout-s", type=float, default=10.0, help="Benchmark timeout per goal in seconds")
     parser.add_argument("--num-goals", type=int, default=None, help="Number of benchmark goals to evaluate")
+    parser.add_argument("--num-takes", type=int, default=1, help="Number of benchmark takes (episodes) to run")
     parser.add_argument("--goals-file", type=str, default=None, help="Optional JSON goals file for benchmark metadata")
     args = parser.parse_args()
 
@@ -922,6 +1003,7 @@ def main():
             action_scale=args.action_scale,
             robot_host=args.robot_ip,
             robot_gain=args.robot_gain,
+            num_takes=args.num_takes,
             benchmark=args.benchmark,
             goal_timeout_s=args.goal_timeout_s,
             num_goals=args.num_goals,
