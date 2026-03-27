@@ -98,6 +98,7 @@ def impedance_control():
 
         if stop:
             textmsg("Back to home position...")
+            movej([q[0], -1.57, q[2], q[3], q[4], q[5]], a=0.7, v=0.6, t=0, r=0)
             movej([-0.0, -1.57, 0.0, -1.57, 0, 0], a=0.7, v=0.6, t=0, r=0)
             break
         end
