@@ -4,8 +4,8 @@ Automatic Impedance-Controller Gain Tuner for UR5e
 ===================================================
 
 Sweeps Kp values per joint via RTDE while the URScript
-``impedance_control_tuning.script`` runs continuously.  Kd is computed
-on the robot as Kd = 2·√Kp (critical damping).
+``impedance_control_tuning_zeta.script`` runs continuously.  Kd is
+computed as Kd = 2·ζ·√Kp, with ζ configurable per joint.
 
 For each joint the script searches for the **minimum Kp** that achieves
 RMS tracking error < ``--rms-target`` (default 2°) on a 0.5 Hz sinusoid.
@@ -47,7 +47,7 @@ import rtde.rtde_config as rtde_config
 # ============================================================================
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RTDE_CONFIG_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "rtde_input_tuning.xml")
-URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control_tuning.script")
+URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control_tuning_zeta.script") #choose the URScript with or without zeta control
 LOG_DIR = REPO_ROOT / "logs" / "impedance_tuner"
 
 ROBOT_HOST = "192.168.1.101"
@@ -66,16 +66,17 @@ JOINT_NAMES = [
 
 # Default Kp centres (from prior manual testing)
 DEFAULT_KP = np.array([200.0, 800.0, 200.0, 40.0, 40.0, 40.0])
+DEFAULT_ZETA = np.array([0.5, 1.0, 0.5, 0.2, 0.2, 0.2])
 
 # Search grids per joint (centred around best-known values)
 # Sorted ascending so we find the minimum Kp first (early stopping)
 DEFAULT_KP_GRIDS = {
-    0: [200, 250, 300, 350, 400, 450],     # shoulder_pan
-    1: [400, 500, 600, 700, 800, 1000],     # shoulder_lift  (heavy joint)
-    2: [200, 250, 300, 350 , 400, 450],      # elbow
-    3: [20, 30, 40, 50, 60, 80],            # wrist_1
-    4: [20, 30, 40, 50, 60, 80],            # wrist_2
-    5: [20, 30, 40, 50, 60, 80],            # wrist_3
+    0: [600, 800, 1000],     # shoulder_pan
+    1: [800, 1000, 1200, 1400],     # shoulder_lift  (heavy joint)
+    2: [600, 800, 1000],     # elbow
+    3: [100, 200, 300, 400],           # wrist_1
+    4: [100, 200, 300, 400],        # wrist_2
+    5: [100, 200, 300, 400],            # wrist_3
 }
 
 
@@ -283,6 +284,23 @@ def sinusoid(t: float, amplitude: float, freq: float, offset: float):
     return pos, vel
 
 
+def resolve_zeta_vector(zeta_values: Optional[list[float]]) -> np.ndarray:
+    if zeta_values is None:
+        return DEFAULT_ZETA.copy()
+
+    if len(zeta_values) == 1:
+        return np.full(6, float(zeta_values[0]), dtype=np.float64)
+
+    if len(zeta_values) != 6:
+        raise ValueError("--zeta expects either 1 value or 6 values")
+
+    return np.asarray(zeta_values, dtype=np.float64)
+
+
+def compute_kd_vector(kp: np.ndarray, zeta: np.ndarray) -> np.ndarray:
+    return 2.0 * zeta * np.sqrt(kp)
+
+
 # ============================================================================
 # Single trial: excite one joint, return RMS error
 # ============================================================================
@@ -385,6 +403,10 @@ def run_trial(
 def run_auto_tuner(args: argparse.Namespace):
     joints_to_tune = args.joints
     rms_target = args.rms_target
+    zeta_vector = resolve_zeta_vector(args.zeta)
+
+    if np.any(zeta_vector <= 0.0):
+        raise ValueError("All zeta values must be strictly positive")
 
     # Build Kp grids
     kp_grids = {}
@@ -398,11 +420,12 @@ def run_auto_tuner(args: argparse.Namespace):
 
     print("=" * 65)
     print("  Automatic Impedance Controller Gain Tuner")
-    print("  Kd = 2·√Kp  (critical damping)")
+    print("  Kd = 2·ζ·√Kp")
     print("=" * 65)
     print(f"  Joints to tune:  {[f'{j} ({JOINT_NAMES[j]})' for j in joints_to_tune]}")
     print(f"  RMS target:      < {rms_target}°")
     print(f"  Sine:            {args.freq} Hz, ±{args.amplitude} rad ({np.degrees(args.amplitude):.1f}°)")
+    print(f"  Zeta vector:     {zeta_vector.tolist()}")
     print(f"  Trial duration:  {args.duration}s excitation + {args.settle}s settle")
     print(f"  Total trials:    {total_trials}")
     print(f"  Estimated time:  {total_time / 60:.1f} min")
@@ -410,7 +433,7 @@ def run_auto_tuner(args: argparse.Namespace):
     for j in joints_to_tune:
         grid = kp_grids[j]
         print(f"  Joint {j} ({JOINT_NAMES[j]}):  Kp = {grid}")
-        print(f"    {'':>22s}  Kd = {[round(2*math.sqrt(kp), 1) for kp in grid]}")
+        print(f"    {'':>22s}  Kd = {[round(2 * zeta_vector[j] * math.sqrt(kp), 1) for kp in grid]}")
     print("=" * 65)
 
     if args.dry_run:
@@ -457,7 +480,7 @@ def run_auto_tuner(args: argparse.Namespace):
             found_best = False
             for kp_candidate in kp_grids[j]:
                 trial_num += 1
-                kd_candidate = 2.0 * math.sqrt(kp_candidate)
+                kd_candidate = 2.0 * zeta_vector[j] * math.sqrt(kp_candidate)
 
                 # Build Kp vector: use best found so far for other joints
                 kp_vec = best_kp.copy()
@@ -523,7 +546,8 @@ def run_auto_tuner(args: argparse.Namespace):
         print("  VALIDATION: all joints with best gains")
         print(f"{'═' * 55}")
         print(f"  Best Kp: {best_kp.tolist()}")
-        print(f"  Best Kd: {[round(2*math.sqrt(kp), 1) for kp in best_kp]}")
+        best_kd = compute_kd_vector(best_kp, zeta_vector)
+        print(f"  Best Kd: {best_kd.round(1).tolist()}")
 
         link.write_kp(best_kp)
         dt = 1.0 / args.rate
@@ -595,7 +619,7 @@ def run_auto_tuner(args: argparse.Namespace):
         print()
         print("  Copy-paste for impedance_control_v3.script:")
         print(f"    kp = {[best_kp[i] for i in range(6)]}")
-        kd_final = [round(2 * math.sqrt(best_kp[i]), 1) for i in range(6)]
+        kd_final = best_kd.round(1).tolist()
         print(f"    kd = {kd_final}")
         print()
 
@@ -609,6 +633,7 @@ def run_auto_tuner(args: argparse.Namespace):
                 "duration": args.duration,
                 "rate": args.rate,
                 "rms_target": rms_target,
+                "zeta": zeta_vector.tolist(),
             },
             "best_kp": best_kp.tolist(),
             "best_kd": kd_final,
@@ -621,7 +646,7 @@ def run_auto_tuner(args: argparse.Namespace):
         print(f"[Tuner] Results saved: {json_path}")
 
         # --- Plot: RMS vs Kp per joint ---
-        plot_sweep_results(all_results, joints_to_tune, rms_target, stamp)
+        plot_sweep_results(all_results, joints_to_tune, rms_target, zeta_vector, stamp)
 
     except KeyboardInterrupt:
         print("\n[Tuner] Interrupted – stopping robot…")
@@ -638,6 +663,7 @@ def plot_sweep_results(
     all_results: dict[int, list[dict]],
     joints: list[int],
     rms_target: float,
+    zeta_vector: np.ndarray,
     stamp: str,
 ):
     """Plot RMS error vs Kp for each joint."""
@@ -657,11 +683,11 @@ def plot_sweep_results(
         ax.axhline(rms_target, color="k", linestyle="--", linewidth=1, label=f"Target {rms_target}°")
         ax.set_xlabel("Kp")
         ax.set_ylabel("RMS Error [°]")
-        ax.set_title(f"Joint {j} – {JOINT_NAMES[j]}")
+        ax.set_title(f"Joint {j} – {JOINT_NAMES[j]}  (ζ={zeta_vector[j]:.2f})")
         ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3, axis="y")
 
-    fig.suptitle("Auto-Tuner: RMS Error vs Kp  (Kd = 2·√Kp)", fontsize=12)
+    fig.suptitle("Auto-Tuner: RMS Error vs Kp  (Kd = 2·ζ·√Kp)", fontsize=12)
     fig.tight_layout()
 
     fig_path = LOG_DIR / f"auto_tuner_{stamp}.png"
@@ -687,6 +713,8 @@ def parse_args():
                     help="Sinusoid frequency [Hz] (default: 0.5)")
     p.add_argument("--amplitude", type=float, default=0.3,
                     help="Sinusoid amplitude [rad] (default: 0.3)")
+    p.add_argument("--zeta", type=float, nargs="+", default=None,
+                    help="One zeta value or 6 per-joint zeta values (default: built-in vector)")
     p.add_argument("--duration", type=float, default=8.0,
                     help="Excitation duration per trial [s] (default: 8)")
     p.add_argument("--settle", type=float, default=2.0,
