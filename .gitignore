@@ -67,6 +67,7 @@ _build
 
 # Tests
 tests/
+test_models/
 
 # Old/Backup files
 .old/
