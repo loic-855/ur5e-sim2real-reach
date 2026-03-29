@@ -294,7 +294,7 @@ class RTDEController:
         """Upload and start the URScript impedance controller on the robot."""
         self.stop_reg.input_bit_register_64 = False
         self.con.send(self.stop_reg)
-        self.control_rate_reg.input_int_register_30 = int(self.control_rate)
+        self.control_rate_reg.input_int_register_36 = int(self.control_rate)
         self.con.send(self.control_rate_reg)
 
         self._write_q_des(HOME_Q)
@@ -727,7 +727,7 @@ class Sim2RealNode(Node):
 
         # Stop URScript (robot goes home)
         self.rtde.stop_robot()
-        time.sleep(3.0)
+        time.sleep(8.0)
 
         # Re-upload URScript
         self.rtde.send_urscript()
