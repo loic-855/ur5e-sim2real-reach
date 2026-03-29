@@ -22,7 +22,7 @@ Example:
 from __future__ import annotations
 
 import argparse
-import shutil
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,49 +55,13 @@ plt.rcParams.update(
         "savefig.dpi": 180,
         "pdf.fonttype": 42,
         "ps.fonttype": 42,
+        "font.size": 12,
+        "font.family": "sans-serif",
+        "font.sans-serif": ["DejaVu Sans"],
+        "axes.titleweight": "bold",
+        "axes.labelweight": "regular",
     }
 )
-
-
-def apply_typography(use_helvetica: bool = False) -> None:
-    use_tex = shutil.which("latex") is not None
-    if use_helvetica:
-        # Use sans-serif for non-math text (Helvetica-like), keep Computer Modern for math
-        if use_tex:
-            # Ask LaTeX to use Helvetica for text (if available)
-            plt.rcParams.update({
-                "font.size": 12,
-                "font.family": "sans-serif",
-                "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans"],
-                "mathtext.fontset": "cm",
-                "text.usetex": True,
-                "axes.titleweight": "bold",
-                "axes.labelweight": "regular",
-                # Add preamble to select Helvetica in LaTeX
-                "text.latex.preamble": r"\usepackage{helvet}\renewcommand{\familydefault}{\sfdefault}",
-            })
-        else:
-            plt.rcParams.update({
-                "font.size": 12,
-                "font.family": "sans-serif",
-                "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans"],
-                "mathtext.fontset": "cm",
-                "text.usetex": False,
-                "axes.titleweight": "bold",
-                "axes.labelweight": "regular",
-            })
-    else:
-        plt.rcParams.update(
-            {
-                "font.size": 12,
-                "font.family": "serif",
-                "font.serif": ["Computer Modern Roman", "CMU Serif", "DejaVu Serif"],
-                "mathtext.fontset": "cm",
-                "text.usetex": use_tex,
-                "axes.titleweight": "bold",
-                "axes.labelweight": "regular",
-            }
-        )
 
 
 @dataclass
@@ -167,16 +131,16 @@ def parse_args() -> argparse.Namespace:
         help="Search for YAML files recursively under the input folder.",
     )
     parser.add_argument(
-        "--helvetica",
-        action="store_true",
-        default=False,
-        help="Render non-math (text) using Helvetica (falls back if not available).",
-    )
-    parser.add_argument(
         "--simulation",
         action="store_true",
         default=False,
         help="When set, treat runs with missing robot_gain as 'simulation' (equivalent to naive).",
+    )
+    parser.add_argument(
+        "--untuned-only",
+        action="store_true",
+        default=False,
+        help="When set, skip files whose robot_gain is tuned and only keep naive/simulation runs.",
     )
     return parser.parse_args()
 
@@ -385,14 +349,21 @@ def plot_metric_comparison(
     metric_key: str,
     metric_label: str,
     output_dir: Path,
-    use_helvetica: bool = False,
+    show_legend: bool = True,
     report_title: str | None = None,
 ) -> None:
     model_keys = sorted(grouped_runs.keys())
     labels = [model_labels.get(model_key, default_model_label(model_key)) for model_key in model_keys]
     model_colors = build_model_color_map(model_keys)
-    y_scale = 100.0 if metric_key == "mean_pos_err_area_m" else 1.0
-    plot_label = metric_label.replace("[m]", "[cm]") if metric_key == "mean_pos_err_area_m" else metric_label
+    if metric_key == "mean_pos_err_area_m":
+        y_scale = 100.0
+        plot_label = metric_label.replace("[m]", "[cm]")
+    elif metric_key == "mean_rot_err_area_rad":
+        y_scale = math.degrees(1.0)
+        plot_label = metric_label.replace("[rad]", "[deg]")
+    else:
+        y_scale = 1.0
+        plot_label = metric_label
 
     baseline_means = []
     tuned_means = []
@@ -413,7 +384,6 @@ def plot_metric_comparison(
         return
 
     plt.style.use("seaborn-v0_8-whitegrid")
-    apply_typography(use_helvetica)
     fig, ax = plt.subplots(figsize=(max(8, len(model_keys) * 1.35), 5.4))
 
     bar_width = 0.36
@@ -459,7 +429,8 @@ def plot_metric_comparison(
     ax.set_ylabel(plot_label)
     ax.set_xticks(x_positions)
     ax.set_xticklabels(labels, rotation=30, ha="right")
-    ax.legend()
+    if show_legend:
+        ax.legend()
     ax.margins(x=0.02)
     fig.tight_layout()
 
@@ -533,6 +504,9 @@ def main() -> int:
         if entry is not None:
             run_entries.append(entry)
 
+    if bool(args.untuned_only):
+        run_entries = [e for e in run_entries if e.robot_gain == "simulation"]
+
     if not run_entries:
         raise SystemExit("No valid benchmark YAML runs were found.")
 
@@ -554,7 +528,7 @@ def main() -> int:
             metric_key,
             metric_label,
             output_dir,
-            use_helvetica=bool(args.helvetica),
+            show_legend=not (bool(args.simulation) or bool(args.untuned_only)),
             report_title=report_title,
         )
 
