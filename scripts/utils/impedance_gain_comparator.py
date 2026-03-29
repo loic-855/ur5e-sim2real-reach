@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Compare naive vs tuned impedance gains from benchmark YAML runs.
+"""Compare simulation vs tuned impedance gains from benchmark YAML runs.
 
 The script scans a folder for YAML files, groups runs by metadata.model_path,
-compares the naive baseline against tuned runs for:
+compares the simulation baseline against tuned runs for:
 
 - summary.mean_time_to_area_s
 - summary.mean_pos_err_area_m
@@ -11,7 +11,7 @@ compares the naive baseline against tuned runs for:
 It writes:
 
 - a YAML report with per-model-path and global comparisons
-- one PNG plot per metric showing naive vs tuned means by model path
+- one PDF plot per metric showing simulation vs tuned means by model path
 
 Example:
     python3 scripts/utils/impedance_gain_comparator.py \
@@ -22,6 +22,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,7 @@ from typing import Any
 
 try:
     import matplotlib.pyplot as plt
+    from matplotlib import colors as mcolors
 except Exception as exc:  # pragma: no cover - import error path is user-facing
     raise SystemExit(
         "matplotlib is required to run this script. Install it with: pip install matplotlib"
@@ -46,6 +48,56 @@ METRIC_KEYS = [
     ("mean_pos_err_area_m", "Mean position error in area [m]"),
     ("mean_rot_err_area_rad", "Mean rotation error in area [rad]"),
 ]
+
+plt.rcParams.update(
+    {
+        "figure.dpi": 180,
+        "savefig.dpi": 180,
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+    }
+)
+
+
+def apply_typography(use_helvetica: bool = False) -> None:
+    use_tex = shutil.which("latex") is not None
+    if use_helvetica:
+        # Use sans-serif for non-math text (Helvetica-like), keep Computer Modern for math
+        if use_tex:
+            # Ask LaTeX to use Helvetica for text (if available)
+            plt.rcParams.update({
+                "font.size": 12,
+                "font.family": "sans-serif",
+                "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans"],
+                "mathtext.fontset": "cm",
+                "text.usetex": True,
+                "axes.titleweight": "bold",
+                "axes.labelweight": "regular",
+                # Add preamble to select Helvetica in LaTeX
+                "text.latex.preamble": r"\usepackage{helvet}\renewcommand{\familydefault}{\sfdefault}",
+            })
+        else:
+            plt.rcParams.update({
+                "font.size": 12,
+                "font.family": "sans-serif",
+                "font.sans-serif": ["Helvetica", "Arial", "DejaVu Sans"],
+                "mathtext.fontset": "cm",
+                "text.usetex": False,
+                "axes.titleweight": "bold",
+                "axes.labelweight": "regular",
+            })
+    else:
+        plt.rcParams.update(
+            {
+                "font.size": 12,
+                "font.family": "serif",
+                "font.serif": ["Computer Modern Roman", "CMU Serif", "DejaVu Serif"],
+                "mathtext.fontset": "cm",
+                "text.usetex": use_tex,
+                "axes.titleweight": "bold",
+                "axes.labelweight": "regular",
+            }
+        )
 
 
 @dataclass
@@ -100,7 +152,7 @@ class GainAggregate:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Compare naive and tuned impedance gains across benchmark YAML runs.")
+    parser = argparse.ArgumentParser(description="Compare simulation and tuned impedance gains across benchmark YAML runs.")
     parser.add_argument("input_dir", type=Path, help="Folder containing benchmark YAML files.")
     parser.add_argument(
         "--output-dir",
@@ -113,6 +165,18 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Search for YAML files recursively under the input folder.",
+    )
+    parser.add_argument(
+        "--helvetica",
+        action="store_true",
+        default=False,
+        help="Render non-math (text) using Helvetica (falls back if not available).",
+    )
+    parser.add_argument(
+        "--simulation",
+        action="store_true",
+        default=False,
+        help="When set, treat runs with missing robot_gain as 'simulation' (equivalent to naive).",
     )
     return parser.parse_args()
 
@@ -190,7 +254,35 @@ def prompt_model_labels(grouped_runs: dict[str, dict[str, GainAggregate]]) -> di
     return labels
 
 
-def load_run_entry(file_path: Path) -> RunEntry | None:
+def prompt_report_title() -> str | None:
+    print("\nReport title prompt")
+    print("Enter an overall report title to prefix plot titles (press Enter to skip):")
+    try:
+        title = input("Report title: ").strip()
+    except EOFError:
+        title = ""
+    return title or None
+
+
+def mix_color(color: str, target: str, amount: float) -> str:
+    base_rgb = mcolors.to_rgb(color)
+    target_rgb = mcolors.to_rgb(target)
+    mixed = tuple((1.0 - amount) * base + amount * target_component for base, target_component in zip(base_rgb, target_rgb))
+    return mcolors.to_hex(mixed)
+
+
+def build_model_color_map(model_keys: list[str]) -> dict[str, tuple[str, str]]:
+    palette = list(plt.get_cmap("tab10").colors)
+    model_colors: dict[str, tuple[str, str]] = {}
+    for index, model_key in enumerate(model_keys):
+        base_color = mcolors.to_hex(palette[index % len(palette)])
+        tuned_color = mix_color(base_color, "#000000", 0.12)
+        simulation_color = mix_color(base_color, "#FFFFFF", 0.45)
+        model_colors[model_key] = (simulation_color, tuned_color)
+    return model_colors
+
+
+def load_run_entry(file_path: Path, default_robot_gain: str | None = None) -> RunEntry | None:
     try:
         with file_path.open("r", encoding="utf-8") as handle:
             data = yaml.safe_load(handle)
@@ -204,14 +296,29 @@ def load_run_entry(file_path: Path) -> RunEntry | None:
 
     metadata = data.get("metadata") or {}
     summary = data.get("summary") or {}
-
-    model_path = metadata.get("model_path")
+    # model path may be stored as 'model_path' or 'checkpoint'
+    model_path = metadata.get("model_path") or metadata.get("checkpoint")
     robot_gain = metadata.get("robot_gain")
-    if not model_path or not robot_gain:
-        print(f"[WARN] Skipping {file_path}: missing metadata.model_path or metadata.robot_gain")
+
+    if not model_path:
+        print(f"[WARN] Skipping {file_path}: missing metadata.model_path or metadata.checkpoint")
         return None
 
-    if robot_gain not in {"naive", "tuned"}:
+    # If robot_gain missing, use provided default (from CLI) if given
+    if robot_gain is None:
+        if default_robot_gain is not None:
+            robot_gain = default_robot_gain
+        else:
+            print(f"[WARN] Skipping {file_path}: missing metadata.robot_gain and no --simulation flag set")
+            return None
+
+    # Normalize robot_gain values: accept 'naive' as equivalent to 'simulation'
+    robot_gain_norm = str(robot_gain).strip().lower()
+    if robot_gain_norm in {"naive", "simulation"}:
+        robot_gain = "simulation"
+    elif robot_gain_norm in {"tuned"}:
+        robot_gain = "tuned"
+    else:
         print(f"[WARN] Skipping {file_path}: unsupported robot_gain '{robot_gain}'")
         return None
 
@@ -236,7 +343,7 @@ def load_run_entry(file_path: Path) -> RunEntry | None:
 def group_runs(run_entries: list[RunEntry]) -> dict[str, dict[str, GainAggregate]]:
     grouped: dict[str, dict[str, GainAggregate]] = {}
     for entry in run_entries:
-        model_group = grouped.setdefault(entry.model_key, {"naive": GainAggregate(), "tuned": GainAggregate()})
+        model_group = grouped.setdefault(entry.model_key, {"simulation": GainAggregate(), "tuned": GainAggregate()})
         model_group[entry.robot_gain].add(entry)
     return grouped
 
@@ -278,9 +385,14 @@ def plot_metric_comparison(
     metric_key: str,
     metric_label: str,
     output_dir: Path,
+    use_helvetica: bool = False,
+    report_title: str | None = None,
 ) -> None:
     model_keys = sorted(grouped_runs.keys())
     labels = [model_labels.get(model_key, default_model_label(model_key)) for model_key in model_keys]
+    model_colors = build_model_color_map(model_keys)
+    y_scale = 100.0 if metric_key == "mean_pos_err_area_m" else 1.0
+    plot_label = metric_label.replace("[m]", "[cm]") if metric_key == "mean_pos_err_area_m" else metric_label
 
     baseline_means = []
     tuned_means = []
@@ -289,41 +401,69 @@ def plot_metric_comparison(
     x_positions = list(range(len(model_keys)))
 
     for model_key in model_keys:
-        naive_summary = summarize_values(grouped_runs[model_key]["naive"].metric_values(metric_key))
+        simulation_summary = summarize_values(grouped_runs[model_key]["simulation"].metric_values(metric_key))
         tuned_summary = summarize_values(grouped_runs[model_key]["tuned"].metric_values(metric_key))
-        baseline_means.append(naive_summary["mean"])
-        tuned_means.append(tuned_summary["mean"])
-        baseline_stds.append(naive_summary["std"])
-        tuned_stds.append(tuned_summary["std"])
+        baseline_means.append(None if simulation_summary["mean"] is None else float(simulation_summary["mean"]) * y_scale)
+        tuned_means.append(None if tuned_summary["mean"] is None else float(tuned_summary["mean"]) * y_scale)
+        baseline_stds.append(None if simulation_summary["std"] is None else float(simulation_summary["std"]) * y_scale)
+        tuned_stds.append(None if tuned_summary["std"] is None else float(tuned_summary["std"]) * y_scale)
 
     if not any(value is not None for value in baseline_means + tuned_means):
         print(f"[WARN] Skipping plot for {metric_key}: no values available")
         return
 
     plt.style.use("seaborn-v0_8-whitegrid")
-    fig, ax = plt.subplots(figsize=(max(10, len(model_keys) * 1.6), 6.5))
+    apply_typography(use_helvetica)
+    fig, ax = plt.subplots(figsize=(max(8, len(model_keys) * 1.35), 5.4))
 
     bar_width = 0.36
-    naive_x = [position - bar_width / 2 for position in x_positions]
+    simulation_x = [position - bar_width / 2 for position in x_positions]
     tuned_x = [position + bar_width / 2 for position in x_positions]
 
-    naive_plot = [value if value is not None else 0.0 for value in baseline_means]
+    simulation_plot = [value if value is not None else 0.0 for value in baseline_means]
     tuned_plot = [value if value is not None else 0.0 for value in tuned_means]
-    naive_err = [value if value is not None else 0.0 for value in baseline_stds]
+    simulation_err = [value if value is not None else 0.0 for value in baseline_stds]
     tuned_err = [value if value is not None else 0.0 for value in tuned_stds]
 
-    ax.bar(naive_x, naive_plot, width=bar_width, label="naive", color="#4C78A8", yerr=naive_err, capsize=4)
-    ax.bar(tuned_x, tuned_plot, width=bar_width, label="tuned", color="#F58518", yerr=tuned_err, capsize=4)
+    simulation_colors = [model_colors[model_key][0] for model_key in model_keys]
+    tuned_colors = [model_colors[model_key][1] for model_key in model_keys]
 
-    ax.set_title(f"Naive vs tuned comparison: {metric_label}")
-    ax.set_ylabel(metric_label)
+    ax.bar(
+        simulation_x,
+        simulation_plot,
+        width=bar_width,
+        label="simulation",
+        color=simulation_colors,
+        edgecolor="#303030",
+        linewidth=0.6,
+        yerr=simulation_err,
+        capsize=4,
+    )
+    ax.bar(
+        tuned_x,
+        tuned_plot,
+        width=bar_width,
+        label="tuned",
+        color=tuned_colors,
+        edgecolor="#101010",
+        linewidth=0.8,
+        yerr=tuned_err,
+        capsize=4,
+    )
+
+    if report_title:
+        title = report_title
+    else:
+        title = f"Simulation vs tuned comparison: {plot_label}"
+    ax.set_title(title, fontweight="bold")
+    ax.set_ylabel(plot_label)
     ax.set_xticks(x_positions)
     ax.set_xticklabels(labels, rotation=30, ha="right")
     ax.legend()
     ax.margins(x=0.02)
     fig.tight_layout()
 
-    output_path = output_dir / f"{metric_key}_comparison.png"
+    output_path = output_dir / f"{metric_key}_comparison.pdf"
     fig.savefig(str(output_path), dpi=180, bbox_inches="tight")
     plt.close(fig)
     print(f"[INFO] Saved plot: {output_path}")
@@ -336,27 +476,30 @@ def build_report(
     input_dir: Path,
     output_dir: Path,
     recursive: bool,
+    report_title: str | None = None,
 ) -> dict[str, Any]:
     per_model: dict[str, Any] = {}
-    all_naive = GainAggregate()
+    all_simulation = GainAggregate()
     all_tuned = GainAggregate()
+    
 
     for model_key in sorted(grouped_runs.keys()):
-        naive_runs = grouped_runs[model_key]["naive"]
+        simulation_runs = grouped_runs[model_key]["simulation"]
         tuned_runs = grouped_runs[model_key]["tuned"]
-        all_naive.runs.extend(naive_runs.runs)
+        all_simulation.runs.extend(simulation_runs.runs)
         all_tuned.runs.extend(tuned_runs.runs)
         per_model[model_key] = {
             "label": model_labels.get(model_key, default_model_label(model_key)),
-            "naive": naive_runs.summary(),
-            "tuned": tuned_runs.summary(),
-            "comparison": build_comparison(naive_runs, tuned_runs)["metrics"],
+            "simulation gains": simulation_runs.summary(),
+            "tuned gains": tuned_runs.summary(),
+            "comparison": build_comparison(simulation_runs, tuned_runs)["metrics"],
         }
 
-    global_comparison = build_comparison(all_naive, all_tuned)
+    global_comparison = build_comparison(all_simulation, all_tuned)
 
     return {
         "metadata": {
+            "report_title": report_title,  # Include report_title in metadata
             "input_dir": str(input_dir),
             "output_dir": str(output_dir),
             "recursive": recursive,
@@ -365,8 +508,8 @@ def build_report(
             "model_path_count": len(grouped_runs),
         },
         "summary": {
-            "naive": all_naive.summary(),
-            "tuned": all_tuned.summary(),
+            "simulation gains": all_simulation.summary(),
+            "tuned gains": all_tuned.summary(),
             "comparison": global_comparison["metrics"],
         },
         "model_paths": per_model,
@@ -384,8 +527,9 @@ def main() -> int:
         raise SystemExit(f"No YAML files found under {input_dir}")
 
     run_entries: list[RunEntry] = []
+    default_gain = "simulation" if bool(args.simulation) else None
     for file_path in source_files:
-        entry = load_run_entry(file_path)
+        entry = load_run_entry(file_path, default_robot_gain=default_gain)
         if entry is not None:
             run_entries.append(entry)
 
@@ -394,7 +538,8 @@ def main() -> int:
 
     grouped_runs = group_runs(run_entries)
     model_labels = prompt_model_labels(grouped_runs)
-    report = build_report(grouped_runs, model_labels, source_files, input_dir, output_dir, bool(args.recursive))
+    report_title = prompt_report_title()
+    report = build_report(grouped_runs, model_labels, source_files, input_dir, output_dir, bool(args.recursive), report_title)
 
     report_path = output_dir / "impedance_gain_comparison.yaml"
     with report_path.open("w", encoding="utf-8") as handle:
@@ -403,7 +548,15 @@ def main() -> int:
     print(f"[INFO] Saved report: {report_path}")
 
     for metric_key, metric_label in METRIC_KEYS:
-        plot_metric_comparison(grouped_runs, model_labels, metric_key, metric_label, output_dir)
+        plot_metric_comparison(
+            grouped_runs,
+            model_labels,
+            metric_key,
+            metric_label,
+            output_dir,
+            use_helvetica=bool(args.helvetica),
+            report_title=report_title,
+        )
 
     print(f"[INFO] Processed {len(run_entries)} valid runs from {len(source_files)} YAML files")
     return 0

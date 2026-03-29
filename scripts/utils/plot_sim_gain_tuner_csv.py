@@ -55,11 +55,12 @@ ERROR_LIMIT_DEG = 7.0
 RAD_TO_DEG = 180.0 / math.pi
 ACTIVITY_POS_WEIGHT = 1.0
 ACTIVITY_VEL_WEIGHT = 0.2
-ACTIVITY_SMOOTHING_S = 0.2
-ACTIVITY_THRESHOLD_RATIO = 0.05
-ACTIVITY_THRESHOLD_MIN = 1e-4
+ACTIVITY_SMOOTHING_S = 0.0
+ACTIVITY_THRESHOLD_RATIO = 0.005 #threshold to % of the peak activity, to ignore small noise when detecting the excitation window start
+ACTIVITY_THRESHOLD_MIN = 1e-4 #minimum absolute threshold in radian to ignore very small activity 
 SIM_COLOR = "tab:blue"
 REAL_COLOR = "tab:red"
+TUNED_COLOR = "tab:green"
 DEBUG_COMMAND_COLOR = "black"
 
 
@@ -89,15 +90,21 @@ def parse_args() -> argparse.Namespace:
         help="Optional path to the real-robot gain-tuner CSV file to overlay with the simulation one.",
     )
     parser.add_argument(
+        "--file-real-tuned",
+        type=Path,
+        default=None,
+        help="Optional path to the tuned real-robot gain-tuner CSV file to overlay with the other datasets.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
         help="Directory where PNG figures will be saved. Defaults to <csv_stem>_plots next to the CSV.",
     )
     parser.add_argument(
-        "--plot-real-command-only",
+        "--command-only",
         action="store_true",
-        help="In dual-file mode, plot only the real-robot command curve and keep both observed curves.",
+        help="In multi-file mode, plot only the real-robot command curve in black as 'command' and do not plot the simulation command.",
     )
     return parser.parse_args()
 
@@ -106,21 +113,28 @@ def get_csv_base_name(csv_path: Path) -> str:
     return csv_path.stem
 
 
-def get_output_base_name(sim_csv_path: Path | None = None, real_csv_path: Path | None = None) -> str:
-    if sim_csv_path is not None and real_csv_path is not None:
-        return f"{get_csv_base_name(sim_csv_path)}__vs__{get_csv_base_name(real_csv_path)}"
-    if sim_csv_path is not None:
-        return get_csv_base_name(sim_csv_path)
-    if real_csv_path is not None:
-        return get_csv_base_name(real_csv_path)
+def get_output_base_name(
+    sim_csv_path: Path | None = None,
+    real_csv_path: Path | None = None,
+    tuned_csv_path: Path | None = None,
+) -> str:
+    paths = [path for path in (sim_csv_path, real_csv_path, tuned_csv_path) if path is not None]
+    if paths:
+        return "__vs__".join(get_csv_base_name(path) for path in paths)
     raise ValueError("At least one CSV path must be provided.")
 
 
-def get_default_output_dir(sim_csv_path: Path | None = None, real_csv_path: Path | None = None) -> Path:
+def get_default_output_dir(
+    sim_csv_path: Path | None = None,
+    real_csv_path: Path | None = None,
+    tuned_csv_path: Path | None = None,
+) -> Path:
     base_path = sim_csv_path if sim_csv_path is not None else real_csv_path
     if base_path is None:
+        base_path = tuned_csv_path
+    if base_path is None:
         raise ValueError("At least one CSV path must be provided.")
-    return base_path.parent / f"{get_output_base_name(sim_csv_path, real_csv_path)}_plots"
+    return base_path.parent / f"{get_output_base_name(sim_csv_path, real_csv_path, tuned_csv_path)}_plots"
 
 
 def load_csv_columns(file_path: Path) -> dict[str, np.ndarray]:
@@ -324,10 +338,11 @@ def make_joint_figure(
     output_dir: Path,
     csv_stem: str,
     real_window: JointWindow | None = None,
-    plot_real_command_only: bool = False,
+    tuned_window: JointWindow | None = None,
+    command_only: bool = False,
 ) -> Path:
     display_name = clean_joint_name(joint_name)
-    if sim_window is None and real_window is None:
+    if sim_window is None and real_window is None and tuned_window is None:
         raise ValueError("At least one dataset must be provided for plotting.")
 
     sim_cmd_plot_deg = None
@@ -352,18 +367,30 @@ def make_joint_figure(
         real_error_deg = real_window.cmd_deg - real_window.obs_deg
         real_rms_error_deg = compute_rms_error_deg(real_window)
 
+    tuned_obs_plot_deg = None
+    tuned_error_deg = None
+    tuned_rms_error_deg = None
+    if tuned_window is not None:
+        tuned_position_reference_deg = float(np.median(tuned_window.cmd_deg))
+        tuned_obs_plot_deg = tuned_window.obs_deg - tuned_position_reference_deg
+        tuned_error_deg = tuned_window.cmd_deg - tuned_window.obs_deg
+        tuned_rms_error_deg = compute_rms_error_deg(tuned_window)
+
     fig, (ax_pos, ax_err) = plt.subplots(2, 1, figsize=(10, 7), sharex=True, constrained_layout=True)
 
-    if sim_window is not None and sim_cmd_plot_deg is not None and sim_obs_plot_deg is not None and not (plot_real_command_only and real_window is not None):
-        ax_pos.plot(
-            sim_window.local_time_s,
-            sim_cmd_plot_deg,
-            color=SIM_COLOR,
-            linestyle="--",
-            linewidth=2.0,
-            antialiased=False,
-            label="Simulation command",
-        )
+
+    # Plot simulation observed always if available, but hide simulation command if command_only is set
+    if sim_window is not None and sim_cmd_plot_deg is not None and sim_obs_plot_deg is not None:
+        if not (command_only and real_window is not None):
+            ax_pos.plot(
+                sim_window.local_time_s,
+                sim_cmd_plot_deg,
+                color=SIM_COLOR,
+                linestyle="--",
+                linewidth=2.0,
+                antialiased=False,
+                label="Simulation command",
+            )
         ax_pos.plot(
             sim_window.local_time_s,
             sim_obs_plot_deg,
@@ -375,15 +402,26 @@ def make_joint_figure(
         )
 
     if real_window is not None and real_cmd_plot_deg is not None and real_obs_plot_deg is not None:
-        ax_pos.plot(
-            real_window.local_time_s,
-            real_cmd_plot_deg,
-            color=DEBUG_COMMAND_COLOR if plot_real_command_only else REAL_COLOR,
-            linestyle="--",
-            linewidth=2.0,
-            antialiased=False,
-            label="Command" if plot_real_command_only else "Real command",
-        )
+        if command_only:
+            ax_pos.plot(
+                real_window.local_time_s,
+                real_cmd_plot_deg,
+                color=DEBUG_COMMAND_COLOR,
+                linestyle="--",
+                linewidth=2.0,
+                antialiased=False,
+                label="Command",
+            )
+        else:
+            ax_pos.plot(
+                real_window.local_time_s,
+                real_cmd_plot_deg,
+                color=REAL_COLOR,
+                linestyle="--",
+                linewidth=2.0,
+                antialiased=False,
+                label="Real command",
+            )
         ax_pos.plot(
             real_window.local_time_s,
             real_obs_plot_deg,
@@ -392,6 +430,17 @@ def make_joint_figure(
             linewidth=1.8,
             antialiased=False,
             label="Real observed",
+        )
+
+    if tuned_window is not None and tuned_obs_plot_deg is not None:
+        ax_pos.plot(
+            tuned_window.local_time_s,
+            tuned_obs_plot_deg,
+            color=TUNED_COLOR,
+            linestyle="-",
+            linewidth=1.8,
+            antialiased=False,
+            label="Tuned observed",
         )
 
     ax_pos.set_title(f"Joint {joint_index + 1} - {display_name}")
@@ -420,13 +469,25 @@ def make_joint_figure(
             antialiased=False,
             label="Real error",
         )
+    if tuned_window is not None and tuned_error_deg is not None:
+        ax_err.plot(
+            tuned_window.local_time_s,
+            tuned_error_deg,
+            color=TUNED_COLOR,
+            linestyle="-",
+            linewidth=1.8,
+            antialiased=False,
+            label="Tuned error",
+        )
 
-    if sim_rms_error_deg is not None and real_rms_error_deg is None:
-        ax_err.set_title(f"RMS error: sim {sim_rms_error_deg:.2f}°")
-    elif sim_rms_error_deg is None and real_rms_error_deg is not None:
-        ax_err.set_title(f"RMS error: real {real_rms_error_deg:.2f}°")
-    else:
-        ax_err.set_title(f"RMS error: sim {sim_rms_error_deg:.2f}° | real {real_rms_error_deg:.2f}°")
+    rms_parts: list[str] = []
+    if sim_rms_error_deg is not None:
+        rms_parts.append(f"sim {sim_rms_error_deg:.2f}°")
+    if real_rms_error_deg is not None:
+        rms_parts.append(f"real {real_rms_error_deg:.2f}°")
+    if tuned_rms_error_deg is not None:
+        rms_parts.append(f"tuned {tuned_rms_error_deg:.2f}°")
+    ax_err.set_title(f"RMS error: {' | '.join(rms_parts)}")
     ax_err.set_xlabel("Time [s]")
     ax_err.set_ylabel("Error [deg]")
     ax_err.set_xlim(-WINDOW_PADDING_S, WINDOW_DURATION_S + WINDOW_PADDING_S)
@@ -437,7 +498,7 @@ def make_joint_figure(
         axis.xaxis.set_major_locator(MultipleLocator(GRID_STEP_S))
         axis.grid(True, which="major", axis="x", linestyle="--", alpha=0.6)
 
-    output_path = output_dir / f"{csv_stem}_joint_{joint_index + 1}_{display_name}.png"
+    output_path = output_dir / f"{csv_stem}_joint_{joint_index + 1}_{display_name}.pdf"
     fig.savefig(str(output_path), dpi=160)
     return output_path
 
@@ -446,26 +507,28 @@ def main() -> None:
     args = parse_args()
     sim_csv_path = args.file.expanduser().resolve() if args.file else None
     real_csv_path = args.file_real.expanduser().resolve() if args.file_real else None
+    tuned_csv_path = args.file_real_tuned.expanduser().resolve() if args.file_real_tuned else None
 
-    if sim_csv_path is None and real_csv_path is None:
-        print("Provide at least one input CSV with --file and/or --file-real.")
+    if sim_csv_path is None and real_csv_path is None and tuned_csv_path is None:
+        print("Provide at least one input CSV with --file and/or --file-real and/or --file-real-tuned.")
         sys.exit(1)
 
-    if args.plot_real_command_only and real_csv_path is None:
-        print("The --plot-real-command-only option requires --file-real.")
+    if args.command_only and real_csv_path is None:
+        print("The --command-only option requires --file-real.")
         sys.exit(1)
 
-    csv_base_name = get_output_base_name(sim_csv_path, real_csv_path)
+    csv_base_name = get_output_base_name(sim_csv_path, real_csv_path, tuned_csv_path)
     output_dir = (
         args.output_dir.expanduser().resolve()
         if args.output_dir
-        else get_default_output_dir(sim_csv_path, real_csv_path)
+        else get_default_output_dir(sim_csv_path, real_csv_path, tuned_csv_path)
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         sim_dataset = load_dataset(sim_csv_path, "simulation") if sim_csv_path is not None else None
         real_dataset = load_dataset(real_csv_path, "real") if real_csv_path is not None else None
+        tuned_dataset = load_dataset(tuned_csv_path, "tuned") if tuned_csv_path is not None else None
     except Exception as exc:
         print(f"Failed to load CSV data: {exc}")
         sys.exit(1)
@@ -477,6 +540,9 @@ def main() -> None:
     if real_dataset is not None:
         print(f"Loaded real CSV: {real_dataset.csv_path}")
         print(f"Detected real sampling period: {real_dataset.dt:.6f} s ({1.0 / real_dataset.dt:.3f} Hz)")
+    if tuned_dataset is not None:
+        print(f"Loaded tuned CSV: {tuned_dataset.csv_path}")
+        print(f"Detected tuned sampling period: {tuned_dataset.dt:.6f} s ({1.0 / tuned_dataset.dt:.3f} Hz)")
     print(f"Output directory: {output_dir}")
     print(
         f"Using per-joint local window: {WINDOW_DURATION_S:.1f} s + "
@@ -485,19 +551,20 @@ def main() -> None:
 
     for joint_index, joint_name in enumerate(ARM_JOINTS):
         try:
-            if sim_dataset is not None and real_dataset is not None:
-                if not has_joint_columns(sim_dataset.columns, joint_name) or not has_joint_columns(real_dataset.columns, joint_name):
-                    print(f"Skipping joint '{joint_name}': missing in one of the two CSV files.")
-                    continue
-            if sim_dataset is None and real_dataset is not None and not has_joint_columns(real_dataset.columns, joint_name):
-                print(f"Skipping joint '{joint_name}': missing in the real CSV file.")
-                continue
-            if real_dataset is None and sim_dataset is not None and not has_joint_columns(sim_dataset.columns, joint_name):
-                print(f"Skipping joint '{joint_name}': missing in the simulation CSV file.")
+            missing_datasets: list[str] = []
+            if sim_dataset is not None and not has_joint_columns(sim_dataset.columns, joint_name):
+                missing_datasets.append("simulation")
+            if real_dataset is not None and not has_joint_columns(real_dataset.columns, joint_name):
+                missing_datasets.append("real")
+            if tuned_dataset is not None and not has_joint_columns(tuned_dataset.columns, joint_name):
+                missing_datasets.append("tuned")
+            if missing_datasets:
+                print(f"Skipping joint '{joint_name}': missing in {', '.join(missing_datasets)} CSV file(s).")
                 continue
 
             sim_window = build_joint_window(sim_dataset, joint_name) if sim_dataset is not None else None
             real_window = build_joint_window(real_dataset, joint_name) if real_dataset is not None else None
+            tuned_window = build_joint_window(tuned_dataset, joint_name) if tuned_dataset is not None else None
             figure_paths.append(
                 make_joint_figure(
                     joint_index,
@@ -506,7 +573,8 @@ def main() -> None:
                     output_dir,
                     csv_base_name,
                     real_window=real_window,
-                    plot_real_command_only=args.plot_real_command_only,
+                    tuned_window=tuned_window,
+                    command_only=args.command_only,
                 )
             )
         except Exception as exc:
@@ -516,8 +584,6 @@ def main() -> None:
         print("No figures were generated.")
         sys.exit(1)
 
-    for figure_path in figure_paths:
-        print(f"Saved: {figure_path}")
 
     plt.show()
 
