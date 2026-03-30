@@ -42,7 +42,6 @@ from isaaclab.assets import Articulation
 MAX_REACH = 0.85  # UR5e reach ~850mm
 MAX_JOINT_VEL = 3.14  # ~180°/s
 TCP_MAX_SPEED = 2.0  # m/s, used for TCP linear velocity normalisation
-JOINT_LIMITS = [np
 
 @dataclass
 class DomainRandomizationV4Cfg:
