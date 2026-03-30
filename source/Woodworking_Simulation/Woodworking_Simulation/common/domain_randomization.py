@@ -22,8 +22,8 @@ independent toggles in the configuration:
     pos_error (3), ori_error (3), joint_pos (6), joint_vel (6),
     tcp_linear_vel (3), tcp_angular_vel (3)
 
-All components are normalised before being fed to the policy; noise stds should
-be tuned in normalised space.
+All components are normalised before being fed to the policy; observation noise
+stds are specified in physical units and converted to normalised space internally.
 """
 
 from __future__ import annotations
@@ -38,7 +38,11 @@ from isaaclab.assets import Articulation
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-
+# === UR5e Robot Constants ===
+MAX_REACH = 0.85  # UR5e reach ~850mm
+MAX_JOINT_VEL = 3.14  # ~180°/s
+TCP_MAX_SPEED = 2.0  # m/s, used for TCP linear velocity normalisation
+JOINT_LIMITS = [np
 
 @dataclass
 class DomainRandomizationV4Cfg:
@@ -80,7 +84,7 @@ class DomainRandomizationV4Cfg:
     """Enable per-env action delay, action packet-loss and observation delay."""
 
     # -- Action buffer ---------------------------------------------------------
-    action_delay_range: tuple[int, int] = (0, 5)
+    action_delay_range: tuple[int, int] = (1, 2)
     """Uniform int range [lo, hi] for per-env action delay (in *decimated* steps).
     Only active when ``enable_delay=True``."""
 
@@ -97,27 +101,27 @@ class DomainRandomizationV4Cfg:
     Only active when ``enable_delay=True``."""
 
     # -- Observation buffer ----------------------------------------------------
-    obs_delay_range: tuple[int, int] = (0, 3)
+    obs_delay_range: tuple[int, int] = (0, 1)
     """Uniform int range [lo, hi] for per-env observation delay (in *decimated* steps).
     Only active when ``enable_delay=True``."""
 
-    obs_noise_std_pos: float = 0.01
-    """Observation noise applied to the normalised position-error components (3-dim)."""
+    obs_noise_std_pos: float = 0.005
+    """Observation noise std on position-error components (metres)."""
 
-    obs_noise_std_ori: float = 0.02
-    """Observation noise applied to the normalised orientation-error components (3-dim)."""
+    obs_noise_std_ori: float = 0.01
+    """Observation noise std on orientation-error components (radians)."""
 
-    obs_noise_std_joint_pos: float = 0.008
-    """Observation noise applied to the normalised joint position components."""
+    obs_noise_std_joint_pos: float = 0.01
+    """Observation noise std on joint position components (radians)."""
 
-    obs_noise_std_joint_vel: float = 0.01
-    """Observation noise applied to the normalised joint velocity components."""
+    obs_noise_std_joint_vel: float = 0.02
+    """Observation noise std on joint velocity components (rad/s)."""
 
     obs_noise_std_tcp_lin_vel: float = 0.01
-    """Observation noise applied to the normalised TCP linear velocity components."""
+    """Observation noise std on TCP linear velocity components (m/s)."""
 
-    obs_noise_std_tcp_ang_vel: float = 0.01
-    """Observation noise applied to the normalised TCP angular velocity components."""
+    obs_noise_std_tcp_ang_vel: float = 0.02
+    """Observation noise std on TCP angular velocity components (rad/s)."""
 
     # -- Actuator randomisation ------------------------------------------------
     stiffness_scale_range: tuple[float, float] = (0.8, 1.2)
@@ -417,7 +421,12 @@ class ObservationBuffer:
             self.delay[env_ids] = torch.randint(lo, hi + 1, (len(env_ids),), device=self.device)
 
     def _build_noise_vector(self) -> torch.Tensor:
-        """Construct a 1-D noise-std tensor aligned with the V4 observation layout (24-dim)."""
+        """Construct a 1-D noise-std tensor aligned with the V4 observation layout (24-dim).
+
+        Config values are in physical units; they are divided here by the same
+        normalisation constants used in the observation vector to convert them
+        into normalised-observation space.
+        """
         nj = self.num_joints
         cfg = self.cfg
         expected_dim = 3 + 3 + nj + nj + 3 + 3  # 24 for 6 joints
@@ -427,13 +436,23 @@ class ObservationBuffer:
                 f"(3+3+{nj}+{nj}+3+3), got obs_dim={self.obs_dim}. "
                 "Update the environment observation_space or this noise builder."
             )
+        import math
+        # Joint position ranges: ±2π for all joints except elbow (joint 2) which is ±π.
+        # Observation normalization is 2*(pos-lower)/(upper-lower)-1, so the
+        # effective range is (upper-lower)/2 = half-range per joint.
+        # noise_normalised = noise_physical / half_range
+        joint_half_ranges = torch.tensor(
+            [2 * math.pi, 2 * math.pi, math.pi, 2 * math.pi, 2 * math.pi, 2 * math.pi],
+            device=self.device,
+        )[:nj]
+
         parts: list[torch.Tensor] = [
-            torch.full((3,), cfg.obs_noise_std_pos,         device=self.device),  # pos_error_norm
-            torch.full((3,), cfg.obs_noise_std_ori,         device=self.device),  # ori_error_norm
-            torch.full((nj,), cfg.obs_noise_std_joint_pos,  device=self.device),  # joint_pos_norm
-            torch.full((nj,), cfg.obs_noise_std_joint_vel,  device=self.device),  # joint_vel_norm
-            torch.full((3,), cfg.obs_noise_std_tcp_lin_vel, device=self.device),  # tcp_lin_vel_norm
-            torch.full((3,), cfg.obs_noise_std_tcp_ang_vel, device=self.device),  # tcp_ang_vel_norm
+            torch.full((3,),  cfg.obs_noise_std_pos         / MAX_REACH,      device=self.device),  # pos_error: m  → /MAX_REACH
+            torch.full((3,),  cfg.obs_noise_std_ori         / math.pi,        device=self.device),  # ori_error: rad → /π
+            torch.full((1,), cfg.obs_noise_std_joint_pos, device=self.device).expand(nj) / joint_half_ranges,  # joint_pos: rad → /half_range
+            torch.full((nj,), cfg.obs_noise_std_joint_vel   / MAX_JOINT_VEL,  device=self.device),  # joint_vel: rad/s → /MAX_JOINT_VEL
+            torch.full((3,),  cfg.obs_noise_std_tcp_lin_vel / TCP_MAX_SPEED,  device=self.device),  # tcp_lin_vel: m/s → /TCP_MAX_SPEED
+            torch.full((3,),  cfg.obs_noise_std_tcp_ang_vel / math.pi,        device=self.device),  # tcp_ang_vel: rad/s → /π
         ]
         return torch.cat(parts)
 
