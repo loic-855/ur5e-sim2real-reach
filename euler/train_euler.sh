@@ -77,13 +77,13 @@ apptainer exec --nv \
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \
             --headless \
-            --run_name=rand-False_10s-Timeout_v2 \
+            --run_name=rand-Noise \
             agent.max_iterations=1500 \
             agent.wandb_project=sim2real_v1_ablation \
             agent.experiment_name=sim2real_v1_ablation \
             env.domain_rand.enable_actuator_rand=False \
             env.domain_rand.enable_mass_com_rand=False \
-            env.domain_rand.enable_noise=False \
+            env.domain_rand.enable_noise=True \
             env.domain_rand.enable_delay=False \
             env.domain_rand.action_delay_range=[0,0] \
             env.domain_rand.obs_delay_range=[0,0] \

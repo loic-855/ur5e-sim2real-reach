@@ -13,9 +13,11 @@ It writes:
 - a YAML report with per-model-path and global comparisons
 - one PDF plot per metric showing simulation vs tuned means by model path
 
+usage: plot_DR_study.py [-h] [--output-dir OUTPUT_DIR] [--recursive | --no-recursive] [--simulation] [--untuned-only] input_dir
+
 Example:
-    python3 scripts/utils/impedance_gain_comparator.py \
-        --input-dir logs/benchmarks/sim_pose_real \
+    python3 scripts/utils/plot_DR_study.py \
+         logs/benchmarks/sim_pose_real \
         --output-dir logs/benchmarks/sim_pose_real/impedance_gain_comparison
 """
 
@@ -48,6 +50,12 @@ METRIC_KEYS = [
     ("mean_pos_err_area_m", "Mean position error in area [m]"),
     ("mean_rot_err_area_rad", "Mean rotation error in area [rad]"),
 ]
+
+METRIC_TITLE_SUFFIX = {
+    "mean_pos_err_area_m": "Mean position error",
+    "mean_rot_err_area_rad": "Mean orientation error",
+    "mean_time_to_area_s": "Mean time to area",
+}
 
 plt.rcParams.update(
     {
@@ -421,10 +429,11 @@ def plot_metric_comparison(
         capsize=4,
     )
 
+    title_suffix = METRIC_TITLE_SUFFIX.get(metric_key, plot_label)
     if report_title:
-        title = report_title
+        title = f"{report_title}: {title_suffix}"
     else:
-        title = f"Simulation vs tuned comparison: {plot_label}"
+        title = f"Simulation vs tuned comparison: {title_suffix}"
     ax.set_title(title, fontweight="bold")
     ax.set_ylabel(plot_label)
     ax.set_xticks(x_positions)
