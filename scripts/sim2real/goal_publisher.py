@@ -4,6 +4,7 @@ Goal Pose Publisher for Sim2Real Testing with RViz Visualization.
 
 Publishes a goal pose to /goal_pose for the sim2real node to track.
 Also publishes visualization markers to /visualization_marker for RViz display.
+In overview mode, publishes a MarkerArray to /visualization_marker_array.
 
 Usage:
     # Static goal
@@ -15,13 +16,18 @@ Usage:
 
     #Random goal every 10 seconds
     python3 goal_publisher.py --random --update 10
+
+    # Persistent RViz overview of all goals in a file
+    python3 goal_publisher.py --goals-file scripts/benchmark_settings/goals_handmade.json --goal-overview
     
 RViz Setup:
     1. Start RViz: ros2 run rviz2 rviz2
     2. In RViz:
        - Set Fixed Frame to "table"
        - Add Marker display with topic "/visualization_marker"
-       - You'll see a coordinate frame (X=red, Y=green, Z=blue) at the goal position and orientation
+         - For --goal-overview, add a MarkerArray display with topic "/visualization_marker_array"
+         - You'll see a coordinate frame (X=red, Y=green, Z=blue) at the goal position and orientation
+         - In --goal-overview mode, you'll see every goal in the file at once, with labels
     
     # Interactive mode
     python3 goal_publisher.py --interactive
@@ -34,9 +40,10 @@ from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseStamped, Point, Vector3
-from visualization_msgs.msg import Marker
-from std_msgs.msg import ColorRGBA, String
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from geometry_msgs.msg import PoseStamped
+from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import String
 
 # Table dimensions - NOTE: In ROS, "table" frame origin is at TABLE CENTER SURFACE (0,0,0)
 # So all coordinates here are relative to the center of the table surface!
@@ -57,11 +64,20 @@ class GoalPublisher(Node):
         rate: float = 10.0,
         random_update_interval: float | None = None,
         cycling_goals: list[tuple[float, ...]] | None = None,
+        overview_goals: list[tuple[float, ...]] | None = None,
         cycling_goal_interval: float | None = None,
         stop_after_single_cycle: bool = False,
         benchmark_mode: bool = False,
     ):
         super().__init__("goal_publisher")
+
+        overview_goal_count = len(overview_goals) if overview_goals is not None else 0
+        marker_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
         
         self.publisher = self.create_publisher(
             PoseStamped,
@@ -73,7 +89,12 @@ class GoalPublisher(Node):
         self.marker_publisher = self.create_publisher(
             Marker,
             "/visualization_marker",
-            10
+            marker_qos
+        )
+        self.marker_array_publisher = self.create_publisher(
+            MarkerArray,
+            "/visualization_marker_array",
+            marker_qos,
         )
         
         # Default goal (in front of robot, slightly elevated)
@@ -85,14 +106,18 @@ class GoalPublisher(Node):
         
         # Cycling goals feature
         self.cycling_goals = cycling_goals if cycling_goals is not None else []
+        self.overview_goals = overview_goals if overview_goals is not None else []
         self.current_goal_index = 0
         self.goal_cycle_timer = None
         self.stop_after_single_cycle = stop_after_single_cycle
         self.finished_cycling = False
         self.shutdown_after_publish = False
         self._benchmark_mode = benchmark_mode
+        self._overview_mode = bool(self.overview_goals)
         self._cycling_goal_interval = cycling_goal_interval if cycling_goal_interval is not None else 8.0
-        self._publishing_active = not benchmark_mode  # In benchmark mode, wait for "start"
+        self._publishing_active = not benchmark_mode and not self._overview_mode
+
+        self.clear_markers()
 
         # Benchmark control subscription
         if benchmark_mode:
@@ -101,20 +126,32 @@ class GoalPublisher(Node):
             )
 
         self.get_logger().info("Goal publisher started")
-        self.get_logger().info("RViz: Add a Marker display with topic '/visualization_marker' to see the goal coordinate frame")
+        if self._overview_mode:
+            self.get_logger().info(
+                "RViz: Add a MarkerArray display with topic '/visualization_marker_array' to see all goal frames from the file"
+            )
+        else:
+            self.get_logger().info(
+                "RViz: Add a Marker display with topic '/visualization_marker' to see the goal coordinate frame"
+            )
         
-        # Timer to publish goal
-        self.timer = self.create_timer(1.0 / rate, self.publish_goal)
+        # Timer to publish goal / markers. Overview mode republishes slowly because
+        # the full marker set is persistent and frequent bursts can overwhelm RViz.
+        publish_period = 1.0 if self._overview_mode else 1.0 / rate
+        self.timer = self.create_timer(publish_period, self.publish_goal)
+
+        if self._overview_mode:
+            self.publish_goal_overview()
         
         # Timer for random goal updates if enabled
         self.update_timer = None
         self._random_update_interval = random_update_interval
-        if random_update_interval is not None and not benchmark_mode:
+        if random_update_interval is not None and not benchmark_mode and not self._overview_mode:
             self.update_timer = self.create_timer(random_update_interval, self.update_random_goal)
             self.update_random_goal()  # Set initial random goal
         
         # Timer for cycling through goals (skip in benchmark mode; "start" signal will trigger)
-        if self.cycling_goals and not benchmark_mode:
+        if self.cycling_goals and not benchmark_mode and not self._overview_mode:
             goal_cycle_interval = cycling_goal_interval if cycling_goal_interval is not None else 8.0
             self.goal_cycle_timer = self.create_timer(goal_cycle_interval, self.cycle_to_next_goal)
             self.cycle_to_next_goal()  # Set initial goal
@@ -139,42 +176,57 @@ class GoalPublisher(Node):
         rand_z = height
         self.set_goal(rand_x, rand_y, rand_z, wq, xq, yq, zq)
     
-    def publish_coordinate_frame(self):
-        """Publish RViz coordinate frame markers at goal position and orientation."""
-        # Quaternions for rotating to each axis
-        # X-axis: no rotation
-        quat_x = self.goal_quaternion
-        # Y-axis: rotate 90 deg around Z
+    def _normalized_quaternion(self, quaternion: np.ndarray) -> np.ndarray:
+        """Return a normalized quaternion in (w, x, y, z) format."""
+        normalized = quaternion.astype(float).copy()
+        norm = np.linalg.norm(normalized)
+        if norm > 0:
+            normalized /= norm
+        return normalized
+
+    def clear_markers(self):
+        """Clear stale RViz markers on startup."""
+        marker = Marker()
+        marker.action = Marker.DELETEALL
+        self.marker_publisher.publish(marker)
+        marker_array = MarkerArray()
+        marker_array.markers.append(marker)
+        self.marker_array_publisher.publish(marker_array)
+
+    def build_coordinate_frame_markers(
+        self,
+        position: np.ndarray,
+        quaternion: np.ndarray,
+        marker_id_base: int = 0,
+        namespace: str = "goal_axes",
+        label: str | None = None,
+    ) -> list[Marker]:
+        """Build RViz coordinate frame markers at a given pose."""
+        normalized_quaternion = self._normalized_quaternion(quaternion)
         quat_y_rot = np.array([0.7071067811865476, 0.0, 0.0, 0.7071067811865475])
-        quat_y = self.quaternion_multiply(self.goal_quaternion, quat_y_rot)
-        # Z-axis: rotate -90 deg around Y to map +X -> +Z (right-hand rule)
         quat_z_rot = np.array([0.7071067811865476, 0.0, -0.7071067811865475, 0.0])
-        quat_z = self.quaternion_multiply(self.goal_quaternion, quat_z_rot)
-        
         axes = [
-            ("x", quat_x, [1.0, 0.0, 0.0, 0.8]),  # Red
-            ("y", quat_y, [0.0, 1.0, 0.0, 0.8]),  # Green
-            ("z", quat_z, [0.0, 0.0, 1.0, 0.8]),  # Blue
+            (normalized_quaternion, [1.0, 0.0, 0.0, 0.8]),
+            (self.quaternion_multiply(normalized_quaternion, quat_y_rot), [0.0, 1.0, 0.0, 0.8]),
+            (self.quaternion_multiply(normalized_quaternion, quat_z_rot), [0.0, 0.0, 1.0, 0.8]),
         ]
-        
-        for i, (axis, quat, color) in enumerate(axes):
+        markers: list[Marker] = []
+
+        for i, (quat, color) in enumerate(axes):
             marker = Marker()
             marker.header.frame_id = "table"
             marker.header.stamp = self.get_clock().now().to_msg()
-            marker.id = i
-            marker.ns = "goal_axes"
+            marker.id = marker_id_base + i
+            marker.ns = namespace
             marker.type = Marker.ARROW
             marker.action = Marker.ADD
-            
-            marker.pose.position.x = float(self.goal_position[0])
-            marker.pose.position.y = float(self.goal_position[1])
-            marker.pose.position.z = float(self.goal_position[2])
-            
+            marker.pose.position.x = float(position[0])
+            marker.pose.position.y = float(position[1])
+            marker.pose.position.z = float(position[2])
             marker.pose.orientation.w = float(quat[0])
             marker.pose.orientation.x = float(quat[1])
             marker.pose.orientation.y = float(quat[2])
             marker.pose.orientation.z = float(quat[3])
-            
             marker.scale.x = 0.05
             marker.scale.y = 0.01
             marker.scale.z = 0.01
@@ -182,11 +234,66 @@ class GoalPublisher(Node):
             marker.color.g = color[1]
             marker.color.b = color[2]
             marker.color.a = color[3]
-            
             marker.lifetime.sec = 0
             marker.lifetime.nanosec = 0
-            
+            markers.append(marker)
+
+        if label is not None:
+            text_marker = Marker()
+            text_marker.header.frame_id = "table"
+            text_marker.header.stamp = self.get_clock().now().to_msg()
+            text_marker.id = marker_id_base + len(axes)
+            text_marker.ns = f"{namespace}_labels"
+            text_marker.type = Marker.TEXT_VIEW_FACING
+            text_marker.action = Marker.ADD
+            text_marker.pose.position.x = float(position[0])
+            text_marker.pose.position.y = float(position[1])
+            text_marker.pose.position.z = float(position[2] + 0.05)
+            text_marker.pose.orientation.w = 1.0
+            text_marker.scale.z = 0.04
+            text_marker.color.r = 1.0
+            text_marker.color.g = 1.0
+            text_marker.color.b = 1.0
+            text_marker.color.a = 0.95
+            text_marker.text = label
+            text_marker.lifetime.sec = 0
+            text_marker.lifetime.nanosec = 0
+            markers.append(text_marker)
+
+        return markers
+
+    def publish_coordinate_frame(
+        self,
+        position: np.ndarray,
+        quaternion: np.ndarray,
+        marker_id_base: int = 0,
+        namespace: str = "goal_axes",
+        label: str | None = None,
+    ):
+        """Publish RViz coordinate frame markers at a given pose."""
+        for marker in self.build_coordinate_frame_markers(
+            position=position,
+            quaternion=quaternion,
+            marker_id_base=marker_id_base,
+            namespace=namespace,
+            label=label,
+        ):
             self.marker_publisher.publish(marker)
+
+    def publish_goal_overview(self):
+        """Publish all goals from a file as persistent RViz markers."""
+        marker_array = MarkerArray()
+        for goal_index, goal in enumerate(self.overview_goals):
+            position = np.array(goal[:3], dtype=float)
+            quaternion = np.array(goal[3:], dtype=float)
+            marker_array.markers.extend(self.build_coordinate_frame_markers(
+                position=position,
+                quaternion=quaternion,
+                marker_id_base=goal_index * 4,
+                namespace="goal_overview",
+                label=f"goal_{goal_index + 1}",
+            ))
+        self.marker_array_publisher.publish(marker_array)
     
     def quaternion_multiply(self, q1, q2):
         """Multiply two quaternions."""
@@ -274,6 +381,9 @@ class GoalPublisher(Node):
 
     def publish_goal(self):
         """Publish current goal pose."""
+        if self._overview_mode:
+            self.publish_goal_overview()
+            return
         if not self._publishing_active:
             return
         msg = PoseStamped()
@@ -296,7 +406,7 @@ class GoalPublisher(Node):
             self.finished_cycling = True
         
         # Also publish visualization markers
-        self.publish_coordinate_frame()
+        self.publish_coordinate_frame(self.goal_position, self.goal_quaternion)
 
 
 def main():
@@ -326,19 +436,30 @@ def main():
     parser.add_argument("--interactive", action="store_true", help="Interactive mode")
     parser.add_argument("--rate", type=float, default=10.0, help="Publish rate Hz")
     parser.add_argument("--random", action="store_true", help="Use random goal position")
-    parser.add_argument("--update", type=float, default=10.0, help="Update goal every N seconds in random mode")
+    parser.add_argument("--update", type=float, default=None, help="Update goal every N seconds in random or goals-file cycling mode")
     parser.add_argument("--goals-file", type=str, default=None, help="JSON file containing [x, y, z, qw, qx, qy, qz] goals")
+    parser.add_argument("--goal-overview", action="store_true", default=False, help="Publish all goals from --goals-file as persistent RViz markers without cycling or publishing /goal_pose")
     parser.add_argument("--benchmark", action="store_true", default=False, help="Benchmark mode: wait for start signals from sim2real node")
     args = parser.parse_args()
 
     static_goal_requested = all(value is not None for value in (args.x, args.y, args.z))
     partial_static_goal = any(value is not None for value in (args.x, args.y, args.z)) and not static_goal_requested
+    update_interval = args.update if args.update is not None else 10.0
 
     if partial_static_goal:
         parser.error("Provide --x, --y, and --z together for a static goal.")
 
     if args.interactive and (static_goal_requested or args.random or args.goals_file is not None):
         parser.error("--interactive cannot be combined with static, random, or goals-file modes.")
+
+    if args.goal_overview and args.goals_file is None:
+        parser.error("--goal-overview requires --goals-file.")
+
+    if args.goal_overview and args.update is not None:
+        parser.error("--goal-overview cannot be combined with --update because overview mode does not cycle goals.")
+
+    if args.goal_overview and (args.interactive or args.random or args.benchmark or static_goal_requested):
+        parser.error("--goal-overview cannot be combined with interactive, static, random, or benchmark modes.")
     
     rclpy.init()
     
@@ -351,37 +472,49 @@ def main():
     
     # Determine behavior based on arguments
     cycling_goals = None
+    overview_goals = None
     random_update_interval = None
     cycling_goal_interval = None
     
     if static_goal_requested:
         # Static goal specified
         cycling_goals = None
+        overview_goals = None
+        random_update_interval = None
+        cycling_goal_interval = None
+    elif args.goal_overview:
+        cycling_goals = None
+        overview_goals = load_goals_file(args.goals_file)
         random_update_interval = None
         cycling_goal_interval = None
     elif args.goals_file is not None:
         cycling_goals = load_goals_file(args.goals_file)
-        cycling_goal_interval = args.update
+        overview_goals = None
+        cycling_goal_interval = update_interval
     elif args.random:
         # Random goal mode
         cycling_goals = None
-        random_update_interval = args.update
+        overview_goals = None
+        random_update_interval = update_interval
     elif args.interactive:
         # Interactive mode
         cycling_goals = None
+        overview_goals = None
         random_update_interval = None
         cycling_goal_interval = None
     else:
         # Default: cycle through three positions
         cycling_goals = default_cycling_goals
+        overview_goals = None
         cycling_goal_interval = None
     
     node = GoalPublisher(
         rate=args.rate,
         random_update_interval=random_update_interval,
         cycling_goals=cycling_goals,
+        overview_goals=overview_goals,
         cycling_goal_interval=cycling_goal_interval,
-        stop_after_single_cycle=args.goals_file is not None or args.benchmark,
+        stop_after_single_cycle=args.benchmark,
         benchmark_mode=args.benchmark,
     )
     
@@ -425,7 +558,7 @@ def main():
     else:
         # Static or cycling mode
         try:
-            if args.benchmark:
+            if args.benchmark or args.goal_overview:
                 rclpy.spin(node)  # Stay alive; controlled by /benchmark_control
             else:
                 while rclpy.ok() and not node.finished_cycling:

@@ -207,7 +207,7 @@ def _apply_runtime_env_overrides(env_cfg):
     env_cfg.domain_rand.enable_noise = False
     env_cfg.domain_rand.enable_delay = False
     env_cfg.domain_rand.enable_mass_com_rand = False
-    env_cfg.debug = False
+    env_cfg.debug = True
     env_cfg.episode_length_s = GOAL_TIMEOUT_S * len(env_cfg.benchmark_goals)
 
 

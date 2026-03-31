@@ -51,7 +51,28 @@ python3 goal_publisher.py --x 0.3 --y 0.0 --z 0.4
 
 # Mode interactif
 python3 goal_publisher.py --interactive
+
+# Vue d'ensemble RViz de tous les goals d'un fichier
+python3 goal_publisher.py --goals-file ../benchmark_settings/goals_handmade.json --goal-overview
 ```
+
+En mode `--goal-overview`, le script ne publie pas de cible active sur `/goal_pose`.
+Il publie uniquement un `MarkerArray` RViz persistant sur `/visualization_marker_array`, avec un repère et un label pour chaque entrée du fichier JSON.
+
+### 4. Afficher les goals dans RViz
+
+```bash
+ros2 run rviz2 rviz2
+```
+
+Dans RViz:
+
+1. Régler `Fixed Frame` sur `table`
+2. Pour le mode standard, ajouter un affichage `Marker` sur `/visualization_marker`
+3. Pour `--goal-overview`, ajouter un affichage `MarkerArray` sur `/visualization_marker_array`
+
+Le mode standard affiche le goal actif.
+Le mode `--goal-overview` affiche tous les goals du fichier simultanément, de manière persistante.
 
 ## 📊 Architecture des observations
 
