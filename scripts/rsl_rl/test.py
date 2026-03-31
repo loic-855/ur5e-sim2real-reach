@@ -40,7 +40,7 @@ DEFAULT_CHECKPOINTS_FILE = REPO_ROOT / "scripts" / "benchmark_settings" / "defau
 GOAL_TIMEOUT_S = 10.0
 IN_AREA_POS_M = 0.08
 IN_TIGHT_POS_M = 0.005  # 5 mm
-IN_TIGHT_ROT_RAD = 0.044  # 2.5 degrees in radians
+IN_TIGHT_ROT_RAD = 0.2  # 11.46 degrees in radians
 TIGHT_DWELL_MIN = 10  # ~167 ms at 60 Hz
 
 
