@@ -74,6 +74,35 @@ Dans RViz:
 Le mode standard affiche le goal actif.
 Le mode `--goal-overview` affiche tous les goals du fichier simultanément, de manière persistante.
 
+### 5. Afficher la trajectoire TCP complète (trace)
+
+Si un topic de pose TCP est deja disponible (par ex.
+`/gripper_tcp_pose_broadcaster/pose` en `geometry_msgs/PoseStamped`), vous
+pouvez publier une trajectoire cumulative en `nav_msgs/Path` pour RViz :
+
+```bash
+source ~/wwro_ws/install/local_setup.bash
+cd /home/robots/Woodworking_Simulation/scripts/sim2real
+
+python3 ee_path_from_pose.py \
+    --input-topic /gripper_tcp_pose_broadcaster/pose \
+    --output-topic /ee_path \
+    --max-points 5000 \
+    --min-dt 0.03
+```
+
+Dans RViz:
+
+1. Régler `Fixed Frame` sur `gripper_base` (ou une frame monde stable)
+2. Ajouter un affichage `Path` sur `/ee_path`
+3. Garder la trace visible pour comparer convergence stable vs oscillations
+
+Option reset manuel de la trace:
+
+```bash
+ros2 service call /ee_path/clear std_srvs/srv/Empty {}
+```
+
 ## 📊 Architecture des observations
 
 Le vecteur d'observation (19 dimensions) est construit exactement comme dans IsaacSim :
