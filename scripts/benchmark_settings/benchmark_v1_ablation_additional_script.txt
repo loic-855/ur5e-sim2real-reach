@@ -1,8 +1,0 @@
-{
-  checkpoints: [
-    logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-27_13-05-11_rand-all_enabled_no_COM_delay_1_2_10s-Timeout/exported/policy.pt
-    logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-27_13-05-11_rand-actuator_only_10s-Timeout/exported/policy.pt
-    logs/rsl_rl/sim2real_v1_ablation_10s/2026-03-27_13-05-12_rand-actuator_plus_delay_1_2_10s-Timeout/exported/policy.pt
-  ]
-}
-
