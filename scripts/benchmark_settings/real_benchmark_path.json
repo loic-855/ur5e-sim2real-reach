@@ -1,5 +1,5 @@
 {
-  "checkpoints": [
+  "models": [
     "test_models/2026-03-25_10-20-56__rand-False_10s-Timeout/exported/policy.pt",
     "test_models/2026-03-25_17-30-57_rand-delay_only_action_0_1_10s-Timeout/exported/policy.pt",
     "test_models/2026-03-25_11-17-12_rand-delay_only_action_1_2_10s-Timeout/exported/policy.pt",

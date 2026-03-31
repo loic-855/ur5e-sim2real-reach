@@ -211,7 +211,7 @@ def prompt_model_labels(grouped_runs: dict[str, dict[str, GainAggregate]]) -> di
     print("\nModel naming prompt")
     print("Enter a display name for each model path. Press Enter to accept the default name.")
 
-    for model_key in sorted(grouped_runs.keys()):
+    for model_key in ordered_model_keys_by_file_name(grouped_runs):
         default_label = default_model_label(model_key)
         print(f"\nModel path: {model_key}")
         print(f"Default label: {default_label}")
@@ -320,6 +320,20 @@ def group_runs(run_entries: list[RunEntry]) -> dict[str, dict[str, GainAggregate
     return grouped
 
 
+def ordered_model_keys_by_file_name(grouped_runs: dict[str, dict[str, GainAggregate]]) -> list[str]:
+    def key_for_model(model_key: str) -> tuple[str, str, str]:
+        runs = grouped_runs[model_key]["simulation"].runs + grouped_runs[model_key]["tuned"].runs
+        if not runs:
+            return ("~", "~", model_key.lower())
+
+        # Use YAML filename as primary ordering key and full path as tie-breaker.
+        first_name = min(run.file_path.name.lower() for run in runs)
+        first_path = min(str(run.file_path).lower() for run in runs)
+        return (first_name, first_path, model_key.lower())
+
+    return sorted(grouped_runs.keys(), key=key_for_model)
+
+
 def build_comparison(baseline: GainAggregate, tuned: GainAggregate) -> dict[str, Any]:
     comparison: dict[str, Any] = {
         "baseline": baseline.summary(),
@@ -360,7 +374,7 @@ def plot_metric_comparison(
     show_legend: bool = True,
     report_title: str | None = None,
 ) -> None:
-    model_keys = sorted(grouped_runs.keys())
+    model_keys = ordered_model_keys_by_file_name(grouped_runs)
     labels = [model_labels.get(model_key, default_model_label(model_key)) for model_key in model_keys]
     model_colors = build_model_color_map(model_keys)
     if metric_key == "mean_pos_err_area_m":
@@ -463,7 +477,7 @@ def build_report(
     all_tuned = GainAggregate()
     
 
-    for model_key in sorted(grouped_runs.keys()):
+    for model_key in ordered_model_keys_by_file_name(grouped_runs):
         simulation_runs = grouped_runs[model_key]["simulation"]
         tuned_runs = grouped_runs[model_key]["tuned"]
         all_simulation.runs.extend(simulation_runs.runs)
