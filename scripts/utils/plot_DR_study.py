@@ -51,6 +51,24 @@ METRIC_KEYS = [
     ("mean_rot_err_area_rad", "Mean rotation error in area [rad]"),
 ]
 
+_KNOWN_MODEL_SUBDIRS = {"exported", "checkpoints"}
+
+
+def normalize_model_key(model_path: str) -> str:
+    """Return the training-run directory as a stable model key.
+
+    Resolves relative paths to absolute and steps out of known artifact
+    subdirectories (e.g. ``exported/``) so that ``<run>/model_1499.pt`` and
+    ``<run>/exported/policy.pt`` map to the same key.
+    """
+    path = Path(model_path)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if path.parent.name.lower() in _KNOWN_MODEL_SUBDIRS:
+        return str(path.parent.parent)
+    return str(path.parent)
+
+
 METRIC_TITLE_SUFFIX = {
     "mean_pos_err_area_m": "Mean position error",
     "mean_rot_err_area_rad": "Mean orientation error",
@@ -305,7 +323,7 @@ def load_run_entry(file_path: Path, default_robot_gain: str | None = None) -> Ru
     return RunEntry(
         file_path=file_path,
         model_path=model_path_str,
-        model_key=model_path_str,
+        model_key=normalize_model_key(model_path_str),
         robot_gain=str(robot_gain),
         action_scale=action_scale,
         metrics=metrics,
