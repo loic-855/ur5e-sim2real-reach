@@ -107,6 +107,9 @@ HOME_Q = [0.0, -1.57, 0.0, -1.57, 0.0, 0.0]
 # ============================================================================
 ROBOT_BASE_LOCAL = np.array([-0.52, 0.32, 0.02], dtype=np.float32)
 IN_AREA_POS_M = 0.08
+IN_TIGHT_POS_M = 0.005  # 5 mm
+IN_TIGHT_ROT_RAD = 0.2  # 11.46 degrees in radians (tuned visually)
+TIGHT_DWELL_MIN = 10  # ~167 ms at 60 Hz
 
 
 # ============================================================================
@@ -588,10 +591,20 @@ class Sim2RealNode(Node):
             "sum_pos_err_area": 0.0,
             "sum_rot_err_area": 0.0,
             "reached_area": False,
+            "min_pos_err_m": float("inf"),
+            "min_rot_err_rad": float("inf"),
+            "samples_tight": 0,
+            "samples_small_rot": 0,
         }
 
     def _update_goal_result(self, goal_result: dict, goal_time_s: float, pos_err: float, rot_err: float):
         goal_result["samples_total"] += 1
+        goal_result["min_pos_err_m"] = min(goal_result["min_pos_err_m"], pos_err)
+        goal_result["min_rot_err_rad"] = min(goal_result["min_rot_err_rad"], rot_err)
+        if pos_err <= IN_TIGHT_POS_M:
+            goal_result["samples_tight"] += 1
+        if rot_err <= IN_TIGHT_ROT_RAD:
+            goal_result["samples_small_rot"] += 1
         in_area = pos_err <= IN_AREA_POS_M
         if in_area:
             goal_result["reached_area"] = True
@@ -611,6 +624,12 @@ class Sim2RealNode(Node):
         )
         del goal_result["sum_pos_err_area"]
         del goal_result["sum_rot_err_area"]
+        if goal_result["min_pos_err_m"] == float("inf"):
+            goal_result["min_pos_err_m"] = None
+        if goal_result["min_rot_err_rad"] == float("inf"):
+            goal_result["min_rot_err_rad"] = None
+        goal_result["reached_tight"] = goal_result["samples_tight"] >= TIGHT_DWELL_MIN
+        goal_result["reached_small_rot"] = goal_result["samples_small_rot"] >= TIGHT_DWELL_MIN
         return goal_result
 
     def _build_episode_summary(self, episode_index: int = 0, results: Optional[list[dict]] = None) -> dict:
@@ -618,14 +637,20 @@ class Sim2RealNode(Node):
         area_times = [g["time_to_area_s"] for g in goal_results if g["time_to_area_s"] is not None]
         area_pos = [g["mean_pos_err_area_m"] for g in goal_results if g["mean_pos_err_area_m"] is not None]
         area_rot = [g["mean_rot_err_area_rad"] for g in goal_results if g["mean_rot_err_area_rad"] is not None]
+        min_pos = [g["min_pos_err_m"] for g in goal_results if g["min_pos_err_m"] is not None]
+        min_rot = [g["min_rot_err_rad"] for g in goal_results if g["min_rot_err_rad"] is not None]
         return {
             "episode_index": episode_index,
             "goal_count": len(goal_results),
             "goals": goal_results,
             "goals_reached_area": sum(1 for g in goal_results if g["reached_area"]),
+            "goals_reached_tight": sum(1 for g in goal_results if g["reached_tight"]),
+            "goals_reached_small_rot": sum(1 for g in goal_results if g["reached_small_rot"]),
             "mean_time_to_area_s": sum(area_times) / len(area_times) if area_times else None,
             "mean_pos_err_area_m": sum(area_pos) / len(area_pos) if area_pos else None,
             "mean_rot_err_area_rad": sum(area_rot) / len(area_rot) if area_rot else None,
+            "mean_min_pos_err_m": sum(min_pos) / len(min_pos) if min_pos else None,
+            "mean_min_rot_err_rad": sum(min_rot) / len(min_rot) if min_rot else None,
         }
 
     def _save_benchmark_results(self):
@@ -646,7 +671,11 @@ class Sim2RealNode(Node):
         all_area_times = [ep["mean_time_to_area_s"] for ep in episodes if ep["mean_time_to_area_s"] is not None]
         all_area_pos = [ep["mean_pos_err_area_m"] for ep in episodes if ep["mean_pos_err_area_m"] is not None]
         all_area_rot = [ep["mean_rot_err_area_rad"] for ep in episodes if ep["mean_rot_err_area_rad"] is not None]
+        all_min_pos = [ep["mean_min_pos_err_m"] for ep in episodes if ep["mean_min_pos_err_m"] is not None]
+        all_min_rot = [ep["mean_min_rot_err_rad"] for ep in episodes if ep["mean_min_rot_err_rad"] is not None]
         total_reached = sum(ep["goals_reached_area"] for ep in episodes)
+        total_reached_tight = sum(ep["goals_reached_tight"] for ep in episodes)
+        total_reached_small_rot = sum(ep["goals_reached_small_rot"] for ep in episodes)
         total_goals = sum(ep["goal_count"] for ep in episodes)
 
         payload = {
@@ -664,6 +693,14 @@ class Sim2RealNode(Node):
                 "goal_convention": "x y z qw qx qy qz",
                 "thresholds": {
                     "area": {"pos_m": IN_AREA_POS_M},
+                    "tight": {
+                        "pos_m": IN_TIGHT_POS_M,
+                        "dwell_samples": TIGHT_DWELL_MIN,
+                    },
+                    "small_orientation": {
+                        "rot_rad": IN_TIGHT_ROT_RAD,
+                        "dwell_samples": TIGHT_DWELL_MIN,
+                    },
                 },
             },
             "summary": {
@@ -674,6 +711,10 @@ class Sim2RealNode(Node):
                 "mean_pos_err_area_m": sum(all_area_pos) / len(all_area_pos) if all_area_pos else None,
                 "mean_rot_err_area_rad": sum(all_area_rot) / len(all_area_rot) if all_area_rot else None,
                 "goals_reached_area": total_reached,
+                "goals_reached_tight": total_reached_tight,
+                "goals_reached_small_rot": total_reached_small_rot,
+                "mean_min_pos_err_m": sum(all_min_pos) / len(all_min_pos) if all_min_pos else None,
+                "mean_min_rot_err_rad": sum(all_min_rot) / len(all_min_rot) if all_min_rot else None,
             },
             "episodes": episodes,
             "goals": [format_goal_line(goal) for goal in self._benchmark_goals[: self._benchmark_num_goals]],
