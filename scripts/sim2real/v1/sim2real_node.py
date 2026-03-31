@@ -168,6 +168,12 @@ def load_model_list(models_file: str) -> tuple[str, ...]:
     return tuple(models)
 
 
+def select_urscript_file(robot_gain: str) -> str:
+    if robot_gain == "naive":
+        return URSCRIPT_FILE_NAIVE
+    return URSCRIPT_FILE_TUNED
+
+
 def yaml_scalar(value):
     if value is None:
         return "null"
@@ -480,6 +486,7 @@ class Sim2RealNode(Node):
         self.control_rate = control_rate
         self.dt = 1.0 / control_rate
         self.action_scale = action_scale
+        self._device = device
 
         # State variables (protected by lock)
         self.lock = Lock()
@@ -518,17 +525,12 @@ class Sim2RealNode(Node):
         self._num_takes = num_takes
         self._current_take = 0
         self._all_episode_results: list[list[dict]] = []
-        if robot_gain == "naive":
-            urscript_file = URSCRIPT_FILE_NAIVE
-        else:
-            urscript_file = URSCRIPT_FILE_TUNED
+        urscript_file = select_urscript_file(robot_gain)
 
         # ==================================================================
         # Load policy
         # ==================================================================
-        self.get_logger().info(f"Loading policy from: {model_path or 'default'}")
-        self.policy = load_policy(model_path=model_path, device=device)
-        self.get_logger().info("Policy loaded successfully!")
+        self._load_policy(model_path)
 
         # ==================================================================
         # RTDE controller  (reader runs at rtde_rate, decoupled from policy)
@@ -592,6 +594,50 @@ class Sim2RealNode(Node):
             self._initial_start_timer = self.create_timer(
                 2.0, self._publish_initial_start, callback_group=self.callback_group
             )
+
+    def _load_policy(self, model_path: Optional[str]):
+        self._model_path = model_path
+        self.get_logger().info(f"Loading policy from: {model_path or 'default'}")
+        self.policy = load_policy(model_path=model_path, device=self._device)
+        self.get_logger().info("Policy loaded successfully!")
+
+    def _reset_benchmark_job_state(self):
+        with self.lock:
+            self.goal_position = None
+            self.goal_quaternion = None
+            self.old_goal = None
+            self.dof_targets = None
+
+        self._benchmark_started_at = None
+        self._benchmark_current_goal_index = -1
+        self._benchmark_results = []
+        self._current_goal_result = None
+        self._benchmark_completed = False
+        self._current_take = 0
+        self._all_episode_results = []
+        self._last_state_seq = 0
+
+    def prepare_next_benchmark_job(self, model_path: Optional[str], robot_gain: str):
+        if not self._benchmark:
+            raise RuntimeError("prepare_next_benchmark_job is only valid in benchmark mode.")
+
+        self.get_logger().info(f"Preparing next benchmark job: gain={robot_gain}, model={model_path}")
+        self.stop()
+
+        self.rtde.stop_robot()
+        time.sleep(8.0)
+
+        self._robot_gain = robot_gain
+        self.rtde.urscript_file = select_urscript_file(robot_gain)
+        self._load_policy(model_path)
+        self._reset_benchmark_job_state()
+
+        self.rtde.send_urscript()
+        self.start()
+        self._publish_start_signal()
+        self.get_logger().info(
+            f"Benchmark armed: goal_timeout_s={self._goal_timeout_s}, num_goals={self._benchmark_num_goals}. Waiting for first goal..."
+        )
 
     # -- Benchmark control signals -----------------------------------------
 
@@ -777,8 +823,8 @@ class Sim2RealNode(Node):
         if self._current_take >= self._num_takes:
             self._benchmark_completed = True
             self._save_benchmark_results()
-            self.get_logger().info("All takes completed; shutting down.")
-            self.shutdown()
+            self.get_logger().info("All takes completed for current benchmark job.")
+            self.stop()
         else:
             # Start next take in background thread
             Thread(target=self._reset_for_next_take, daemon=True, name="take_reset").start()
@@ -1087,37 +1133,41 @@ def main():
         jobs = [(model_path, gain) for model_path in model_paths for gain in gain_profiles]
         total_jobs = len(jobs)
 
+        first_model_path, first_gain = jobs[0]
+        print(f"[INFO] Starting run 1/{total_jobs}: gain={first_gain}, model={first_model_path}")
+        node = Sim2RealNode(
+            robot_prefix=args.robot,
+            model_path=first_model_path,
+            control_rate=args.rate,
+            rtde_rate=args.rtde_rate,
+            device=args.device,
+            action_scale=args.action_scale,
+            robot_host=args.robot_ip,
+            robot_gain=first_gain,
+            num_takes=args.num_takes,
+            benchmark=args.benchmark,
+            goal_timeout_s=args.goal_timeout_s,
+            num_goals=args.num_goals,
+            goals_file=args.goals_file,
+        )
+
+        node.start()
+
         for job_idx, (model_path, gain) in enumerate(jobs, start=1):
-            node = Sim2RealNode(
-                robot_prefix=args.robot,
-                model_path=model_path,
-                control_rate=args.rate,
-                rtde_rate=args.rtde_rate,
-                device=args.device,
-                action_scale=args.action_scale,
-                robot_host=args.robot_ip,
-                robot_gain=gain,
-                num_takes=args.num_takes,
-                benchmark=args.benchmark,
-                goal_timeout_s=args.goal_timeout_s,
-                num_goals=args.num_goals,
-                goals_file=args.goals_file,
-            )
-
-            node.start()
-            node.get_logger().info(f"Run {job_idx}/{total_jobs}: gain={gain}, model={model_path}")
-
-            if args.benchmark:
+            if job_idx > 1:
+                print(f"[INFO] Starting run {job_idx}/{total_jobs}: gain={gain}, model={model_path}")
+                node.prepare_next_benchmark_job(model_path, gain)
+            elif args.benchmark:
                 node.get_logger().info(
                     f"Benchmark armed: goal_timeout_s={args.goal_timeout_s}, num_goals={node._benchmark_num_goals}. Waiting for first goal..."
                 )
+
+            if args.benchmark:
                 while rclpy.ok() and not node._benchmark_completed:
                     rclpy.spin_once(node, timeout_sec=0.2)
             else:
                 rclpy.spin(node)
-
-            node.destroy_node()
-            node = None
+                break
 
     except KeyboardInterrupt:
         print("\nShutting down...")
