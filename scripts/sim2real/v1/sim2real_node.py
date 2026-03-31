@@ -142,6 +142,32 @@ def load_benchmark_goals(goals_file: str) -> tuple[tuple[float, ...], ...]:
     return tuple(parsed_goals)
 
 
+def load_model_list(models_file: str) -> tuple[str, ...]:
+    path = Path(models_file)
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    if isinstance(payload, dict):
+        payload = payload.get("models")
+
+    if not isinstance(payload, list) or len(payload) == 0:
+        raise ValueError("Models file must be a non-empty list of model paths or an object with a 'models' list.")
+
+    models: list[str] = []
+    for entry in payload:
+        if isinstance(entry, str):
+            model_path = Path(entry)
+        elif isinstance(entry, dict) and isinstance(entry.get("path"), str):
+            model_path = Path(entry["path"])
+        else:
+            raise ValueError("Each model entry must be a string or an object containing a 'path' field.")
+        if not model_path.is_absolute():
+            model_path = REPO_ROOT / model_path
+        models.append(str(model_path))
+
+    return tuple(models)
+
+
 def yaml_scalar(value):
     if value is None:
         return "null"
@@ -659,9 +685,9 @@ class Sim2RealNode(Node):
             return None
 
         self._benchmark_output_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S-%f")
         run_name = extract_run_name_from_model_path(self._model_path)
-        out_path = self._benchmark_output_dir / f"{timestamp}_{run_name}.yaml"
+        out_path = self._benchmark_output_dir / f"{timestamp}_{run_name}_{self._robot_gain}.yaml"
 
         episodes = []
         for take_idx, take_results in enumerate(self._all_episode_results):
@@ -753,10 +779,6 @@ class Sim2RealNode(Node):
             self._save_benchmark_results()
             self.get_logger().info("All takes completed; shutting down.")
             self.shutdown()
-            try:
-                rclpy.shutdown()
-            except Exception:
-                pass
         else:
             # Start next take in background thread
             Thread(target=self._reset_for_next_take, daemon=True, name="take_reset").start()
@@ -996,6 +1018,10 @@ def main():
         help="Path to TorchScript policy (.pt file)",
     )
     parser.add_argument(
+        "--models-file", type=str, default=None,
+        help="Optional JSON file listing model paths to benchmark sequentially (list or {'models': [...]})",
+    )
+    parser.add_argument(
         "--rate", type=float, default=60.0,
         help="Control loop rate in Hz",
     )
@@ -1022,6 +1048,10 @@ def main():
         help="Select the URScript gain profile to upload",
     )
     parser.add_argument(
+        "--benchmark-both-gains", action="store_true", default=False,
+        help="In benchmark mode, run both tuned and naive gains sequentially",
+    )
+    parser.add_argument(
         "--benchmark", action="store_true", default=False,
         help="Run the real benchmark with timed goal windows",
     )
@@ -1033,36 +1063,61 @@ def main():
 
     rclpy.init()
 
+    model_paths: list[Optional[str]] = []
+    if args.model is not None:
+        model_paths.append(args.model)
+    if args.models_file is not None:
+        model_paths.extend(load_model_list(args.models_file))
+    if len(model_paths) == 0:
+        model_paths = [None]
+
+    # Preserve order while removing duplicates.
+    model_paths = list(dict.fromkeys(model_paths))
+
+    gain_profiles = ["tuned", "naive"] if args.benchmark and args.benchmark_both_gains else [args.robot_gain]
+
+    if not args.benchmark and (args.models_file is not None or args.benchmark_both_gains):
+        raise ValueError("--models-file and --benchmark-both-gains are only valid with --benchmark.")
+
     node = None
     try:
-        node = Sim2RealNode(
-            robot_prefix=args.robot,
-            model_path=args.model,
-            control_rate=args.rate,
-            rtde_rate=args.rtde_rate,
-            device=args.device,
-            action_scale=args.action_scale,
-            robot_host=args.robot_ip,
-            robot_gain=args.robot_gain,
-            num_takes=args.num_takes,
-            benchmark=args.benchmark,
-            goal_timeout_s=args.goal_timeout_s,
-            num_goals=args.num_goals,
-            goals_file=args.goals_file,
-        )
+        if args.benchmark and args.num_goals <= 0 and args.goals_file is None:
+            raise ValueError("Benchmark mode requires --num-goals or --goals-file.")
 
-        node.start()
+        jobs = [(model_path, gain) for model_path in model_paths for gain in gain_profiles]
+        total_jobs = len(jobs)
 
-        if args.benchmark:
-            if args.num_goals <= 0 and args.goals_file is None:
-                raise ValueError("Benchmark mode requires --num-goals or --goals-file.")
-            node.get_logger().info(
-                f"Benchmark armed: goal_timeout_s={args.goal_timeout_s}, num_goals={node._benchmark_num_goals}. Waiting for first goal..."
+        for job_idx, (model_path, gain) in enumerate(jobs, start=1):
+            node = Sim2RealNode(
+                robot_prefix=args.robot,
+                model_path=model_path,
+                control_rate=args.rate,
+                rtde_rate=args.rtde_rate,
+                device=args.device,
+                action_scale=args.action_scale,
+                robot_host=args.robot_ip,
+                robot_gain=gain,
+                num_takes=args.num_takes,
+                benchmark=args.benchmark,
+                goal_timeout_s=args.goal_timeout_s,
+                num_goals=args.num_goals,
+                goals_file=args.goals_file,
             )
 
-            rclpy.spin(node)
-        else:
-            rclpy.spin(node)
+            node.start()
+            node.get_logger().info(f"Run {job_idx}/{total_jobs}: gain={gain}, model={model_path}")
+
+            if args.benchmark:
+                node.get_logger().info(
+                    f"Benchmark armed: goal_timeout_s={args.goal_timeout_s}, num_goals={node._benchmark_num_goals}. Waiting for first goal..."
+                )
+                while rclpy.ok() and not node._benchmark_completed:
+                    rclpy.spin_once(node, timeout_sec=0.2)
+            else:
+                rclpy.spin(node)
+
+            node.destroy_node()
+            node = None
 
     except KeyboardInterrupt:
         print("\nShutting down...")
@@ -1072,6 +1127,7 @@ def main():
     finally:
         if node is not None:
             node.shutdown()
+            node.destroy_node()
         rclpy.shutdown()
 
 
