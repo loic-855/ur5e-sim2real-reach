@@ -17,7 +17,8 @@ TASK_NAME="WWSim-Pose-Orientation-Sim2Real-Direct-v1"  # Must match a task_name 
 SIF_PATH="/cluster/scratch/$USER/isaac_euler_salziegl.sif"
 
 PROJECT_PATH=$(pwd)
-PROJECT_NAME=$(basename "$PROJECT_PATH")
+# Keep the internal project/package name stable even if the repo folder was renamed.
+PROJECT_NAME="Woodworking_Simulation"
 
 # WandB API Key
 if [ -f "$HOME/.wandb_key" ]; then

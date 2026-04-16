@@ -30,6 +30,8 @@ You need:
 4. A WandB API key saved in `~/.wandb_key`.
 5. Access to Euler over SSH.
 
+The repository folder on Euler can stay named `ur5e-sim2real-reach`. The Euler scripts hardcode `PROJECT_NAME="Woodworking_Simulation"` for the container mount and editable install, because the Python package under `source/` still uses that internal name.
+
 Recommended setup:
 
 ```bash
@@ -52,36 +54,27 @@ Upload the container once:
 scp /path/to/isaac_euler_salziegl.sif username@euler.ethz.ch:/cluster/scratch/username/
 ```
 
-If you use `generate_sweep.py`, load Python first:
-
-```bash
-module load stack/2024-06 python/3.12.8
-```
-
 ## Quick Start
 
 Single run with manual overrides:
 
 ```bash
-cd /cluster/scratch/$USER/ur5e-sim2real-reach
-git pull
 sbatch euler/train_euler.sh
 ```
+When you use `generate_sweep.py`, load Python first:
 
+```bash
+module load stack/2024-06 python/3.12.8
+```
 Preview the v1 ablation sweep:
 
 ```bash
-cd /cluster/scratch/$USER/ur5e-sim2real-reach
-git pull
-module load stack/2024-06 python/3.12.8
 python euler/generate_sweep.py --config euler/sweep_sim2real_v1_ablation_10s_timeout.yaml --dry-run
 ```
 
 Generate and submit the full sweep:
 
 ```bash
-cd /cluster/scratch/$USER/ur5e-sim2real-reach
-module load stack/2024-06 python/3.12.8
 python euler/generate_sweep.py --config euler/sweep_sim2real_v1_ablation_10s_timeout.yaml --submit
 ```
 

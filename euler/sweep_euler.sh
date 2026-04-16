@@ -21,7 +21,8 @@
 
 # --- PATHS ---
 PROJECT_PATH="$SLURM_SUBMIT_DIR"
-PROJECT_NAME=$(basename "$PROJECT_PATH")
+# Keep the internal project/package name stable even if the repo folder was renamed.
+PROJECT_NAME="Woodworking_Simulation"
 SCRIPT_DIR="$SLURM_SUBMIT_DIR/euler"
 # SWEEP_FILE must be provided by sbatch via --export=SWEEP_FILE=/path/to/file.
 if [ -z "$SWEEP_FILE" ]; then
