@@ -1,241 +1,244 @@
+# Isaac Lab Training on Euler
 
-# Isaac Lab Training on Euler (ETH Zurich)
+This README documents trainging on the Euler cluster, with a focus on the v1 ablation sweep defined in `euler/sweep_sim2real_v1_ablation_10s_timeout.yaml`.
 
-This guide details how to run **Isaac Lab** training jobs on the ETH Euler cluster using a custom Apptainer (`.sif`) container and play them back on the workstation.
+Use it in two ways:
 
-## Quick Commands
+1. Edit `euler/train_euler.sh` for a single manual run.
+2. Use `euler/generate_sweep.py` with `euler/sweep_euler.sh` to automate the full ablation sweep.
 
-```bash
-# Load python in your session
-module load stack/2024-06 python/3.12.8
-```
+The same pattern can be reused for a future sweep file, but this README stays focused on the current v1 ablation setup.
 
-```bash
-# Single training run
-sbatch train_euler.sh
-
-# Sweep: generate + submit
-python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --submit
-```
-```bash
-#Play the trained sweep
-python scripts/rsl_rl/play.py \
-  --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 \
-  --num_envs 5 \
-  --checkpoint "logs/rsl_rl/2026-02-18_00-32-14_reward_position-default_reward_orientation-default/model_2499.pt" \
-  --sweep_file "euler/sweep_runs.txt" \
-  env.debug=True
-```
-
-
-Before starting, ensure you have:
-
-1. **The SIF Container:** You need the `isaac_euler_salziegl.sif` file (or your own build).
-2. **WandB Account:** For logging training metrics (Weights & Biases).
-3. **ETH VPN:** Connected via Cisco AnyConnect (if outside the university network).
-4. **ETH Euler setup**: The connection between your computer and ETH Euler cluster is setup. Quick test via `ssh username@euler.ethz.ch`.
-
-**(Optional) File transfer**:  Direct connect to Euler file system on Ubuntu for file transfer: 
-
-Start the file explorer, go to `Other Locations`, entre the server adress `sftp://username@euler.ethz.ch/` and connect. Use it for transferring run or the container, but not for you project file, use git for that.
-
-
----
-
-## 2. Initial Setup
-
-### Transfer the SIF to Euler
-
-Upload your `.sif` file from your local machine:
-
-```bash
-scp /path/to/local/isaac_euler_salziegl.sif username@euler.ethz.ch:/cluster/scratch/username/
-```
-
-### Configure WandB on Euler
-
-1. Log in to [wandb.ai](https://wandb.ai) and copy your API Key from settings.
-2. SSH into Euler and save the key:
-
-```bash
-echo YOUR_LONG_API_KEY_HERE > ~/.wandb_key
-chmod 600 ~/.wandb_key
-```
-
----
-
-## 3. Single Training Run (`train_euler.sh`)
-
-For running a single training job with fixed parameters.
-
-**Important:** Update `TASK_NAME` and `SIF_PATH` in the script before running.
-
-```bash
-# 1. SSH into Euler and pull latest code
-ssh username@euler.ethz.ch
-cd Woodworking_Simulation
-git pull
-
-# 2. Submit
-sbatch train_euler.sh
-```
-
-### Monitoring
-
-* **Check status:** `squeue -u $USER`
-* **Cancel job:** `scancel JOB_ID`
-* **View Logs:** `cat logs/train_<JOB_ID>.out`
-* **View Progress:** Go to your WandB Dashboard
-
----
-
-## 4. Hyperparameter Sweep
-
-The sweep system runs many training configurations in parallel on the cluster.
-
-### Files
+## Files In This Folder
 
 | File | Role |
 |------|------|
-| `euler/sweep_*.yaml` | Sweep config: task name, SLURM settings, dimensions, presets |
-| `euler/generate_sweep.py` | Generates `sweep_runs_<config_stem>.txt` from YAML, optionally submits to SLURM |
-| `euler/sweep_euler.sh` | SLURM job script (reads config from `SWEEP_FILE` metadata) |
-| `euler/sweep_runs_<config_stem>.txt` | Generated output: metadata header + one line per run |
+| `euler/train_euler.sh` | Single manual training run with Hydra overrides written directly in the shell script |
+| `euler/sweep_sim2real_v1_ablation_10s_timeout.yaml` | Sweep definition for the thesis ablation study |
+| `euler/generate_sweep.py` | Expands the YAML into a concrete run list and can submit the sweep |
+| `euler/sweep_euler.sh` | SLURM array script that reads the generated run list and executes each run |
 
-### 4.1 Sweep Config (YAML)
 
-Create a YAML file in `euler/` defining your sweep. Example:
 
-```yaml
-task_name: "Template-Pose-Orientation-Sim2Real-Direct-v1-ext"
+## Before You Start
 
-slurm:
-  # Per-run estimate (HH:MM:SS) — required. Generator adds 15min safety and
-  # multiplies by per-node sequential count to compute per-job time.
-  time_per_task: "00:20:00"
-  # Number of cluster nodes / SLURM array tasks. Generator will distribute
-  # total runs across these nodes automatically.
-  nodes: 4
-  gpus: "rtx_4090:1"
-  cpus_per_task: 3
-  mem_per_cpu: 4000
+You need:
 
-base_overrides:
-  - "agent.max_iterations=2500"
+1. A clone of the repository on Euler, under `/cluster/scratch/$USER/ur5e-sim2real-reach`.
+2. The Isaac Lab `.sif` container uploaded to Euler.
+3. The USD assets copied to the repository root.
+4. A WandB API key saved in `~/.wandb_key`.
+5. Access to Euler over SSH.
 
-dimensions:
-  reward_position:
-    default: []           # use code defaults
-    moderate:
-      - "env.ee_position_penalty=-0.18"
-      - "env.ee_position_reward=0.30"
-  reward_orientation:
-    default: []
-    strong:
-      - "env.ee_orientation_penalty=-0.18"
-      - "env.ee_orientation_reward=0.30"
-```
-
-Key fields:
-- **`task_name`**: Registered Isaac Lab task to train
-- **`slurm`**: Resource settings (override `#SBATCH` defaults in `sweep_euler.sh`). The generator now requires a per-run time estimate (`time_per_task` in HH:MM:SS or `time_per_run_minutes` numeric) and uses `nodes` to split runs across array tasks.
-- **`nodes`**: Number of cluster nodes (also the SLURM array length). The generator will produce a `sequential_per_job_list` distributing total runs across these nodes (e.g. 16 runs, 5 nodes -> `[3,3,3,3,4]`).
-- **`base_overrides`**: Hydra overrides applied to every run
-- **`dimensions`**: Each dimension has named presets. The sweep is the **Cartesian product** of all dimensions. Use `[]` for "use defaults".
-
-Existing configs:
-- `sweep_config.yaml` — actuators × DR × network × action_rate
-- `sweep_reward_weight.yaml` — orientation reward only (5 presets)
-- `sweep_position_orientation.yaml` — position × orientation reward grid
-
-### 4.2 Workflow
+Recommended setup:
 
 ```bash
-# 1. SSH into Euler and pull latest code
 ssh username@euler.ethz.ch
-cd Woodworking_Simulation
+cd /cluster/scratch/$USER
+git clone git@github.com:loic-855/ur5e-sim2real-reach.git
+cd ur5e-sim2real-reach
+```
+
+Configure WandB once:
+
+```bash
+echo YOUR_WANDB_API_KEY > ~/.wandb_key
+chmod 600 ~/.wandb_key
+```
+
+Upload the container once:
+
+```bash
+scp /path/to/isaac_euler_salziegl.sif username@euler.ethz.ch:/cluster/scratch/username/
+```
+
+If you use `generate_sweep.py`, load Python first:
+
+```bash
 module load stack/2024-06 python/3.12.8
+```
+
+## Quick Start
+
+Single run with manual overrides:
+
+```bash
+cd /cluster/scratch/$USER/ur5e-sim2real-reach
 git pull
+sbatch euler/train_euler.sh
+```
 
-# 2. Preview the sweep (no files written, no jobs submitted)
-python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --dry-run
+Preview the v1 ablation sweep:
 
-# 3. Generate sweep file AND submit to SLURM
-#    The generator computes per-node sequential counts from `slurm.nodes`,
-#    computes per-job walltime from `slurm.time_per_task` (adds 15min safety
-#    per run), writes `sequential_per_job_list` and `slurm_time` to
-#    `sweep_runs_<config_stem>.txt`, and submits with `--time` set to the computed max.
-python euler/generate_sweep.py --config euler/sweep_position_orientation.yaml --submit
+```bash
+cd /cluster/scratch/$USER/ur5e-sim2real-reach
+git pull
+module load stack/2024-06 python/3.12.8
+python euler/generate_sweep.py --config euler/sweep_sim2real_v1_ablation_10s_timeout.yaml --dry-run
+```
 
-# 4. Monitor
+Generate and submit the full sweep:
+
+```bash
+cd /cluster/scratch/$USER/ur5e-sim2real-reach
+module load stack/2024-06 python/3.12.8
+python euler/generate_sweep.py --config euler/sweep_sim2real_v1_ablation_10s_timeout.yaml --submit
+```
+
+## Manual Overrides With `train_euler.sh`
+
+`train_euler.sh` is the fastest way to launch one experiment variant by hand.
+
+Inside the script, everything after `.../train.py` line  is passed to `scripts/rsl_rl/train.py` as Hydra overrides. That means you can directly edit the shell script to change the experiment without touching Python code.
+
+The current `train_euler` script already contains a concrete example. 
+
+## Automated Sweep With `generate_sweep.py` And `sweep_euler.sh`
+
+The automated path is split into three parts:
+
+1. `sweep_sim2real_v1_ablation_10s_timeout.yaml` defines the experiment.
+2. `generate_sweep.py` expands the YAML into a concrete run file named `euler/sweep_runs_sweep_sim2real_v1_ablation_10s_timeout.txt`.
+3. `sweep_euler.sh` reads that generated file and launches the runs as a SLURM array.
+
+### Global Overrides
+
+`base_overrides` in the YAML are applied to every generated run:
+
+```yaml
+base_overrides:
+  - "agent.max_iterations=1500"
+  - "agent.wandb_project=sim2real_v1_ablation"
+  - "agent.experiment_name=sim2real_v1_ablation"
+  - "env.goal_timeout_s=10.0"
+```
+
+This is the right place for settings that should stay identical across the full study.
+
+### Per-Run Overrides
+
+The `dimensions` section defines the actual experiment conditions. In the current file there is one dimension, `rand`, so each preset directly becomes one generated run.
+
+Current presets:
+
+- `no_dr`
+- `all_enabled_10s-Timeout`
+- `actuator_only_10s-Timeout`
+- `masscom_only_10s-Timeout`
+- `noise_only_10s-Timeout`
+- `delay_only_action_1_2_10s-Timeout`
+- `delay_only_action_0_1_10s-Timeout`
+- `all_enabled_no_COM_delay_1_2_10s-Timeout`
+- `actuator_plus_delay_1_2_10s-Timeout`
+
+Each preset overrides a small set of toggles:
+
+- `env.domain_rand.enable_actuator_rand`
+- `env.domain_rand.enable_mass_com_rand`
+- `env.domain_rand.enable_noise`
+- `env.domain_rand.enable_delay`
+- `env.domain_rand.action_delay_range`
+- `env.domain_rand.obs_delay_range`
+
+To adapt the sweep quickly for another study, duplicate one preset, rename it, and edit only those values.
+
+### SLURM Resource Overrides
+
+The YAML also controls the main SLURM settings used when `generate_sweep.py --submit` calls `sbatch`:
+
+```yaml
+slurm:
+  time_per_task: "07:00:00"
+  cpus_per_task: 4
+  mem_per_cpu: 6000
+  nodes: 3
+```
+
+What these fields do:
+
+- `time_per_task`: expected runtime for one run. The generator adds a safety margin before submitting.
+- `nodes`: number of SLURM array jobs.
+- `cpus_per_task`: passed to `sbatch --cpus-per-task`.
+- `mem_per_cpu`: passed to `sbatch --mem-per-cpu`.
+
+`sweep_euler.sh` still contains default `#SBATCH` values, but the submitted values from the YAML override them when you use `generate_sweep.py --submit`.
+
+### What `sweep_euler.sh` Actually Executes
+
+For each generated run, `sweep_euler.sh` does this:
+
+```bash
+/isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
+    --task=$TASK_NAME \
+    --headless \
+    --run_name=$RUN_NAME \
+    $HYDRA_OVERRIDES
+```
+
+That means:
+
+- `TASK_NAME` comes from the generated metadata.
+- `RUN_NAME` comes from the preset name.
+- `$HYDRA_OVERRIDES` is the concatenation of `base_overrides` and the preset-specific overrides.
+
+`sweep_euler.sh` itself is mostly infrastructure: cache setup, container launch, editable install, WandB environment, and sequential execution inside each array job.
+
+## Editing The Current v1 Ablation Sweep
+
+The fastest edits are:
+
+1. Change `base_overrides` for settings shared by every run.
+2. Change a preset under `dimensions.rand` for one specific condition.
+3. Change `slurm` if the sweep needs different runtime or resource allocation.
+4. Change `SIF_PATH` in both `euler/train_euler.sh` and `euler/sweep_euler.sh` if your container path changes.
+
+If you later create another sweep file, keep the same structure:
+
+1. `task_name`
+2. `slurm`
+3. `base_overrides`
+4. `dimensions`
+
+## Monitoring
+
+Check queue status:
+
+```bash
 squeue -u $USER
+```
+
+Check single-run logs:
+
+```bash
+cat logs/train_<JOB_ID>.out
+```
+
+Check sweep logs:
+
+```bash
 cat logs/sweep_<JOB_ID>_<ARRAY_ID>.out
 ```
 
-### 4.3 How It Works
-
-1. `generate_sweep.py` computes the Cartesian product of all dimension presets
-2. Writes `sweep_runs_<config_stem>.txt` with a metadata header and one line per run:
-   ```
-   # META task_name=Template-Pose-Orientation-Sim2Real-Direct-v1-ext
-   # META sequential_per_job=6
-   # META total_runs=36
-   run_name_1|hydra_override_1 hydra_override_2
-   run_name_2|hydra_override_1 hydra_override_2
-   ```
-3. Submits `sweep_euler.sh` as a SLURM array job (`sbatch --array=0-N --time=... --gpus=...`)
-4. Each array task reads its chunk of runs from the `SWEEP_FILE` provided by `generate_sweep.py` and executes them sequentially
-5. SLURM settings from the YAML override the `#SBATCH` defaults via command-line flags
-
-### 4.4 Tips
-
-- Use `--dry-run` first to verify the sweep grid
-- Failed runs are logged but don't stop the remaining runs in the job
-- Run names are auto-generated from preset names (e.g. `reward_position-moderate_reward_orientation-strong`)
-- `SIF_PATH` in `sweep_euler.sh` must point to your `.sif` container
-- Generate without submitting (omit `--submit`) to inspect `sweep_runs_<config_stem>.txt` first
-
----
-
-## 5. Moving Checkpoints (Euler -> Local)
-
-When training is finished, your checkpoints are in `logs/rsl_rl/` on Euler.
+Cancel a job:
 
 ```bash
-# Download a specific run
-scp -r username@euler.ethz.ch:~/Woodworking_Simulation/logs/rsl_rl/<experiment>/<timestamp> .
-
-# Download all logs
-scp -r username@euler.ethz.ch:~/Woodworking_Simulation/logs/rsl_rl .
+scancel JOB_ID
 ```
 
-You can view logs with TensorBoard locally if WandB sync didn't work.
-Delete old checkpoints on Euler regularly to avoid running out of space.
+## Replay A Sweep Checkpoint Locally
 
-## 6. Running the checkpoints
+If you replay a checkpoint produced by the sweep, pass the generated sweep file so `scripts/rsl_rl/play.py` can re-apply the matching overrides.
 
-Once the runs are transferred on the local computer, the can be run with the modified play.py script in the repo. The modified variables of the sweep can be directly passed in command line form, it avoids modifiying the base script.
-
-Special arguements need to be used: 
-`--sweep_file <path_to_sweep_file>` to pass the modified variable. The sweep file is a `.txt` file with the structure `run_name | where.variable_name.modified_value `:
-
- ```
- reward_position-default_reward_orientation-default|agent.max_iterations=2500
-reward_position-default_reward_orientation-conservative|agent.max_iterations=2500 env.ee_orientation_penalty=-0.10 env.ee_orientation_reward=0.0
-...
-```
-`--checkpoint <path_to_checkpoint>` to give one of the checkpoint of the sweep.
-
-`env.debug=True`to have visualisation if the script supports it. Argument without `--` must be at the end of the command
-
-### Example
+Example:
 
 ```bash
 python scripts/rsl_rl/play.py \
   --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 \
   --num_envs 5 \
-  --checkpoint "logs/rsl_rl/2026-02-18_00-32-14_reward_position-default_reward_orientation-default/model_2499.pt" \
-  --sweep_file "euler/sweep_runs.txt" \
+  --checkpoint "logs/rsl_rl/<run_folder>/model_1499.pt" \
+  --sweep_file "euler/sweep_runs_sweep_sim2real_v1_ablation_10s_timeout.txt" \
   env.debug=True
 ```
+
+If you copy results back from Euler, copy the checkpoint folder and the generated sweep file together.
 
