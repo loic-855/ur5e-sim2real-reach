@@ -114,10 +114,10 @@ Subscribes to a TCP pose topic, constructs a path trace of the end-effector, and
 Publish a TCP path trace:
 
 ```bash
-source ~/wwro_ws/install/local_setup.bash
 python scripts/sim2real/ee_path_from_pose.py \
 	--input-topic /gripper_tcp_pose_broadcaster/pose \
 	--output-topic /ee_path \
 	--max-points 5000 \
 	--min-dt 0.03
 ```
+In RViz, add a `Path` display subscribed to `/ee_path` and set the fixed frame to `world` to see the end-effector path trace.
