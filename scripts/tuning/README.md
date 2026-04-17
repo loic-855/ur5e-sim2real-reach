@@ -76,7 +76,8 @@ python scripts/tuning/plot_sim_gain_tuner_csv.py \
 ## Related Files
 
 - `scripts/sim2real/URscript/` — the URScript controllers loaded by the tuning scripts:
-  - `impedance_control_naive.script` — used by `impedance_tuner.py`
-  - `impedance_control_tuning_zeta.script` — used by `auto_tuner.py`
-  - `impedance_control_tuning.script` — used by `step_tuner.py`
-  - `rtde_input_tuning.xml` / `rtde_input_v2.xml` — RTDE register definitions
+  - `impedance_control_naive.script` — used by `impedance_tuner.py` (position-only, compatible with v1 RTDE recipe)
+  - `impedance_control_tuning_zeta.script` — used by `auto_tuner.py` (fixed per-joint ζ, Kp from RTDE regs)
+  - `impedance_control_tuning.script` — used by `step_tuner.py` (Kp + scalar ζ both from RTDE regs)
+  - `rtde_input.xml` — RTDE recipe used by `impedance_tuner.py`
+  - `rtde_input_tuning.xml` — RTDE recipe used by `auto_tuner.py` and `step_tuner.py` (adds kp, ζ and go_home registers)

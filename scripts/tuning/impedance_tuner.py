@@ -13,7 +13,7 @@ positions/velocities, and exports a CSV using the same schema as
 
 Workflow:
     1. Connect to the robot via RTDE.
-    2. Upload `impedance_control_test.script` by default.
+    2. Upload `impedance_control_naive.script` by default.
     3. Hold the current joint configuration before excitation.
     4. Run the requested excitation for `--duration` seconds at `--rate` Hz.
     5. Hold the centre position after excitation, stop the robot, export CSV.
@@ -38,7 +38,7 @@ import rtde.rtde as rtde
 import rtde.rtde_config as rtde_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RTDE_CONFIG_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "rtde_input_v2.xml")
+RTDE_CONFIG_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "rtde_input.xml")
 URSCRIPT_FILE = str(REPO_ROOT / "scripts" / "sim2real" / "URscript" / "impedance_control_naive.script")
 LOG_DIR = REPO_ROOT / "logs" / "impedance_tuner" / "runs_csv"
 

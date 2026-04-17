@@ -617,7 +617,7 @@ def run_auto_tuner(args: argparse.Namespace):
             print(f"  {JOINT_NAMES[j]:<20s}  {r['kp']:6.0f}  {r['kd']:6.1f}  {r['rms_deg']:6.2f}°  {status}")
         print(f"{'═' * 65}")
         print()
-        print("  Copy-paste for impedance_control_v3.script:")
+        print("  Copy-paste for impedance_control_ff.script:")
         print(f"    kp = {[best_kp[i] for i in range(6)]}")
         kd_final = best_kd.round(1).tolist()
         print(f"    kd = {kd_final}")

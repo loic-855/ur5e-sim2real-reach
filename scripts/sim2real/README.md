@@ -133,10 +133,18 @@ See `scripts/tuning/README.md` for the full 3-step tuning workflow.
 
 The URScript controllers loaded by those tools are still stored here under `URscript/`:
 
-- `URscript/impedance_control_naive.script`
-- `URscript/impedance_control_tuning.script`
-- `URscript/impedance_control_tuning_zeta.script`
-- `URscript/rtde_input_v1.xml` / `rtde_input_v2.xml` / `rtde_input_tuning.xml`
+**Deployment controllers**
+- `URscript/impedance_control_naive.script` — v1 (position-only), fixed gains
+- `URscript/impedance_control_tuned.script` — v1 (position-only), experimentally tuned gains
+- `URscript/impedance_control_ff.script` — v2 (velocity feedforward), naive gains
+
+**Tuning controllers** (loaded by `scripts/tuning/`)
+- `URscript/impedance_control_tuning.script` — step-response sweeps (`step_tuner.py`)
+- `URscript/impedance_control_tuning_zeta.script` — Kp stiffness sweeps (`auto_tuner.py`)
+
+**RTDE recipes**
+- `URscript/rtde_input.xml` — used by all deployment nodes and `impedance_tuner.py`
+- `URscript/rtde_input_tuning.xml` — extends `rtde_input.xml` with kp, ζ and go_home registers; used by `auto_tuner.py` and `step_tuner.py`
 
 ## OnRobot 2FG7 Gripper Services
 
