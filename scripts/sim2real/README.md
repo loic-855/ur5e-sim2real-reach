@@ -1,205 +1,197 @@
-# Sim2Real Policy Deployment for UR5e
+# Sim2Real Scripts
 
-Ce dossier contient les scripts pour déployer une politique entraînée en simulation (IsaacSim) sur le robot réel via ROS2.
+This folder contains the real-robot deployment, robot bring-up helpers, URScript files, and impedance-tuning utilities.
 
-## 📁 Structure des fichiers
+## Folder Layout
 
-```
-scripts/sim2real/
-├── observation_builder.py   # Construction et normalisation des observations
-├── policy_inference.py      # Chargement et inférence TorchScript
-├── sim2real_node.py        # Nœud ROS2 principal
-├── goal_publisher.py       # Publieur de pose cible pour tests
-├── launch_sim2real.bash    # Script de lancement
-└── README.md               # Ce fichier
-```
+- `v1/`: position-only deployment path.
+- `v2/`: velocity-feedforward deployment path.
+- `URscript/`: robot-side controllers and RTDE recipe files.
+- `goal_publisher.py`: publish goals for manual testing and benchmark playback.
+- `ee_path_from_pose.py`: publish a TCP path for RViz.
+- `send_urscript.py`: legacy TCP socket helper to send URScript payloads manually (useful as an RTDE workflow reference).
 
-## 🔧 Prérequis
+## End-to-End Flow
 
-1. **ROS2 Humble** installé
-2. **Workspace ROS2** configuré (`~/wwro_ws`)
-3. **Politique entraînée** exportée en TorchScript (`.pt`)
-4. **PyTorch** installé
+1. Train in simulation.
+2. Validate the checkpoint with `scripts/rsl_rl/play.py` or `scripts/rsl_rl/benchmark.py`.
+3. Export `policy.pt` through `play.py`.
+4. Start the robot driver and external control.
+5. Run the matching sim2real node.
 
-## 🚀 Utilisation rapide
+## v1 vs v2
 
-### 1. Lancer les contrôleurs du robot
+### v1
 
-```bash
-# Dans un terminal, lancer le driver UR avec les contrôleurs
-source ~/wwro_ws/install/local_setup.bash
-ros2 launch ur_robot_driver ur_control.launch.py ...
-```
+- Observation size: 24.
+- Action size: 6.
+- Meaning: position increments only.
+- Node: `scripts/sim2real/v1/sim2real_node.py`.
+- Policy loader: `scripts/sim2real/v1/policy_inference.py`.
 
-### 2. Lancer le nœud sim2real
+### v2
 
-```bash
-cd /home/robots/Woodworking_Simulation/scripts/sim2real
-chmod +x launch_sim2real.bash
-./launch_sim2real.bash --robot gripper
-```
+- Observation size: 24.
+- Action size: 12.
+- Meaning: first 6 outputs are position increments, last 6 outputs are velocity feedforward targets.
+- Node: `scripts/sim2real/v2/sim2real_node.py`.
+- Policy loader: `scripts/sim2real/v2/policy_inference.py`.
 
-### 3. Publier une pose cible
+Do not mix v1 and v2 artifacts. The action interface is part of the policy contract.
 
-```bash
-# Dans un autre terminal
-source ~/wwro_ws/install/local_setup.bash
-cd /home/robots/Woodworking_Simulation/scripts/sim2real
+## Real-Robot Control Rates
 
-# Mode statique
-python3 goal_publisher.py --x 0.3 --y 0.0 --z 0.4
+The current deployment code uses:
 
-# Mode interactif
-python3 goal_publisher.py --interactive
+- RTDE reader thread at 125 Hz
+- policy loop at 60 Hz
+- URScript impedance controller at 500 Hz
 
-# Vue d'ensemble RViz de tous les goals d'un fichier
-python3 goal_publisher.py --goals-file ../benchmark_settings/goals_handmade.json --goal-overview
-```
+## Driver Bring-Up
 
-En mode `--goal-overview`, le script ne publie pas de cible active sur `/goal_pose`.
-Il publie uniquement un `MarkerArray` RViz persistant sur `/visualization_marker_array`, avec un repère et un label pour chaque entrée du fichier JSON.
+Current documented network setup:
 
-### 4. Afficher les goals dans RViz
+- ROS2 workstation: `192.168.1.105`
+- gripper robot: `192.168.1.101`
+- screwdriver robot: `192.168.1.103`
+- OnRobot gripper: `192.168.1.111`
+
+Open the driver ports:
 
 ```bash
-ros2 run rviz2 rviz2
+sudo ufw allow from 192.168.1.0/24 to any port 50001:50008 proto tcp
 ```
 
-Dans RViz:
-
-1. Régler `Fixed Frame` sur `table`
-2. Pour le mode standard, ajouter un affichage `Marker` sur `/visualization_marker`
-3. Pour `--goal-overview`, ajouter un affichage `MarkerArray` sur `/visualization_marker_array`
-
-Le mode standard affiche le goal actif.
-Le mode `--goal-overview` affiche tous les goals du fichier simultanément, de manière persistante.
-
-### 5. Afficher la trajectoire TCP complète (trace)
-
-Si un topic de pose TCP est deja disponible (par ex.
-`/gripper_tcp_pose_broadcaster/pose` en `geometry_msgs/PoseStamped`), vous
-pouvez publier une trajectoire cumulative en `nav_msgs/Path` pour RViz :
+Start the ROS2 workspace:
 
 ```bash
-source ~/wwro_ws/install/local_setup.bash
-cd /home/robots/Woodworking_Simulation/scripts/sim2real
-
-python3 ee_path_from_pose.py \
-    --input-topic /gripper_tcp_pose_broadcaster/pose \
-    --output-topic /ee_path \
-    --max-points 5000 \
-    --min-dt 0.03
+cd /home/robots/wwro_ws
+source install/local_setup.bash
 ```
 
-Dans RViz:
-
-1. Régler `Fixed Frame` sur `gripper_base` (ou une frame monde stable)
-2. Ajouter un affichage `Path` sur `/ee_path`
-3. Garder la trace visible pour comparer convergence stable vs oscillations
-
-Option reset manuel de la trace:
+Launch the robot control stack:
 
 ```bash
-ros2 service call /ee_path/clear std_srvs/srv/Empty {}
+ros2 launch wwro_startup wwro_control.launch.py \
+	gripper_robot_ip:=192.168.1.101 \
+	screwdriver_robot_ip:=192.168.1.103 \
+	headless_mode:=false
 ```
 
-## 📊 Architecture des observations
+Mock hardware:
 
-Le vecteur d'observation (19 dimensions) est construit exactement comme dans IsaacSim :
-
-| Index | Composant | Dimension | Normalisation |
-|-------|-----------|-----------|---------------|
-| 0-2 | `pos_error` | 3 | `(goal - ee) / 0.85` |
-| 3-6 | `quat_error` | 4 | `goal_quat * ee_quat⁻¹` |
-| 7-12 | `joint_pos` | 6 | `2*(pos-lower)/(upper-lower) - 1` |
-| 13-18 | `joint_vel` | 6 | `vel / 3.14` |
-
-### Constantes de normalisation
-
-```python
-MAX_REACH = 0.85      # Portée UR5e ~850mm
-MAX_JOINT_VEL = 3.14  # ~180°/s
-
-# Limites articulaires (elbow contraint par câble!)
-JOINT_LIMITS = {
-    "shoulder_pan":  (-2π, 2π),
-    "shoulder_lift": (-2π, 2π),
-    "elbow":         (-π, π),    # ⚠️ Contrainte câble!
-    "wrist_1":       (-2π, 2π),
-    "wrist_2":       (-2π, 2π),
-    "wrist_3":       (-2π, 2π),
-}
+```bash
+ros2 launch wwro_startup wwro_control.launch.py use_mock_hardware:=true
 ```
 
-## ⚙️ Topics ROS2 utilisés
+On each teach pendant:
 
-### Souscriptions
+1. Switch to remote mode.
+2. Load the External Control program.
+3. Press play.
 
-| Topic | Type | Description |
-|-------|------|-------------|
-| `/joint_states` | `sensor_msgs/JointState` | Positions et vitesses articulaires |
-| `/goal_pose` | `geometry_msgs/PoseStamped` | Pose cible de l'effecteur |
+Verify the connections:
 
-### TF Frames
-
-| Frame | Description |
-|-------|-------------|
-| `table` | Base de l'environnement |
-| `gripper_wrist_3_link` | Effecteur terminal |
-
-### Actions
-
-| Action | Type | Description |
-|--------|------|-------------|
-| `/gripper_scaled_joint_trajectory_controller/follow_joint_trajectory` | `control_msgs/FollowJointTrajectory` | Commande trajectoire |
-
-## 🎯 Paramètres de la politique
-
-Les actions sont des deltas de position articulaire, scalés comme suit :
-
-```python
-ACTION_SCALE = 7.5
-DOF_VELOCITY_SCALE = 0.1
-dt = 1/60  # 60Hz
-
-# Calcul des nouvelles cibles
-inc = dt * DOF_VELOCITY_SCALE * ACTION_SCALE * actions
-targets = clamp(targets + inc, lower, upper)
+```bash
+ss -tnp | grep "5000[1-8]"
+ros2 service call /gripper_dashboard_client/program_state ur_dashboard_msgs/srv/GetProgramState
+ros2 service call /screwdriver_dashboard_client/program_state ur_dashboard_msgs/srv/GetProgramState
+ros2 topic echo /gripper_io_and_status_controller/robot_program_running --qos-reliability reliable --qos-durability transient_local --once
 ```
 
-## 🔍 Déboggage
+## Running the Deployment Nodes
 
-### Vérifier les topics
+Position-only policy:
+
+```bash
+python scripts/sim2real/v1/sim2real_node.py --model /path/to/exported/policy.pt
+```
+
+Velocity-feedforward policy:
+
+```bash
+python scripts/sim2real/v2/sim2real_node.py --model /path/to/exported/policy.pt
+```
+
+## Goal and RViz Utilities
+
+Publish a goal:
 
 ```bash
 source ~/wwro_ws/install/local_setup.bash
-
-# Liste des topics
-ros2 topic list
-
-# Écouter les joint states
-ros2 topic echo /joint_states
-
-# Vérifier les TF
-ros2 run tf2_tools view_frames
+python scripts/sim2real/goal_publisher.py --x 0.3 --y 0.0 --z 0.4
 ```
 
-### Tester la politique en isolation
+Show a benchmark goal set in RViz:
 
 ```bash
-cd /home/robots/Woodworking_Simulation/scripts/sim2real
-python3 policy_inference.py --model ../../pretrained_models/exported/policy.pt
+source ~/wwro_ws/install/local_setup.bash
+python scripts/sim2real/goal_publisher.py \
+	--goals-file scripts/benchmark_settings/goals_handmade.json \
+	--goal-overview
 ```
 
-## ⚠️ Sécurité
+Publish a TCP path trace:
 
-1. **Toujours** avoir le bouton d'arrêt d'urgence à portée
-2. Commencer avec des gains faibles et augmenter progressivement
-3. Vérifier les limites articulaires avant déploiement
-4. Tester d'abord en mode simulation ou avec le robot en position sûre
+```bash
+source ~/wwro_ws/install/local_setup.bash
+python scripts/sim2real/ee_path_from_pose.py \
+	--input-topic /gripper_tcp_pose_broadcaster/pose \
+	--output-topic /ee_path \
+	--max-points 5000 \
+	--min-dt 0.03
+```
 
-## 📝 Notes
+## Impedance Tuning
 
-- La politique attend des observations normalisées exactement comme en simulation
-- La frame de référence pour la pose cible est `gripper_base_link`
-- Le contrôleur `scaled_joint_trajectory_controller` respecte les limites de vitesse du robot
+The tuning scripts and the simulation gain logger have been consolidated under `scripts/tuning/`.
+See `scripts/tuning/README.md` for the full 3-step tuning workflow.
+
+The URScript controllers loaded by those tools are still stored here under `URscript/`:
+
+- `URscript/impedance_control_naive.script`
+- `URscript/impedance_control_tuning.script`
+- `URscript/impedance_control_tuning_zeta.script`
+- `URscript/rtde_input_v1.xml` / `rtde_input_v2.xml` / `rtde_input_tuning.xml`
+
+## OnRobot 2FG7 Gripper Services
+
+The gripper is controlled through ROS2 services rather than as ordinary ROS2 joints.
+
+Main services:
+
+- `/on_twofg7_grip_external`
+- `/on_twofg7_grip_internal`
+- `/on_twofg7_release_external`
+- `/on_twofg7_release_internal`
+
+Service type:
+
+- `wwro_msgs/srv/OnTwofg7`
+
+Close the gripper:
+
+```bash
+ros2 service call /on_twofg7_grip_external wwro_msgs/srv/OnTwofg7 "{gripper_operation: {tool_index: 0, width_mm: 10.0, force_n: 20, speed: 50}}"
+```
+
+Open the gripper:
+
+```bash
+ros2 service call /on_twofg7_release_external wwro_msgs/srv/OnTwofg7 "{gripper_operation: {tool_index: 0, width_mm: 40.0, force_n: 0, speed: 50}}"
+```
+
+## Troubleshooting
+
+If the robot does not move:
+
+1. re-check the firewall
+2. re-check the TCP connections
+3. confirm `program_state` is `PLAYING`
+4. confirm `robot_program_running` is `true`
+
+If External Control does not start:
+
+1. confirm remote mode on the robot
+2. confirm the workstation IP in the URCap configuration
+3. confirm the configured port

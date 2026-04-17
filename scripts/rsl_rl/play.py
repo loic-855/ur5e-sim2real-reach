@@ -35,7 +35,6 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
-parser.add_argument("--log-obs", action="store_true", default=False, help="Log observations and actions to binary file.")
 parser.add_argument(
     "--sweep_file",
     type=str,
@@ -131,9 +130,6 @@ from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_po
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from scripts.utils.obs_logger import ObsLogger
 
 import Woodworking_Simulation.tasks  # noqa: F401
 
@@ -239,14 +235,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
-    # Initialize logger if requested
-    logger = None
-    if args_cli.log_obs:
-        obs_size = env.unwrapped.observation_space.shape[1]
-        action_size = env.unwrapped.action_space.shape[1]
-        logger = ObsLogger(obs_size=obs_size, action_size=action_size)
-        print(f"[INFO] Logging observations ({obs_size}D) and actions ({action_size}D) to logs/obs/")
-
     # reset environment
     obs = env.get_observations()
     timestep = 0
@@ -259,21 +247,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 actions = policy(obs)
                 # env stepping
                 obs, _, _, _ = env.step(actions)
-            
-            # Log observations and actions if enabled
-            if logger is not None:
-                # obs can be a tensor (num_envs, obs_dim) or dict {"policy": tensor}
-                # Extract tensor and get first env's data
-                if isinstance(obs, dict):
-                    obs_tensor = obs.get("policy", obs.get("obs", list(obs.values())[0]))
-                else:
-                    obs_tensor = obs
-                obs_np = obs_tensor[0].cpu().numpy()
-                obs_np = obs_np.get('policy', list(obs.values())[0])
-                action_np = actions[0].cpu().numpy()
-
-                
-                logger.push(obs_np, action_np)
             if args_cli.video:
                 timestep += 1
                 # Exit the play loop after recording one video
@@ -285,10 +258,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             if args_cli.real_time and sleep_time > 0:
                 time.sleep(sleep_time)
 
-    # Close logger if it was created
-    if logger is not None:
-        logger.close()
-        print(f"[INFO] Observation log saved to logs/obs/")
 
     # close the simulator
     env.close()
