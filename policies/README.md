@@ -8,3 +8,7 @@ This folder contains the trained policies presented in the thesis. The policies 
 - **dual robot**: Policies designed for dual robot coordination
 
 Select the appropriate policy based on your setup and framework version.
+
+# Training files
+
+The `*.tfevents` files are TensorFlow event files that contain the training logs and can be visualized using TensorBoard for insights into the training process.
