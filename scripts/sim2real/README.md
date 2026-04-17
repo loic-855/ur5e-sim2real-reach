@@ -8,14 +8,13 @@ This folder contains the real-robot deployment, robot bring-up helpers, URScript
 - `v2/`: velocity-feedforward deployment path.
 - `URscript/`: robot-side controllers and RTDE recipe files.
 - `goal_publisher.py`: publish goals for manual testing and benchmark playback.
-- `ee_path_from_pose.py`: publish a TCP path for RViz.
 - `send_urscript.py`: legacy TCP socket helper to send URScript payloads manually (useful as an RTDE workflow reference).
 
 ## End-to-End Flow
 
 1. Train in simulation.
 2. Validate the checkpoint with `scripts/rsl_rl/play.py` or `scripts/rsl_rl/benchmark.py`.
-3. Export `policy.pt` through `play.py`.
+3. Export `policy.pt` through `play.py` or `benchmark.py`.
 4. Start the robot driver and external control.
 5. Run the matching sim2real node.
 
@@ -70,19 +69,14 @@ source install/local_setup.bash
 ```
 
 Launch the robot control stack:
-
+Need to test with the latest driver
 ```bash
 ros2 launch wwro_startup wwro_control.launch.py \
 	gripper_robot_ip:=192.168.1.101 \
 	screwdriver_robot_ip:=192.168.1.103 \
-	headless_mode:=false
+	headless_mode:=false (check if useful)
 ```
 
-Mock hardware:
-
-```bash
-ros2 launch wwro_startup wwro_control.launch.py use_mock_hardware:=true
-```
 
 On each teach pendant:
 
@@ -131,16 +125,6 @@ python scripts/sim2real/goal_publisher.py \
 	--goal-overview
 ```
 
-Publish a TCP path trace:
-
-```bash
-source ~/wwro_ws/install/local_setup.bash
-python scripts/sim2real/ee_path_from_pose.py \
-	--input-topic /gripper_tcp_pose_broadcaster/pose \
-	--output-topic /ee_path \
-	--max-points 5000 \
-	--min-dt 0.03
-```
 
 ## Impedance Tuning
 
@@ -185,13 +169,7 @@ ros2 service call /on_twofg7_release_external wwro_msgs/srv/OnTwofg7 "{gripper_o
 
 If the robot does not move:
 
-1. re-check the firewall
-2. re-check the TCP connections
-3. confirm `program_state` is `PLAYING`
-4. confirm `robot_program_running` is `true`
-
-If External Control does not start:
-
-1. confirm remote mode on the robot
-2. confirm the workstation IP in the URCap configuration
-3. confirm the configured port
+1. re-check the firewall, might need to open ports
+2. check the ethernet  connection
+3. check the installation of the ROS2 driver and the workspace setup
+4. check the robot is in remote mode

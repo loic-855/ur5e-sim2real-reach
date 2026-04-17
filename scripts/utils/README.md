@@ -6,6 +6,7 @@ This directory contains analysis and helper scripts used across simulation and r
 
 - `plot_DR_study.py`: compare benchmark YAML results across model checkpoints and impedance gain configurations.
 - `gripper_action.py`: drives the gripper joint in simulation with a bi-directional ramp for articulation testing.
+- `ee_path_from_pose.py`: publish a TCP path for RViz, used for plotting the end-effector path.
 
 ## `plot_DR_study.py`
 
@@ -104,3 +105,19 @@ python scripts/utils/gripper_action.py \
 
 The gripper ramps from −1 to +1 and back continuously until the simulation window is closed.
 Adjust `step_size` inside the script to change the ramp speed.
+
+## `ee_path_from_pose.py`
+Subscribes to a TCP pose topic, constructs a path trace of the end-effector, and republishes it as a `nav_msgs/Path` for RViz visualization.
+
+### Usage
+
+Publish a TCP path trace:
+
+```bash
+source ~/wwro_ws/install/local_setup.bash
+python scripts/sim2real/ee_path_from_pose.py \
+	--input-topic /gripper_tcp_pose_broadcaster/pose \
+	--output-topic /ee_path \
+	--max-points 5000 \
+	--min-dt 0.03
+```
