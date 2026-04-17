@@ -1,0 +1,372 @@
+metadata:
+  model_path: "/home/lrenevey/Woodworking_Simulation/test_models/2026-03-30_14-58-54_rand-actuator_plus_delay_1_2_10s-Timeout/exported/policy.pt"
+  run_name: "rand-actuator_plus_delay_1_2_10s-Timeout"
+  robot: "gripper"
+  robot_gain: "tuned"
+  rate_hz: 60.0
+  action_scale: 0.3
+  goals_file: "scripts/benchmark_settings/goals_handmade.json"
+  goal_count: 7
+  goal_timeout_s: 10.0
+  num_takes: 3
+  goal_convention: "x y z qw qx qy qz"
+  thresholds:
+    area:
+      pos_m: 0.08
+    tight:
+      pos_m: 0.005
+      dwell_samples: 10
+    small_orientation:
+      rot_rad: 0.2
+      dwell_samples: 10
+summary:
+  episodes_completed: 3
+  goal_count: 21
+  total_goals_executed: 21
+  mean_time_to_area_s: 3.233476264136178
+  mean_pos_err_area_m: 0.021967109673852448
+  mean_rot_err_area_rad: 0.5434675252839002
+  goals_reached_area: 21
+  goals_reached_tight: 9
+  goals_reached_small_rot: 6
+  mean_min_pos_err_m: 0.0057813980910439225
+  mean_min_rot_err_rad: 0.29659118964558556
+episodes:
+  -
+    episode_index: 0
+    goal_count: 7
+    goals:
+      -
+        goal_index: 0
+        time_to_area_s: 7.789360523223877
+        samples_total: 600
+        samples_area: 133
+        reached_area: true
+        min_pos_err_m: 0.011469855904579163
+        min_rot_err_rad: 0.16814939677715302
+        samples_tight: 0
+        samples_small_rot: 35
+        mean_pos_err_area_m: 0.038032298347443566
+        mean_rot_err_area_rad: 0.23705897272977614
+        reached_tight: false
+        reached_small_rot: true
+      -
+        goal_index: 1
+        time_to_area_s: 0.006027698516845703
+        samples_total: 600
+        samples_area: 428
+        reached_area: true
+        min_pos_err_m: 0.0009984696516767144
+        min_rot_err_rad: 0.13980986177921295
+        samples_tight: 267
+        samples_small_rot: 22
+        mean_pos_err_area_m: 0.010038881416587054
+        mean_rot_err_area_rad: 0.43060874152127826
+        reached_tight: true
+        reached_small_rot: true
+      -
+        goal_index: 2
+        time_to_area_s: 0.006005048751831055
+        samples_total: 600
+        samples_area: 399
+        reached_area: true
+        min_pos_err_m: 0.0036262553185224533
+        min_rot_err_rad: 0.21740953624248505
+        samples_tight: 32
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.0197061722541466
+        mean_rot_err_area_rad: 0.4112617023531954
+        reached_tight: true
+        reached_small_rot: false
+      -
+        goal_index: 3
+        time_to_area_s: 0.006101846694946289
+        samples_total: 600
+        samples_area: 457
+        reached_area: true
+        min_pos_err_m: 0.005782471038401127
+        min_rot_err_rad: 0.22179317474365234
+        samples_tight: 0
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.0179211094127703
+        mean_rot_err_area_rad: 0.7260396065153752
+        reached_tight: false
+        reached_small_rot: false
+      -
+        goal_index: 4
+        time_to_area_s: 0.005970001220703125
+        samples_total: 600
+        samples_area: 328
+        reached_area: true
+        min_pos_err_m: 0.005073187872767448
+        min_rot_err_rad: 0.21790404617786407
+        samples_tight: 0
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.023226262083015883
+        mean_rot_err_area_rad: 0.6977777972181396
+        reached_tight: false
+        reached_small_rot: false
+      -
+        goal_index: 5
+        time_to_area_s: 0.006037712097167969
+        samples_total: 600
+        samples_area: 382
+        reached_area: true
+        min_pos_err_m: 0.0013224572176113725
+        min_rot_err_rad: 0.5252879858016968
+        samples_tight: 134
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.014208749477892958
+        mean_rot_err_area_rad: 0.7214195714259023
+        reached_tight: true
+        reached_small_rot: false
+      -
+        goal_index: 6
+        time_to_area_s: 0.006000041961669922
+        samples_total: 601
+        samples_area: 273
+        reached_area: true
+        min_pos_err_m: 0.0025801993906497955
+        min_rot_err_rad: 0.29589730501174927
+        samples_tight: 5
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.03077129052351519
+        mean_rot_err_area_rad: 0.5801734855541816
+        reached_tight: false
+        reached_small_rot: false
+    goals_reached_area: 7
+    goals_reached_tight: 3
+    goals_reached_small_rot: 2
+    mean_time_to_area_s: 1.1179289817810059
+    mean_pos_err_area_m: 0.021986394787910223
+    mean_rot_err_area_rad: 0.5434771253311212
+    mean_min_pos_err_m: 0.00440755662774401
+    mean_min_rot_err_rad: 0.25517875807625906
+  -
+    episode_index: 1
+    goal_count: 7
+    goals:
+      -
+        goal_index: 0
+        time_to_area_s: 7.786581516265869
+        samples_total: 600
+        samples_area: 133
+        reached_area: true
+        min_pos_err_m: 0.011772999539971352
+        min_rot_err_rad: 0.16751275956630707
+        samples_tight: 0
+        samples_small_rot: 35
+        mean_pos_err_area_m: 0.03769261018141992
+        mean_rot_err_area_rad: 0.23606306280856743
+        reached_tight: false
+        reached_small_rot: true
+      -
+        goal_index: 1
+        time_to_area_s: 2.8699655532836914
+        samples_total: 600
+        samples_area: 428
+        reached_area: true
+        min_pos_err_m: 0.0009111850522458553
+        min_rot_err_rad: 0.1418641209602356
+        samples_tight: 268
+        samples_small_rot: 18
+        mean_pos_err_area_m: 0.009856861492833253
+        mean_rot_err_area_rad: 0.4310621571178748
+        reached_tight: true
+        reached_small_rot: true
+      -
+        goal_index: 2
+        time_to_area_s: 3.3533129692077637
+        samples_total: 600
+        samples_area: 399
+        reached_area: true
+        min_pos_err_m: 0.004800796043127775
+        min_rot_err_rad: 0.27168217301368713
+        samples_tight: 23
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.019749083146592954
+        mean_rot_err_area_rad: 0.41206769813272287
+        reached_tight: true
+        reached_small_rot: false
+      -
+        goal_index: 3
+        time_to_area_s: 2.3866477012634277
+        samples_total: 600
+        samples_area: 457
+        reached_area: true
+        min_pos_err_m: 0.009260020218789577
+        min_rot_err_rad: 0.21732288599014282
+        samples_tight: 0
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.01814629240837804
+        mean_rot_err_area_rad: 0.7252852391101078
+        reached_tight: false
+        reached_small_rot: false
+      -
+        goal_index: 4
+        time_to_area_s: 4.553268909454346
+        samples_total: 600
+        samples_area: 327
+        reached_area: true
+        min_pos_err_m: 0.0051128556951880455
+        min_rot_err_rad: 0.5254839062690735
+        samples_tight: 0
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.023014225987062452
+        mean_rot_err_area_rad: 0.7012145174752682
+        reached_tight: false
+        reached_small_rot: false
+      -
+        goal_index: 5
+        time_to_area_s: 3.636647939682007
+        samples_total: 600
+        samples_area: 382
+        reached_area: true
+        min_pos_err_m: 0.0010971295414492488
+        min_rot_err_rad: 0.6055566072463989
+        samples_tight: 142
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.014126430991220322
+        mean_rot_err_area_rad: 0.7222384392278981
+        reached_tight: true
+        reached_small_rot: false
+      -
+        goal_index: 6
+        time_to_area_s: 5.470007658004761
+        samples_total: 601
+        samples_area: 273
+        reached_area: true
+        min_pos_err_m: 0.01213512197136879
+        min_rot_err_rad: 0.2908444404602051
+        samples_tight: 0
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.031026698307785795
+        mean_rot_err_area_rad: 0.5745885275004111
+        reached_tight: false
+        reached_small_rot: false
+    goals_reached_area: 7
+    goals_reached_tight: 3
+    goals_reached_small_rot: 2
+    mean_time_to_area_s: 4.293776035308838
+    mean_pos_err_area_m: 0.02194460035932753
+    mean_rot_err_area_rad: 0.5432170916246929
+    mean_min_pos_err_m: 0.006441444008877235
+    mean_min_rot_err_rad: 0.3171809847865786
+  -
+    episode_index: 2
+    goal_count: 7
+    goals:
+      -
+        goal_index: 0
+        time_to_area_s: 7.786348819732666
+        samples_total: 600
+        samples_area: 133
+        reached_area: true
+        min_pos_err_m: 0.01172700710594654
+        min_rot_err_rad: 0.16745266318321228
+        samples_tight: 0
+        samples_small_rot: 36
+        mean_pos_err_area_m: 0.03769411973627214
+        mean_rot_err_area_rad: 0.23615917148894833
+        reached_tight: false
+        reached_small_rot: true
+      -
+        goal_index: 1
+        time_to_area_s: 2.869630813598633
+        samples_total: 600
+        samples_area: 428
+        reached_area: true
+        min_pos_err_m: 0.000783135590609163
+        min_rot_err_rad: 0.14192421734333038
+        samples_tight: 270
+        samples_small_rot: 18
+        mean_pos_err_area_m: 0.009799927757170583
+        mean_rot_err_area_rad: 0.43101655253183063
+        reached_tight: true
+        reached_small_rot: true
+      -
+        goal_index: 2
+        time_to_area_s: 3.352992296218872
+        samples_total: 600
+        samples_area: 399
+        reached_area: true
+        min_pos_err_m: 0.004735518246889114
+        min_rot_err_rad: 0.27209559082984924
+        samples_tight: 33
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.019787319031378307
+        mean_rot_err_area_rad: 0.41212530938306247
+        reached_tight: true
+        reached_small_rot: false
+      -
+        goal_index: 3
+        time_to_area_s: 2.3863608837127686
+        samples_total: 600
+        samples_area: 457
+        reached_area: true
+        min_pos_err_m: 0.009261474013328552
+        min_rot_err_rad: 0.21882140636444092
+        samples_tight: 0
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.018184449456436498
+        mean_rot_err_area_rad: 0.7258662728825075
+        reached_tight: false
+        reached_small_rot: false
+      -
+        goal_index: 4
+        time_to_area_s: 4.536344766616821
+        samples_total: 600
+        samples_area: 328
+        reached_area: true
+        min_pos_err_m: 0.005147440824657679
+        min_rot_err_rad: 0.5252254009246826
+        samples_tight: 0
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.02314644472293056
+        mean_rot_err_area_rad: 0.7021814266719469
+        reached_tight: false
+        reached_small_rot: false
+      -
+        goal_index: 5
+        time_to_area_s: 3.6363399028778076
+        samples_total: 600
+        samples_area: 382
+        reached_area: true
+        min_pos_err_m: 0.001513900700956583
+        min_rot_err_rad: 0.6051629185676575
+        samples_tight: 139
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.01420531564889505
+        mean_rot_err_area_rad: 0.7223782731288391
+        reached_tight: true
+        reached_small_rot: false
+      -
+        goal_index: 6
+        time_to_area_s: 5.453048944473267
+        samples_total: 601
+        samples_area: 274
+        reached_area: true
+        min_pos_err_m: 0.012297878973186016
+        min_rot_err_rad: 0.29121458530426025
+        samples_tight: 0
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.030974760767154014
+        mean_rot_err_area_rad: 0.5762315061840698
+        reached_tight: false
+        reached_small_rot: false
+    goals_reached_area: 7
+    goals_reached_tight: 3
+    goals_reached_small_rot: 2
+    mean_time_to_area_s: 4.288723775318691
+    mean_pos_err_area_m: 0.021970333874319594
+    mean_rot_err_area_rad: 0.5437083588958863
+    mean_min_pos_err_m: 0.006495193636510521
+    mean_min_rot_err_rad: 0.31741382607391905
+goals:
+  - "[-0.333,-0.221,0.080,0.009,-0.027,0.999,-0.036]"
+  - "[0.000,0.000,0.300,0.000,0.000,1.000,0.000]"
+  - "[0.160,-0.131,0.127,0.178,-0.397,0.815,-0.382]"
+  - "[0.002,0.009,0.068,0.053,1.000,0.018,-0.025]"
+  - "[-0.539,-0.020,0.358,0.748,0.025,-0.661,-0.055]"
+  - "[0.033,-0.150,0.309,0.397,0.592,-0.422,0.560]"
+  - "[-0.127,0.136,0.082,0.025,-0.163,0.986,0.037]"

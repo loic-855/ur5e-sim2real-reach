@@ -1,0 +1,188 @@
+--- git status ---
+On branch manipulation_task
+Your branch is ahead of 'origin/manipulation_task' by 4 commits.
+  (use "git push" to publish your local commits)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   scripts/list_envs.py
+	modified:   scripts/rsl_rl/play.py
+	modified:   source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/grasping_single_robot/__init__.py
+	modified:   source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_gripper_robot/__init__.py
+	modified:   source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_sim2real/__init__.py
+	modified:   source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/__init__.py
+	modified:   source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/agents/rsl_rl_ppo_cfg.py
+	modified:   source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/pose_orientation_two_robots.py
+
+no changes added to commit (use "git add" and/or "git commit -a") 
+
+
+--- git diff ---
+diff --git a/scripts/list_envs.py b/scripts/list_envs.py
+index 2eda2d9..49cebf8 100644
+--- a/scripts/list_envs.py
++++ b/scripts/list_envs.py
+@@ -45,7 +45,7 @@ def main():
+     index = 0
+     # acquire all Isaac environments names
+     for task_spec in gym.registry.values():
+-        if "Template-" in task_spec.id:
++        if "WWSim-" in task_spec.id:
+             # add details to table
+             table.add_row([index + 1, task_spec.id, task_spec.entry_point, task_spec.kwargs["env_cfg_entry_point"]])
+             # increment count
+diff --git a/scripts/rsl_rl/play.py b/scripts/rsl_rl/play.py
+index 160cdb4..6b97128 100644
+--- a/scripts/rsl_rl/play.py
++++ b/scripts/rsl_rl/play.py
+@@ -51,13 +51,6 @@ args_cli, hydra_args = parser.parse_known_args()
+ if args_cli.video:
+     args_cli.enable_cameras = True
+ 
+-# add hydra override when using specific task
+-# If the selected task is the template grasping direct task, ensure the wooden block
+-# has gravity enabled by appending the appropriate Hydra override to `hydra_args`.
+-if args_cli.task == "Template-Grasping-Single-Robot-Direct-v0" \
+-    or args_cli.task == "Template-Grasping-Single-Robot-Direct-v1":
+-    # append the override as a plain string so Hydra will pick it up from sys.argv
+-    hydra_args.append("env.wooden_block.spawn.rigid_props.disable_gravity=false")
+ 
+ # If a sweep file is provided, parse it and append matching hydra overrides
+ # to the hydra args list based on the checkpoint run name.
+diff --git a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/grasping_single_robot/__init__.py b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/grasping_single_robot/__init__.py
+index e62c9e0..972dec3 100644
+--- a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/grasping_single_robot/__init__.py
++++ b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/grasping_single_robot/__init__.py
+@@ -12,7 +12,7 @@ from . import agents
+ ##
+ 
+ gym.register(
+-    id="Template-Grasping-Single-Robot-Direct-v0",
++    id="WWSim-Grasping-Single-Robot-Direct-v0",
+     entry_point=f"{__name__}.grasping_single_robot:GraspingSingleRobotV0",
+     disable_env_checker=True,
+     kwargs={
+@@ -22,7 +22,7 @@ gym.register(
+ )
+ 
+ gym.register(
+-    id="Template-Grasping-Single-Robot-Direct-v1",
++    id="WWSim-Grasping-Single-Robot-Direct-v1",
+     entry_point=f"{__name__}.grasping_single_robot:GraspingSingleRobotV1",
+     disable_env_checker=True,
+     kwargs={
+diff --git a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_gripper_robot/__init__.py b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_gripper_robot/__init__.py
+index ec36505..8b5066c 100644
+--- a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_gripper_robot/__init__.py
++++ b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_gripper_robot/__init__.py
+@@ -12,7 +12,7 @@ from . import agents
+ ##
+ 
+ gym.register(
+-    id="Template-Pose-Orientation-Gripper-Robot-Direct-v0",
++    id="WWSim-Pose-Orientation-Gripper-Robot-Direct-v0",
+     entry_point=f"{__name__}.pose_orientation_gripper_robot:PoseOrientationGripperRobotV0",
+     disable_env_checker=True,
+     kwargs={
+@@ -20,13 +20,3 @@ gym.register(
+         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_small_cfg:PPORunnerCfg",
+     },
+ )
+-
+-gym.register(
+-    id="Template-Pose-Orientation-Gripper-Robot-Direct-v1",
+-    entry_point=f"{__name__}.pose_orientation_gripper_robot_v1:PoseOrientationGripperRobotV1",
+-    disable_env_checker=True,
+-    kwargs={
+-        "env_cfg_entry_point": f"{__name__}.pose_orientation_gripper_robot_v1:PoseOrientationGripperRobotV1Cfg",
+-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_small_cfg:PPORunnerCfg",
+-    },
+-)
+diff --git a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_sim2real/__init__.py b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_sim2real/__init__.py
+index 399ff9c..6696e92 100644
+--- a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_sim2real/__init__.py
++++ b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_sim2real/__init__.py
+@@ -13,7 +13,7 @@ from . import agents
+ 
+ # V0 – base (no domain randomisation, no contact sensor)
+ gym.register(
+-    id="Template-Pose-Orientation-Sim2Real-Direct-v0",
++    id="WWSim-Pose-Orientation-Sim2Real-Direct-v0",
+     entry_point=f"{__name__}.pose_orientation_sim2real:PoseOrientationSim2RealV0",
+     disable_env_checker=True,
+     kwargs={
+@@ -24,7 +24,7 @@ gym.register(
+ 
+ # V1 – domain randomisation + contact penalty (small PPO network)
+ gym.register(
+-    id="Template-Pose-Orientation-Sim2Real-Direct-v1",
++    id="WWSim-Pose-Orientation-Sim2Real-Direct-v1",
+     entry_point=f"{__name__}.pose_orientation_sim2real:PoseOrientationSim2RealV1",
+     disable_env_checker=True,
+     kwargs={
+@@ -35,7 +35,7 @@ gym.register(
+ 
+ # V1-ext – same env as V1 but with extended (larger) PPO network
+ gym.register(
+-    id="Template-Pose-Orientation-Sim2Real-Direct-v1-ext",
++    id="WWSim-Pose-Orientation-Sim2Real-Direct-v1-ext",
+     entry_point=f"{__name__}.pose_orientation_sim2real:PoseOrientationSim2RealV1",
+     disable_env_checker=True,
+     kwargs={
+diff --git a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/__init__.py b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/__init__.py
+index 9b88db5..abda46e 100644
+--- a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/__init__.py
++++ b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/__init__.py
+@@ -12,7 +12,7 @@ from . import agents
+ ##
+ 
+ gym.register(
+-    id="Template-Pose-Orientation-Two-Robots-Direct-v0",
++    id="WWSim-Pose-Orientation-Two-Robots-v0",
+     entry_point=f"{__name__}.pose_orientation_two_robots:PoseOrientationTwoRobotsV0",
+     disable_env_checker=True,
+     kwargs={
+diff --git a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/agents/rsl_rl_ppo_cfg.py b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/agents/rsl_rl_ppo_cfg.py
+index fa51b42..53f454f 100644
+--- a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/agents/rsl_rl_ppo_cfg.py
++++ b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/agents/rsl_rl_ppo_cfg.py
+@@ -13,7 +13,7 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
+     num_steps_per_env = 24 # Increased from 16 to allow longer horizon per rollout
+     max_iterations = 1500
+     save_interval = 50
+-    experiment_name = "woodworking_pose_orientation_ppo"
++    experiment_name = "pose_orientation_two_robots"
+     policy = RslRlPpoActorCriticCfg(
+         init_noise_std=1.0,
+         actor_obs_normalization=True,
+diff --git a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/pose_orientation_two_robots.py b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/pose_orientation_two_robots.py
+index 9367fdc..bb1e92e 100644
+--- a/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/pose_orientation_two_robots.py
++++ b/source/Woodworking_Simulation/Woodworking_Simulation/tasks/direct/pose_orientation_two_robots/pose_orientation_two_robots.py
+@@ -12,7 +12,7 @@ from isaaclab.assets import Articulation, ArticulationCfg
+ from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
+ from isaaclab.scene import InteractiveSceneCfg
+ from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
+-from isaaclab.sim import SimulationCfg
++from isaaclab.sim import SimulationCfg, PhysxCfg
+ from isaaclab.terrains import TerrainImporterCfg
+ from isaaclab.utils import configclass
+ from isaaclab.markers import VisualizationMarkers, VisualizationMarkersCfg
+@@ -79,11 +79,14 @@ class PoseOrientationTwoRobotsCfg(DirectRLEnvCfg):
+     state_space = 0
+ 
+     # simulation
+-    sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
++    sim: SimulationCfg = SimulationCfg(
++        dt=1 / 120, render_interval=decimation,
++        physx=PhysxCfg(solver_type=1, enable_external_forces_every_iteration=True),
++        )
+ 
+     # scene
+     scene: InteractiveSceneCfg = InteractiveSceneCfg(
+-        num_envs=1024, env_spacing=3.0, replicate_physics=True
++        num_envs=4096, env_spacing=3.0, replicate_physics=True
+     )
+     # robots
+     gripper_robot = ArticulationCfg(

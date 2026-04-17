@@ -1,0 +1,149 @@
+metadata:
+  task: "WWSim-Pose-Orientation-Sim2Real-Direct-v1"
+  checkpoint: "/home/lrenevey/Woodworking_Simulation/test_models/2026-03-30_14-58-53_rand-all_enabled_no_COM_delay_1_2_10s-Timeout/model_1499.pt"
+  run_name: "rand-all_enabled_no_COM_delay_1_2_10s-Timeout"
+  log_dir: "/home/lrenevey/Woodworking_Simulation/test_models/2026-03-30_14-58-53_rand-all_enabled_no_COM_delay_1_2_10s-Timeout"
+  seed: null
+  goal_count: 7
+  goal_timeout_s: 10.0
+  goal_convention: "x y z qw qx qy qz"
+  thresholds:
+    area:
+      pos_m: 0.08
+    tight:
+      pos_m: 0.005
+      dwell_samples: 10
+    small_orientation:
+      rot_rad: 0.2
+      dwell_samples: 10
+summary:
+  episodes_completed: 1
+  goal_count: 7
+  total_goals_executed: 7
+  mean_time_to_area_s: 1.3023809523809524
+  mean_pos_err_area_m: 0.02207956630089156
+  mean_rot_err_area_rad: 0.5482500441410189
+  goals_reached_area: 7
+  goals_reached_tight: 3
+  goals_reached_small_rot: 2
+  mean_min_pos_err_m: 0.016294008686340282
+  mean_min_rot_err_rad: 0.4092516962971006
+episodes:
+  -
+    episode_index: 0
+    goal_count: 7
+    goals:
+      -
+        goal_index: 0
+        time_to_area_s: 2.716666666666667
+        samples_total: 600
+        samples_area: 437
+        reached_area: true
+        min_pos_err_m: 0.05984194204211235
+        min_rot_err_rad: 0.15040428936481476
+        samples_tight: 0
+        samples_small_rot: 467
+        mean_pos_err_area_m: 0.06165284905540043
+        mean_rot_err_area_rad: 0.1689154833077839
+        reached_tight: false
+        reached_small_rot: true
+      -
+        goal_index: 1
+        time_to_area_s: 0.6166666666666667
+        samples_total: 600
+        samples_area: 563
+        reached_area: true
+        min_pos_err_m: 0.008267601951956749
+        min_rot_err_rad: 0.13120213150978088
+        samples_tight: 0
+        samples_small_rot: 48
+        mean_pos_err_area_m: 0.016759751812880776
+        mean_rot_err_area_rad: 0.4131968673550214
+        reached_tight: false
+        reached_small_rot: true
+      -
+        goal_index: 2
+        time_to_area_s: 0.9166666666666666
+        samples_total: 600
+        samples_area: 545
+        reached_area: true
+        min_pos_err_m: 0.029749615117907524
+        min_rot_err_rad: 0.47194021940231323
+        samples_tight: 0
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.03448043055490616
+        mean_rot_err_area_rad: 0.48795258277053133
+        reached_tight: false
+        reached_small_rot: false
+      -
+        goal_index: 3
+        time_to_area_s: 1.5833333333333333
+        samples_total: 600
+        samples_area: 505
+        reached_area: true
+        min_pos_err_m: 0.0032510312739759684
+        min_rot_err_rad: 0.29763373732566833
+        samples_tight: 396
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.006437142701395372
+        mean_rot_err_area_rad: 0.4480508412465011
+        reached_tight: true
+        reached_small_rot: false
+      -
+        goal_index: 4
+        time_to_area_s: 1.45
+        samples_total: 600
+        samples_area: 513
+        reached_area: true
+        min_pos_err_m: 0.0045650131069123745
+        min_rot_err_rad: 0.31979793310165405
+        samples_tight: 115
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.01456126875968443
+        mean_rot_err_area_rad: 0.516907918639118
+        reached_tight: true
+        reached_small_rot: false
+      -
+        goal_index: 5
+        time_to_area_s: 1.15
+        samples_total: 600
+        samples_area: 531
+        reached_area: true
+        min_pos_err_m: 0.002655961085110903
+        min_rot_err_rad: 1.1340938806533813
+        samples_tight: 95
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.01104395992820644
+        mean_rot_err_area_rad: 1.1811277293889535
+        reached_tight: true
+        reached_small_rot: false
+      -
+        goal_index: 6
+        time_to_area_s: 0.6833333333333333
+        samples_total: 600
+        samples_area: 558
+        reached_area: true
+        min_pos_err_m: 0.005726896226406097
+        min_rot_err_rad: 0.3596896827220917
+        samples_tight: 0
+        samples_small_rot: 0
+        mean_pos_err_area_m: 0.00962156129376729
+        mean_rot_err_area_rad: 0.6215988862792223
+        reached_tight: false
+        reached_small_rot: false
+    goals_reached_area: 7
+    goals_reached_tight: 3
+    goals_reached_small_rot: 2
+    mean_time_to_area_s: 1.3023809523809524
+    mean_pos_err_area_m: 0.02207956630089156
+    mean_rot_err_area_rad: 0.5482500441410189
+    mean_min_pos_err_m: 0.016294008686340282
+    mean_min_rot_err_rad: 0.4092516962971006
+goals:
+  - "[-0.333,-0.221,0.080,0.009,-0.027,0.999,-0.036]"
+  - "[0.000,0.000,0.300,0.000,0.000,1.000,0.000]"
+  - "[0.160,-0.131,0.127,0.178,-0.397,0.815,-0.382]"
+  - "[0.002,0.009,0.068,0.053,1.000,0.018,-0.025]"
+  - "[-0.539,-0.020,0.358,0.748,0.025,-0.661,-0.055]"
+  - "[0.033,-0.150,0.309,0.397,0.592,-0.422,0.560]"
+  - "[-0.127,0.136,0.082,0.025,-0.163,0.986,0.037]"

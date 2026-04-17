@@ -1,0 +1,1095 @@
+metadata:
+  report_title: Simulation Results - DR Study
+  input_dir: /home/lrenevey/Woodworking_Simulation/test_models/results_sim
+  output_dir: /home/lrenevey/Woodworking_Simulation/test_models/results_sim
+  recursive: false
+  generated_at_utc: '2026-03-31T18:21:38.762974+00:00'
+  source_file_count: 10
+  model_path_count: 9
+summary:
+  simulation gains:
+    count: 9
+    action_scales: []
+    metrics:
+      mean_time_to_area_s:
+        count: 9
+        mean: 1.505379188712522
+        std: 0.7479455009986126
+        min: 0.8452380952380951
+        max: 3.336111111111111
+      mean_pos_err_area_m:
+        count: 9
+        mean: 0.016316623448281588
+        std: 0.005099089282661277
+        min: 0.00774214276265942
+        max: 0.022265566582210832
+      mean_rot_err_area_rad:
+        count: 9
+        mean: 0.5990484361278104
+        std: 0.16936514682229692
+        min: 0.3375999096951386
+        max: 0.8581950014548406
+    runs:
+    - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-53-16__rand-False_10s-Timeout.yaml
+      model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_10-20-56__rand-False_10s-Timeout/model_1499.pt
+      robot_gain: simulation
+      action_scale: null
+      metrics: &id001
+        mean_time_to_area_s: 2.15
+        mean_pos_err_area_m: 0.022265566582210832
+        mean_rot_err_area_rad: 0.8581950014548406
+    - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-53-59_rand-delay_only_action_0_1_10s-Timeout.yaml
+      model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_17-30-57_rand-delay_only_action_0_1_10s-Timeout/model_1499.pt
+      robot_gain: simulation
+      action_scale: null
+      metrics: &id002
+        mean_time_to_area_s: 1.0785714285714285
+        mean_pos_err_area_m: 0.009710106191823541
+        mean_rot_err_area_rad: 0.5498598805226067
+    - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-54-48_rand-delay_only_action_1_2_10s-Timeout.yaml
+      model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_11-17-12_rand-delay_only_action_1_2_10s-Timeout/model_1499.pt
+      robot_gain: simulation
+      action_scale: null
+      metrics: &id003
+        mean_time_to_area_s: 0.8595238095238097
+        mean_pos_err_area_m: 0.01656373016843215
+        mean_rot_err_area_rad: 0.383703638000032
+    - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-55-37_rand-actuator_only_10s-Timeout.yaml
+      model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-27_13-05-11_rand-actuator_only_10s-Timeout/model_1499.pt
+      robot_gain: simulation
+      action_scale: null
+      metrics: &id004
+        mean_time_to_area_s: 3.336111111111111
+        mean_pos_err_area_m: 0.01874944371739911
+        mean_rot_err_area_rad: 0.8021895008696392
+    - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-56-22_rand-Noise.yaml
+      model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-31_13-08-23_rand-Noise/model_1499.pt
+      robot_gain: simulation
+      action_scale: null
+      metrics: &id005
+        mean_time_to_area_s: 1.4404761904761902
+        mean_pos_err_area_m: 0.019302419307226808
+        mean_rot_err_area_rad: 0.7660829958962159
+    - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-57-05_rand-masscom_only_10s-Timeout.yaml
+      model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_11-17-12_rand-masscom_only_10s-Timeout/model_1499.pt
+      robot_gain: simulation
+      action_scale: null
+      metrics: &id006
+        mean_time_to_area_s: 1.075
+        mean_pos_err_area_m: 0.01128576305759744
+        mean_rot_err_area_rad: 0.5536965087761786
+    - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-57-49_rand-actuator_plus_delay_1_2_10s-Timeout.yaml
+      model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-30_14-58-54_rand-actuator_plus_delay_1_2_10s-Timeout/model_1499.pt
+      robot_gain: simulation
+      action_scale: null
+      metrics: &id007
+        mean_time_to_area_s: 0.8452380952380951
+        mean_pos_err_area_m: 0.00774214276265942
+        mean_rot_err_area_rad: 0.3375999096951386
+    - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-58-33_rand-all_enabled_no_COM_delay_1_2_10s-Timeout.yaml
+      model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-30_14-58-53_rand-all_enabled_no_COM_delay_1_2_10s-Timeout/model_1499.pt
+      robot_gain: simulation
+      action_scale: null
+      metrics: &id008
+        mean_time_to_area_s: 1.3023809523809524
+        mean_pos_err_area_m: 0.02207956630089156
+        mean_rot_err_area_rad: 0.5482500441410189
+    - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-59-17_rand-all_enabled_10s-Timeout.yaml
+      model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_11-17-12_rand-all_enabled_10s-Timeout/model_1499.pt
+      robot_gain: simulation
+      action_scale: null
+      metrics: &id009
+        mean_time_to_area_s: 1.4611111111111112
+        mean_pos_err_area_m: 0.019150872946293435
+        mean_rot_err_area_rad: 0.5918584457946233
+  tuned gains:
+    count: 0
+    action_scales: []
+    metrics:
+      mean_time_to_area_s:
+        count: 0
+        mean: null
+        std: null
+        min: null
+        max: null
+      mean_pos_err_area_m:
+        count: 0
+        mean: null
+        std: null
+        min: null
+        max: null
+      mean_rot_err_area_rad:
+        count: 0
+        mean: null
+        std: null
+        min: null
+        max: null
+    runs: []
+  comparison:
+    mean_time_to_area_s:
+      baseline:
+        count: 9
+        mean: 1.505379188712522
+        std: 0.7479455009986126
+        min: 0.8452380952380951
+        max: 3.336111111111111
+      tuned:
+        count: 0
+        mean: null
+        std: null
+        min: null
+        max: null
+      delta: null
+      pct_change: null
+      direction: lower_is_better
+    mean_pos_err_area_m:
+      baseline:
+        count: 9
+        mean: 0.016316623448281588
+        std: 0.005099089282661277
+        min: 0.00774214276265942
+        max: 0.022265566582210832
+      tuned:
+        count: 0
+        mean: null
+        std: null
+        min: null
+        max: null
+      delta: null
+      pct_change: null
+      direction: lower_is_better
+    mean_rot_err_area_rad:
+      baseline:
+        count: 9
+        mean: 0.5990484361278104
+        std: 0.16936514682229692
+        min: 0.3375999096951386
+        max: 0.8581950014548406
+      tuned:
+        count: 0
+        mean: null
+        std: null
+        min: null
+        max: null
+      delta: null
+      pct_change: null
+      direction: lower_is_better
+model_paths:
+  /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_10-20-56__rand-False_10s-Timeout/model_1499.pt:
+    label: No DR
+    simulation gains:
+      count: 1
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 1
+          mean: 2.15
+          std: 0.0
+          min: 2.15
+          max: 2.15
+        mean_pos_err_area_m:
+          count: 1
+          mean: 0.022265566582210832
+          std: 0.0
+          min: 0.022265566582210832
+          max: 0.022265566582210832
+        mean_rot_err_area_rad:
+          count: 1
+          mean: 0.8581950014548406
+          std: 0.0
+          min: 0.8581950014548406
+          max: 0.8581950014548406
+      runs:
+      - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-53-16__rand-False_10s-Timeout.yaml
+        model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_10-20-56__rand-False_10s-Timeout/model_1499.pt
+        robot_gain: simulation
+        action_scale: null
+        metrics: *id001
+    tuned gains:
+      count: 0
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_pos_err_area_m:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_rot_err_area_rad:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+      runs: []
+    comparison:
+      mean_time_to_area_s:
+        baseline:
+          count: 1
+          mean: 2.15
+          std: 0.0
+          min: 2.15
+          max: 2.15
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_pos_err_area_m:
+        baseline:
+          count: 1
+          mean: 0.022265566582210832
+          std: 0.0
+          min: 0.022265566582210832
+          max: 0.022265566582210832
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_rot_err_area_rad:
+        baseline:
+          count: 1
+          mean: 0.8581950014548406
+          std: 0.0
+          min: 0.8581950014548406
+          max: 0.8581950014548406
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+  /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_17-30-57_rand-delay_only_action_0_1_10s-Timeout/model_1499.pt:
+    label: Delay Obs/Action 0-1
+    simulation gains:
+      count: 1
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 1
+          mean: 1.0785714285714285
+          std: 0.0
+          min: 1.0785714285714285
+          max: 1.0785714285714285
+        mean_pos_err_area_m:
+          count: 1
+          mean: 0.009710106191823541
+          std: 0.0
+          min: 0.009710106191823541
+          max: 0.009710106191823541
+        mean_rot_err_area_rad:
+          count: 1
+          mean: 0.5498598805226067
+          std: 0.0
+          min: 0.5498598805226067
+          max: 0.5498598805226067
+      runs:
+      - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-53-59_rand-delay_only_action_0_1_10s-Timeout.yaml
+        model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_17-30-57_rand-delay_only_action_0_1_10s-Timeout/model_1499.pt
+        robot_gain: simulation
+        action_scale: null
+        metrics: *id002
+    tuned gains:
+      count: 0
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_pos_err_area_m:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_rot_err_area_rad:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+      runs: []
+    comparison:
+      mean_time_to_area_s:
+        baseline:
+          count: 1
+          mean: 1.0785714285714285
+          std: 0.0
+          min: 1.0785714285714285
+          max: 1.0785714285714285
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_pos_err_area_m:
+        baseline:
+          count: 1
+          mean: 0.009710106191823541
+          std: 0.0
+          min: 0.009710106191823541
+          max: 0.009710106191823541
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_rot_err_area_rad:
+        baseline:
+          count: 1
+          mean: 0.5498598805226067
+          std: 0.0
+          min: 0.5498598805226067
+          max: 0.5498598805226067
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+  /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_11-17-12_rand-delay_only_action_1_2_10s-Timeout/model_1499.pt:
+    label: Delay Obs/Action 1-2
+    simulation gains:
+      count: 1
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 1
+          mean: 0.8595238095238097
+          std: 0.0
+          min: 0.8595238095238097
+          max: 0.8595238095238097
+        mean_pos_err_area_m:
+          count: 1
+          mean: 0.01656373016843215
+          std: 0.0
+          min: 0.01656373016843215
+          max: 0.01656373016843215
+        mean_rot_err_area_rad:
+          count: 1
+          mean: 0.383703638000032
+          std: 0.0
+          min: 0.383703638000032
+          max: 0.383703638000032
+      runs:
+      - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-54-48_rand-delay_only_action_1_2_10s-Timeout.yaml
+        model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_11-17-12_rand-delay_only_action_1_2_10s-Timeout/model_1499.pt
+        robot_gain: simulation
+        action_scale: null
+        metrics: *id003
+    tuned gains:
+      count: 0
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_pos_err_area_m:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_rot_err_area_rad:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+      runs: []
+    comparison:
+      mean_time_to_area_s:
+        baseline:
+          count: 1
+          mean: 0.8595238095238097
+          std: 0.0
+          min: 0.8595238095238097
+          max: 0.8595238095238097
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_pos_err_area_m:
+        baseline:
+          count: 1
+          mean: 0.01656373016843215
+          std: 0.0
+          min: 0.01656373016843215
+          max: 0.01656373016843215
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_rot_err_area_rad:
+        baseline:
+          count: 1
+          mean: 0.383703638000032
+          std: 0.0
+          min: 0.383703638000032
+          max: 0.383703638000032
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+  /home/lrenevey/Woodworking_Simulation/test_models/2026-03-27_13-05-11_rand-actuator_only_10s-Timeout/model_1499.pt:
+    label: Actuator
+    simulation gains:
+      count: 1
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 1
+          mean: 3.336111111111111
+          std: 0.0
+          min: 3.336111111111111
+          max: 3.336111111111111
+        mean_pos_err_area_m:
+          count: 1
+          mean: 0.01874944371739911
+          std: 0.0
+          min: 0.01874944371739911
+          max: 0.01874944371739911
+        mean_rot_err_area_rad:
+          count: 1
+          mean: 0.8021895008696392
+          std: 0.0
+          min: 0.8021895008696392
+          max: 0.8021895008696392
+      runs:
+      - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-55-37_rand-actuator_only_10s-Timeout.yaml
+        model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-27_13-05-11_rand-actuator_only_10s-Timeout/model_1499.pt
+        robot_gain: simulation
+        action_scale: null
+        metrics: *id004
+    tuned gains:
+      count: 0
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_pos_err_area_m:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_rot_err_area_rad:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+      runs: []
+    comparison:
+      mean_time_to_area_s:
+        baseline:
+          count: 1
+          mean: 3.336111111111111
+          std: 0.0
+          min: 3.336111111111111
+          max: 3.336111111111111
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_pos_err_area_m:
+        baseline:
+          count: 1
+          mean: 0.01874944371739911
+          std: 0.0
+          min: 0.01874944371739911
+          max: 0.01874944371739911
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_rot_err_area_rad:
+        baseline:
+          count: 1
+          mean: 0.8021895008696392
+          std: 0.0
+          min: 0.8021895008696392
+          max: 0.8021895008696392
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+  /home/lrenevey/Woodworking_Simulation/test_models/2026-03-31_13-08-23_rand-Noise/model_1499.pt:
+    label: Noise
+    simulation gains:
+      count: 1
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 1
+          mean: 1.4404761904761902
+          std: 0.0
+          min: 1.4404761904761902
+          max: 1.4404761904761902
+        mean_pos_err_area_m:
+          count: 1
+          mean: 0.019302419307226808
+          std: 0.0
+          min: 0.019302419307226808
+          max: 0.019302419307226808
+        mean_rot_err_area_rad:
+          count: 1
+          mean: 0.7660829958962159
+          std: 0.0
+          min: 0.7660829958962159
+          max: 0.7660829958962159
+      runs:
+      - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-56-22_rand-Noise.yaml
+        model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-31_13-08-23_rand-Noise/model_1499.pt
+        robot_gain: simulation
+        action_scale: null
+        metrics: *id005
+    tuned gains:
+      count: 0
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_pos_err_area_m:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_rot_err_area_rad:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+      runs: []
+    comparison:
+      mean_time_to_area_s:
+        baseline:
+          count: 1
+          mean: 1.4404761904761902
+          std: 0.0
+          min: 1.4404761904761902
+          max: 1.4404761904761902
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_pos_err_area_m:
+        baseline:
+          count: 1
+          mean: 0.019302419307226808
+          std: 0.0
+          min: 0.019302419307226808
+          max: 0.019302419307226808
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_rot_err_area_rad:
+        baseline:
+          count: 1
+          mean: 0.7660829958962159
+          std: 0.0
+          min: 0.7660829958962159
+          max: 0.7660829958962159
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+  /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_11-17-12_rand-masscom_only_10s-Timeout/model_1499.pt:
+    label: Mass
+    simulation gains:
+      count: 1
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 1
+          mean: 1.075
+          std: 0.0
+          min: 1.075
+          max: 1.075
+        mean_pos_err_area_m:
+          count: 1
+          mean: 0.01128576305759744
+          std: 0.0
+          min: 0.01128576305759744
+          max: 0.01128576305759744
+        mean_rot_err_area_rad:
+          count: 1
+          mean: 0.5536965087761786
+          std: 0.0
+          min: 0.5536965087761786
+          max: 0.5536965087761786
+      runs:
+      - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-57-05_rand-masscom_only_10s-Timeout.yaml
+        model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_11-17-12_rand-masscom_only_10s-Timeout/model_1499.pt
+        robot_gain: simulation
+        action_scale: null
+        metrics: *id006
+    tuned gains:
+      count: 0
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_pos_err_area_m:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_rot_err_area_rad:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+      runs: []
+    comparison:
+      mean_time_to_area_s:
+        baseline:
+          count: 1
+          mean: 1.075
+          std: 0.0
+          min: 1.075
+          max: 1.075
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_pos_err_area_m:
+        baseline:
+          count: 1
+          mean: 0.01128576305759744
+          std: 0.0
+          min: 0.01128576305759744
+          max: 0.01128576305759744
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_rot_err_area_rad:
+        baseline:
+          count: 1
+          mean: 0.5536965087761786
+          std: 0.0
+          min: 0.5536965087761786
+          max: 0.5536965087761786
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+  ? /home/lrenevey/Woodworking_Simulation/test_models/2026-03-30_14-58-54_rand-actuator_plus_delay_1_2_10s-Timeout/model_1499.pt
+  : label: Actuator + Delay Obs/Action 1-2
+    simulation gains:
+      count: 1
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 1
+          mean: 0.8452380952380951
+          std: 0.0
+          min: 0.8452380952380951
+          max: 0.8452380952380951
+        mean_pos_err_area_m:
+          count: 1
+          mean: 0.00774214276265942
+          std: 0.0
+          min: 0.00774214276265942
+          max: 0.00774214276265942
+        mean_rot_err_area_rad:
+          count: 1
+          mean: 0.3375999096951386
+          std: 0.0
+          min: 0.3375999096951386
+          max: 0.3375999096951386
+      runs:
+      - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-57-49_rand-actuator_plus_delay_1_2_10s-Timeout.yaml
+        model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-30_14-58-54_rand-actuator_plus_delay_1_2_10s-Timeout/model_1499.pt
+        robot_gain: simulation
+        action_scale: null
+        metrics: *id007
+    tuned gains:
+      count: 0
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_pos_err_area_m:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_rot_err_area_rad:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+      runs: []
+    comparison:
+      mean_time_to_area_s:
+        baseline:
+          count: 1
+          mean: 0.8452380952380951
+          std: 0.0
+          min: 0.8452380952380951
+          max: 0.8452380952380951
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_pos_err_area_m:
+        baseline:
+          count: 1
+          mean: 0.00774214276265942
+          std: 0.0
+          min: 0.00774214276265942
+          max: 0.00774214276265942
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_rot_err_area_rad:
+        baseline:
+          count: 1
+          mean: 0.3375999096951386
+          std: 0.0
+          min: 0.3375999096951386
+          max: 0.3375999096951386
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+  ? /home/lrenevey/Woodworking_Simulation/test_models/2026-03-30_14-58-53_rand-all_enabled_no_COM_delay_1_2_10s-Timeout/model_1499.pt
+  : label: All except Mass
+    simulation gains:
+      count: 1
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 1
+          mean: 1.3023809523809524
+          std: 0.0
+          min: 1.3023809523809524
+          max: 1.3023809523809524
+        mean_pos_err_area_m:
+          count: 1
+          mean: 0.02207956630089156
+          std: 0.0
+          min: 0.02207956630089156
+          max: 0.02207956630089156
+        mean_rot_err_area_rad:
+          count: 1
+          mean: 0.5482500441410189
+          std: 0.0
+          min: 0.5482500441410189
+          max: 0.5482500441410189
+      runs:
+      - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-58-33_rand-all_enabled_no_COM_delay_1_2_10s-Timeout.yaml
+        model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-30_14-58-53_rand-all_enabled_no_COM_delay_1_2_10s-Timeout/model_1499.pt
+        robot_gain: simulation
+        action_scale: null
+        metrics: *id008
+    tuned gains:
+      count: 0
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_pos_err_area_m:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_rot_err_area_rad:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+      runs: []
+    comparison:
+      mean_time_to_area_s:
+        baseline:
+          count: 1
+          mean: 1.3023809523809524
+          std: 0.0
+          min: 1.3023809523809524
+          max: 1.3023809523809524
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_pos_err_area_m:
+        baseline:
+          count: 1
+          mean: 0.02207956630089156
+          std: 0.0
+          min: 0.02207956630089156
+          max: 0.02207956630089156
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_rot_err_area_rad:
+        baseline:
+          count: 1
+          mean: 0.5482500441410189
+          std: 0.0
+          min: 0.5482500441410189
+          max: 0.5482500441410189
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+  /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_11-17-12_rand-all_enabled_10s-Timeout/model_1499.pt:
+    label: All DR
+    simulation gains:
+      count: 1
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 1
+          mean: 1.4611111111111112
+          std: 0.0
+          min: 1.4611111111111112
+          max: 1.4611111111111112
+        mean_pos_err_area_m:
+          count: 1
+          mean: 0.019150872946293435
+          std: 0.0
+          min: 0.019150872946293435
+          max: 0.019150872946293435
+        mean_rot_err_area_rad:
+          count: 1
+          mean: 0.5918584457946233
+          std: 0.0
+          min: 0.5918584457946233
+          max: 0.5918584457946233
+      runs:
+      - file: /home/lrenevey/Woodworking_Simulation/test_models/results_sim/2026-03-31_17-59-17_rand-all_enabled_10s-Timeout.yaml
+        model_path: /home/lrenevey/Woodworking_Simulation/test_models/2026-03-25_11-17-12_rand-all_enabled_10s-Timeout/model_1499.pt
+        robot_gain: simulation
+        action_scale: null
+        metrics: *id009
+    tuned gains:
+      count: 0
+      action_scales: []
+      metrics:
+        mean_time_to_area_s:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_pos_err_area_m:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        mean_rot_err_area_rad:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+      runs: []
+    comparison:
+      mean_time_to_area_s:
+        baseline:
+          count: 1
+          mean: 1.4611111111111112
+          std: 0.0
+          min: 1.4611111111111112
+          max: 1.4611111111111112
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_pos_err_area_m:
+        baseline:
+          count: 1
+          mean: 0.019150872946293435
+          std: 0.0
+          min: 0.019150872946293435
+          max: 0.019150872946293435
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better
+      mean_rot_err_area_rad:
+        baseline:
+          count: 1
+          mean: 0.5918584457946233
+          std: 0.0
+          min: 0.5918584457946233
+          max: 0.5918584457946233
+        tuned:
+          count: 0
+          mean: null
+          std: null
+          min: null
+          max: null
+        delta: null
+        pct_change: null
+        direction: lower_is_better

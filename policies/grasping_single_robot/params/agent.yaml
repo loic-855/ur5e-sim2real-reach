@@ -1,0 +1,52 @@
+!!python/object:Woodworking_Simulation.tasks.direct.grasping_single_robot.agents.rsl_rl_ppo_cfg_single_grasp.PPORunnerCfg
+seed: 42
+device: cuda:0
+num_steps_per_env: 24
+max_iterations: 1500
+empirical_normalization: null
+obs_groups: !!python/object:dataclasses._MISSING_TYPE {}
+clip_actions: null
+save_interval: 50
+experiment_name: grasping_single_robot
+run_name: ''
+logger: wandb
+neptune_project: isaaclab
+wandb_project: isaaclab_euler_grasping
+resume: false
+load_run: .*
+load_checkpoint: model_.*.pt
+class_name: OnPolicyRunner
+policy: !!python/object:isaaclab_rl.rsl_rl.rl_cfg.RslRlPpoActorCriticCfg
+  class_name: ActorCritic
+  init_noise_std: 1.0
+  noise_std_type: scalar
+  state_dependent_std: false
+  actor_obs_normalization: true
+  critic_obs_normalization: true
+  actor_hidden_dims:
+  - 512
+  - 256
+  - 128
+  critic_hidden_dims:
+  - 512
+  - 256
+  - 128
+  activation: elu
+algorithm: !!python/object:isaaclab_rl.rsl_rl.rl_cfg.RslRlPpoAlgorithmCfg
+  class_name: PPO
+  num_learning_epochs: 8
+  num_mini_batches: 8
+  learning_rate: 0.0007
+  schedule: adaptive
+  gamma: 0.99
+  lam: 0.95
+  entropy_coef: 0.04
+  desired_kl: 0.013
+  max_grad_norm: 1.0
+  value_loss_coef: 1.0
+  use_clipped_value_loss: true
+  clip_param: 0.2
+  normalize_advantage_per_mini_batch: false
+  rnd_cfg: null
+  symmetry_cfg: null
+monitor_gym: true
