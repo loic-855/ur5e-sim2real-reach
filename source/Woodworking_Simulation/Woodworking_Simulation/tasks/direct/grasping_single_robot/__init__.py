@@ -20,13 +20,3 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg_single_grasp:PPORunnerCfg",
     },
 )
-
-gym.register(
-    id="WWSim-Grasping-Single-Robot-Direct-v1",
-    entry_point=f"{__name__}.grasping_single_robot:GraspingSingleRobotV1",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.grasping_single_robot:GraspingSingleRobotV1Cfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg_single_grasp:PPORunnerCfg",
-    },
-)

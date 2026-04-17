@@ -146,7 +146,6 @@ class GraspingSingleRobotCfg(DirectRLEnvCfg):
     wooden_block = RigidObjectCfg(
         prim_path="/World/envs/env_.*/wooden_block",
         spawn=sim_utils.CuboidCfg(
-            size=(0.025, 0.1, 0.05),           
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 rigid_body_enabled=True, 
                 disable_gravity=True,
@@ -220,28 +219,6 @@ class GraspingSingleRobotCfg(DirectRLEnvCfg):
     speed_penalty_scale = [0.0002, 0.01]
 
     #python .\scripts\rsl_rl\train.py --task Template-Grasping-Single-Robot-Direct-v0 --max_iter 1500 --num_envs 4000 --headless --name "on_table_pen_05" --cfg-options "GraspingSingleRobotCfg.on_table_penalty_scale=0.5"
-
-class GraspingSingleRobotV1Cfg(GraspingSingleRobotCfg):
-    wooden_block = RigidObjectCfg(
-        prim_path="/World/envs/env_.*/wooden_block",
-        spawn=sim_utils.CuboidCfg(
-            #size=(0.025, 0.10, 0.05),           
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                rigid_body_enabled=True, 
-                disable_gravity=True,
-                solver_position_iteration_count=12,
-                solver_velocity_iteration_count=1
-            ),
-            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
-            mass_props=sim_utils.MassPropertiesCfg(density=500.0),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.55, 0.27, 0.07)),
-            physics_material=sim_utils.RigidBodyMaterialCfg(
-                static_friction=2.0,
-                dynamic_friction=1.0,
-                restitution=0.0,
-            ),
-        ),
-    )
 
 class GraspingSingleRobotV0(DirectRLEnv):
     # pre-physics step calls
@@ -538,6 +515,7 @@ class GraspingSingleRobotV0(DirectRLEnv):
         self._g_robot.set_joint_position_target(joint_pos, env_ids=env_ids) # type: ignore
         self._g_robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids) # type: ignore
 
+        self._set_block_size(env_ids)
         self._place_block(env_ids)
         # Need to refresh the intermediate values so that _get_observations() can use the latest values
         self._compute_intermediate_values(env_ids)
@@ -888,59 +866,3 @@ class GraspingSingleRobotV0(DirectRLEnv):
 
         values_str = ", ".join([f"{name}={tensor[env_num].item():.4f}" for name, tensor in kwargs.items()])
         print(f"[DEBUG] env ({env_num}): {values_str}")
-
-class GraspingSingleRobotV1(GraspingSingleRobotV0):
-    cfg: GraspingSingleRobotV1Cfg
-
-    def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        # Success termination: block lifted above 0.25m + table height
-        success = self._w_block.data.root_pos_w[:, 2] > 0.25 + TABLE_HEIGHT + BLOCK_THICKNESS
-        
-        # Failure termination: block below table with margin (z < 0.835)
-        below_table = self._w_block.data.root_pos_w[:, 2] < TABLE_HEIGHT - 0.007
-
-        #Failure termination: block outside XY bounds, compute local positions for the block in each env
-        block_pos_local = self._w_block.data.root_pos_w[:, :3] - self.env_origins[:, :3]
-        
-        # Check if block is outside XY bounds in local env coordinates
-        out_of_bounds = (
-            (block_pos_local[:, 0] < 0) | (block_pos_local[:, 0] > TABLE_DEPTH) |
-            (block_pos_local[:, 1] < 0) | (block_pos_local[:, 1] > TABLE_WIDTH)
-        )
-
-        roll, pitch, yaw = euler_xyz_from_quat(self.w_block_grasp_rot)
-        tilted = (torch.abs(roll) > torch.pi / 3) | (torch.abs(pitch) > torch.pi / 3)
-            
-        terminated = success | below_table | tilted | out_of_bounds
-        truncated = self.episode_length_buf >= self.max_episode_length - 1
-        return terminated, truncated
-
-    def _reset_idx(self, env_ids: torch.Tensor | None): # type: ignore
-        super()._reset_idx(env_ids) # type: ignore
-
-        gravity_enabled = self.common_step_counter >= 20000
-        if self.block_gravity_enabled != gravity_enabled:
-            self._set_block_gravity(gravity_enabled)
-
-        # robot state
-        joint_pos = self._g_robot.data.default_joint_pos[env_ids] + sample_uniform(
-            -0.125,
-            0.125,
-            (len(env_ids), self._g_robot.num_joints), # type: ignore
-            self.device,
-        )
-        joint_pos = torch.clamp(joint_pos, self.g_robot_dof_lower_limits, self.g_robot_dof_upper_limits)
-        joint_vel = torch.zeros_like(joint_pos)
-        self.g_robot_dof_targets[env_ids] = joint_pos
-        self._g_robot.set_joint_position_target(joint_pos, env_ids=env_ids) # type: ignore
-        self._g_robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=env_ids) # type: ignore
-
-        
-        
-        # Place the wooden block using a dedicated helper
-        self._set_block_size(env_ids)
-        self._place_block(env_ids)
-        
-        
-        # Need to refresh the intermediate values so that _get_observations() can use the latest values
-        self._compute_intermediate_values(env_ids)
