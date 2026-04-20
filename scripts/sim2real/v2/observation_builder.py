@@ -213,7 +213,7 @@ def compute_dof_targets_v2(
     actions: np.ndarray,
     dt: float = 1 / 60,
     action_scale: float = 0.3,
-    velocity_scale: float = 0.7,
+    velocity_scale: float = 0.2,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Compute new joint position targets AND velocity targets from 12-dim policy output.
 

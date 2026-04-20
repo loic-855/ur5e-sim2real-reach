@@ -25,7 +25,7 @@ Frame convention (same as V2):
 Usage:
     source ~/wwro_ws/install/local_setup.bash
     python3 sim2real_node.py --robot gripper --model path/to/policy.pt
-    python3 scripts/sim2real/v2/sim2real_node.py --robot gripper --rate 60 --action-scale 0.5 --velocity-scale 0.15 --model path/to/policy.pt
+    python3 scripts/sim2real/v2/sim2real_node.py --robot gripper --rate 60 --action-scale 0.3 --velocity-scale 0.2 --model path/to/policy.pt
 """
 
 import math
@@ -361,7 +361,7 @@ class Sim2RealNode(Node):
         rtde_rate: float = 125.0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         action_scale: float = 0.3,
-        velocity_scale: float = 0.7,
+        velocity_scale: float = 0.2,
         robot_host: str = ROBOT_HOST,
     ):
         super().__init__("sim2real_policy_node_v2")
@@ -679,11 +679,11 @@ def main():
         help="Device for policy inference",
     )
     parser.add_argument(
-        "--action-scale", type=float, default=0.5,
+        "--action-scale", type=float, default=0.3,
         help="Action scaling factor for position increments",
     )
     parser.add_argument(
-        "--velocity-scale", type=float, default=0.25,
+        "--velocity-scale", type=float, default=0.2,
         help="Velocity scaling factor for feedforward (rad/s)",
     )
     parser.add_argument(

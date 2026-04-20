@@ -26,7 +26,7 @@ Frame convention:
 
 Usage:
     python3 sim2real_node.py 
-    python3 sim2real_node.py --rate 60 --action-scale 0.5 --model path/to/policy.pt
+    python3 sim2real_node.py --rate 60 --action-scale 0.3 --model path/to/policy.pt
     python3 sim2real_node.py --robot-gain tuned
 For benchmarking:
     python scripts/sim2real/v1/sim2real_node.py \
@@ -470,7 +470,7 @@ class Sim2RealNode(Node):
         control_rate: float = 60.0,
         rtde_rate: float = 125.0,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
-        action_scale: float = 7.0,
+        action_scale: float = 0.3,
         robot_host: str = ROBOT_HOST,
         robot_gain: str = "tuned",
         num_takes: int = 1,
@@ -1076,7 +1076,7 @@ def main():
         help="Device for policy inference",
     )
     parser.add_argument(
-        "--action-scale", type=float, default=0.5,
+        "--action-scale", type=float, default=0.3,
         help="Action scaling factor (sim v1 uses 2.0)",
     )
     parser.add_argument(

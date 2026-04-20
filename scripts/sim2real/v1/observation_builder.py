@@ -211,7 +211,7 @@ def compute_dof_targets(
     current_targets: np.ndarray,
     actions: np.ndarray,
     dt: float = 1 / 60,
-    action_scale: float = 3.0,
+    action_scale: float = 0.3
 ) -> np.ndarray:
     """Compute new joint position targets from policy actions.
 
