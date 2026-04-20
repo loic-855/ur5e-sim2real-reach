@@ -1,0 +1,13 @@
+name: sim2real
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - numpy
+  - matplotlib
+  - pyyaml
+  - pip
+  - pip:
+    - torch
+    - torchvision
+    - git+https://github.com/UniversalRobots/RTDE_Python_Client_Library.git
