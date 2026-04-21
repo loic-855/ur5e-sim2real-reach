@@ -4,8 +4,8 @@
 
 This repository contains the full **simulation** and **sim-to-real** pipeline for the IDEALB Woodworking setup at ETHZ: two UR5e robots (one with an OnRobot 2FG7 gripper, one with a screwdriver) trained with reinforcement learning in Isaac Lab and deployed on the real hardware via a custom impedance controller.
 
-<!-- ![Main setup](Main_setup.png) --> uncomment image here when the final version is ready
-
+![Main setup](pictures/goal_3_small.jpg
+)
 
 The project is split into two independent workflows, each running in its own conda environment:
 
@@ -22,33 +22,19 @@ The project is split into two independent workflows, each running in its own con
 4. Characterize and tune actuator behavior with dedicated impedance tuning tools.
 5. Provide and compare additional trained policies for related single- and dual-robot tasks.
 
-## Visual Overview (Placeholders)
+## Visual Overview
 
-Replace the following placeholders with your final figures.
+### Performance Improvement with Domain Randomization
 
-### 1) Full System Pipeline
+![Domain randomization ablation results](pictures/dr_comparison_small.gif)
+No DR (left) vs Randomization on acutator and delay 1-2 (right) 
+### Dual Reach policy in Simulation
 
-![Placeholder - System pipeline: sim training to real deployment](docs/images/placeholder_pipeline_overview.png)
+![Dual reach policy](pictures/pose_orientation_tworobot.gif)
 
-### 2) Simulation Training for Reach Policy
+### Reach Policy in Simulation
 
-![Placeholder - Isaac Sim training scene and policy behavior](docs/images/placeholder_sim_training.png)
-
-### 3) Real Robot Deployment
-
-![Placeholder - Real UR5e setup executing the reach task](docs/images/placeholder_real_robot_deployment.png)
-
-### 4) Domain Randomization Study
-
-![Placeholder - Domain randomization ablation results](docs/images/placeholder_domain_randomization_results.png)
-
-### 5) Actuator Characterization and Tuning
-
-![Placeholder - Impedance/actuator characterization plots](docs/images/placeholder_actuator_characterization.png)
-
-### 6) Other Trained Policies Showcase
-
-![Placeholder - Gallery of additional trained policies](docs/images/placeholder_policy_showcase.png)
+![Placeholder - Gallery of additional trained policies](pictures/collage_grasp.png)
 
 ---
 
@@ -253,8 +239,6 @@ python scripts/rsl_rl/play.py \
   --task WWSim-Pose-Orientation-Sim2Real-Direct-v1 \
   --checkpoint policies/<policy_dir>/model_1499.pt --num_envs 10
 ```
-
-![Pretrained network Animation](pose_orientation_tworobot.gif)
 
 ---
 
