@@ -1,14 +1,18 @@
-# Sim2Real Scripts
+# Sim-to-Real Deployment
 
-This folder contains the real-robot deployment, robot bring-up helpers, URScript files, and impedance-tuning utilities.
+> **Environment:** All scripts in this folder require `conda activate sim2real` and a sourced ROS 2 workspace (`source ~/wwro_ws/install/local_setup.bash`).
+>
+> **Driver:** The custom UR5e ROS 2 driver is available at <https://github.com/IDEALLab/Woodworking_Robots>. It is needed to visualize the robot state and goals in RViz, but the core sim2real nodes can run without it.
 
 ## Folder Layout
 
-- `v1/`: position-only deployment path.
-- `v2/`: velocity-feedforward deployment path.
-- `URscript/`: robot-side controllers and RTDE recipe files.
-- `goal_publisher.py`: publish goals for manual testing and benchmark playback.
-- `send_urscript.py`: legacy TCP socket helper to send URScript payloads manually (useful as an RTDE workflow reference).
+| Path | Description |
+|---|---|
+| `v1/` | Position-only deployment (6-dim actions) |
+| `v2/` | Velocity-feedforward deployment (12-dim actions) |
+| `URscript/` | Robot-side impedance controllers and RTDE recipe files |
+| `goal_publisher.py` | Publish goal poses for manual testing and benchmark playback |
+| `send_urscript.py` | Legacy TCP socket helper (reference only) |
 
 ## End-to-End Flow
 
@@ -69,12 +73,11 @@ source install/local_setup.bash
 ```
 
 Launch the robot control stack:
-Need to test with the latest driver
+
 ```bash
 ros2 launch wwro_startup wwro_control.launch.py \
 	gripper_robot_ip:=192.168.1.101 \
 	screwdriver_robot_ip:=192.168.1.103 \
-	headless_mode:=false (check if useful)
 ```
 
 
