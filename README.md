@@ -4,8 +4,7 @@
 
 This repository contains the full **simulation** and **sim-to-real** pipeline for the IDEALB Woodworking setup at ETHZ: two UR5e robots (one with an OnRobot 2FG7 gripper, one with a screwdriver) trained with reinforcement learning in Isaac Lab and deployed on the real hardware via a custom impedance controller.
 
-![Main setup](pictures/goal_3_small.jpg
-)
+<img src="pictures/goal_3_small.jpg" alt="Photo of the real UR5e setup" width="800"/>
 
 The project is split into two independent workflows, each running in its own conda environment:
 
@@ -26,15 +25,17 @@ The project is split into two independent workflows, each running in its own con
 
 ### Performance Improvement with Domain Randomization
 
-![Domain randomization ablation results](pictures/dr_comparison_small.gif)
-No DR (left) vs Randomization on acutator and delay 1-2 (right) 
+
+<img src="pictures/dr_comparison_small.gif" alt="Comparison of sim-to-real performance with and without domain randomization" width="800"/>
+No DR (left) vs Randomization on actuator and delay 1-2 (right) 
 ### Dual Reach policy in Simulation
 
-![Dual reach policy](pictures/pose_orientation_tworobot.gif)
+
+<img src="pictures/pose_orientation_tworobot.gif" alt="Visualization of the dual reach policy in simulation" width="800"/>
 
 ### Reach Policy in Simulation
 
-![Placeholder - Gallery of additional trained policies](pictures/collage_grasp.png)
+<img src="pictures/collage_grasp.png" alt="Gallery of additional trained policies" width="800"/>
 
 ---
 
