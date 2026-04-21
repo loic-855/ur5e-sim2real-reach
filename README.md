@@ -14,6 +14,42 @@ The project is split into two independent workflows, each running in its own con
 | **Simulation** | `env_isaaclab` | RL training, sim playback, sim benchmarking (Isaac Sim + Isaac Lab) |
 | **Sim-to-Real** | `sim2real` | Real-robot deployment, impedance tuning, analysis scripts |
 
+## What This Repository Achieves
+
+1. Train reach policies in simulation with sim-to-real transfer in mind.
+2. Export and deploy policies on the real UR5e robotic setup through ROS 2 + RTDE.
+3. Study and improve transfer robustness through domain randomization experiments.
+4. Characterize and tune actuator behavior with dedicated impedance tuning tools.
+5. Provide and compare additional trained policies for related single- and dual-robot tasks.
+
+## Visual Overview (Placeholders)
+
+Replace the following placeholders with your final figures.
+
+### 1) Full System Pipeline
+
+![Placeholder - System pipeline: sim training to real deployment](docs/images/placeholder_pipeline_overview.png)
+
+### 2) Simulation Training for Reach Policy
+
+![Placeholder - Isaac Sim training scene and policy behavior](docs/images/placeholder_sim_training.png)
+
+### 3) Real Robot Deployment
+
+![Placeholder - Real UR5e setup executing the reach task](docs/images/placeholder_real_robot_deployment.png)
+
+### 4) Domain Randomization Study
+
+![Placeholder - Domain randomization ablation results](docs/images/placeholder_domain_randomization_results.png)
+
+### 5) Actuator Characterization and Tuning
+
+![Placeholder - Impedance/actuator characterization plots](docs/images/placeholder_actuator_characterization.png)
+
+### 6) Other Trained Policies Showcase
+
+![Placeholder - Gallery of additional trained policies](docs/images/placeholder_policy_showcase.png)
+
 ---
 
 ## Prerequisites
