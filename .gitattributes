@@ -10,3 +10,6 @@
 *.pt filter=lfs diff=lfs merge=lfs -text
 *.jit filter=lfs diff=lfs merge=lfs -text
 *.hdf5 filter=lfs diff=lfs merge=lfs -text
+pictures/dr_comparison_small.gif filter=lfs diff=lfs merge=lfs -text
+policies/**/*.pt filter=lfs diff=lfs merge=lfs -text
+policies/**/**/*.pt filter=lfs diff=lfs merge=lfs -text
