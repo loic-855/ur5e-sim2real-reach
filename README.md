@@ -28,6 +28,7 @@ The project is split into two independent workflows, each running in its own con
 
 <img src="pictures/dr_comparison_small.gif" alt="Comparison of sim-to-real performance with and without domain randomization" width="800"/>
 No DR (left) vs Randomization on actuator and delay 1-2 (right) 
+
 ### Dual Reach policy in Simulation
 
 
