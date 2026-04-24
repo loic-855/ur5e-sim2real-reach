@@ -1,8 +1,8 @@
-# UR5e Sim-to-Real Reach — IDEALB Woodworking Setup
+# UR5e Sim-to-Real Reach — IDEALLab Woodworking Setup
 
 ## Overview
 
-This repository contains the full **simulation** and **sim-to-real** pipeline for the IDEALB Woodworking setup at ETHZ: two UR5e robots (one with an OnRobot 2FG7 gripper, one with a screwdriver) trained with reinforcement learning in Isaac Lab and deployed on the real hardware via a custom impedance controller.
+This repository contains the full **simulation** and **sim-to-real** pipeline for the IDEALLab Woodworking setup at ETHZ: two UR5e robots (one with an OnRobot 2FG7 gripper, one with a screwdriver) trained with reinforcement learning in Isaac Lab and deployed on the real hardware via a custom impedance controller. The repository is the supporting code for my master thesis, **Reinforcement Learning for Robotic Assembly Tasks: Mitigating Simulation Error for Physical Deployment**
 
 ![Main setup](pictures/goal_3_small.jpg
 )
