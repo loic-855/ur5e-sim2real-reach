@@ -455,6 +455,12 @@ def main():
     if args.goal_overview and args.goals_file is None:
         parser.error("--goal-overview requires --goals-file.")
 
+    if static_goal_requested and args.update is not None:
+        parser.error("--update cannot be used with static goal (--x, --y, --z) because there is no cycling.")
+
+    if args.interactive and args.update is not None:
+        parser.error("--update cannot be used with interactive mode.")
+
     if args.goal_overview and args.update is not None:
         parser.error("--goal-overview cannot be combined with --update because overview mode does not cycle goals.")
 
@@ -506,7 +512,7 @@ def main():
         # Default: cycle through three positions
         cycling_goals = default_cycling_goals
         overview_goals = None
-        cycling_goal_interval = None
+        cycling_goal_interval = update_interval if args.update is not None else None
     
     node = GoalPublisher(
         rate=args.rate,
