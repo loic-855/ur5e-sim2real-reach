@@ -98,7 +98,8 @@ JOB_CACHE="/cluster/scratch/$USER/isaac_cache/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRA
 mkdir -p $JOB_CACHE/kit_cache $JOB_CACHE/kit_data $JOB_CACHE/ov $JOB_CACHE/pip \
          $JOB_CACHE/glcache $JOB_CACHE/computecache $JOB_CACHE/logs $JOB_CACHE/data \
          $JOB_CACHE/documents $JOB_CACHE/warp $JOB_CACHE/local_lib \
-         $JOB_CACHE/wandb_cache $JOB_CACHE/wandb_config $JOB_CACHE/wandb_data
+         $JOB_CACHE/wandb_cache $JOB_CACHE/wandb_config $JOB_CACHE/wandb_data \
+         $JOB_CACHE/tmp
 
 # Load Proxy (Required for internet access on compute nodes)
 # Source module init — not available by default in non-interactive SLURM batch shells
@@ -142,6 +143,7 @@ apptainer exec --nv \
     -B $JOB_CACHE/wandb_cache:$HOME/.cache/wandb:rw \
     -B $JOB_CACHE/wandb_config:$HOME/.config/wandb:rw \
     -B $JOB_CACHE/wandb_data:$PROJECT_PATH/wandb:rw \
+    -B $JOB_CACHE/tmp:/tmp:rw \
     -B $PROJECT_PATH:/workspace/isaaclab/$PROJECT_NAME:rw \
     --env WANDB_API_KEY=$WANDB_API_KEY \
     --env WANDB_DIR=$PROJECT_PATH \
@@ -200,6 +202,7 @@ for RUN_IDX in $(seq $START_IDX $END_IDX); do
         -B $JOB_CACHE/wandb_cache:$HOME/.cache/wandb:rw \
         -B $JOB_CACHE/wandb_config:$HOME/.config/wandb:rw \
         -B $JOB_CACHE/wandb_data:$PROJECT_PATH/wandb:rw \
+        -B $JOB_CACHE/tmp:/tmp:rw \
         -B $PROJECT_PATH:/workspace/isaaclab/$PROJECT_NAME:rw \
         --env WANDB_API_KEY=$WANDB_API_KEY \
         --env WANDB_DIR=$PROJECT_PATH \
