@@ -7,12 +7,12 @@
 #SBATCH --gpus=rtx_4090:1
 #SBATCH --time=9:00:00
 #SBATCH --mem-per-cpu=6000
-#SBATCH --job-name="WWSim-Pose-Orientation-Sim2Real-Direct-v4"
+#SBATCH --job-name="WWSim-Pose-Orientation-Sim2Real-Screwdriver-Direct-v1"
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
 
 # --- CONFIGURATION ---
-TASK_NAME="WWSim-Pose-Orientation-Sim2Real-Direct-v1"  # Must match a task_name in your config files (e.g. source/wwsim/configs/pose_orientation_sim2real_direct.yaml)
+TASK_NAME="WWSim-Pose-Orientation-Sim2Real-Screwdriver-Direct-v1"  # Must match a task_name in your config files (e.g. source/wwsim/configs/pose_orientation_sim2real_direct.yaml)
 # UPDATE THIS PATH to where you uploaded your .sif file
 SIF_PATH="/cluster/scratch/$USER/isaac_euler_salziegl.sif"
 
@@ -78,19 +78,13 @@ apptainer exec --nv \
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \
             --headless \
-            --run_name=rand-Noise \
             agent.max_iterations=1500 \
-            agent.wandb_project=sim2real_v1_ablation \
-            agent.experiment_name=sim2real_v1_ablation \
-            env.domain_rand.enable_actuator_rand=False \
+            env.domain_rand.enable_actuator_rand=True \
             env.domain_rand.enable_mass_com_rand=False \
-            env.domain_rand.enable_noise=True \
-            env.domain_rand.enable_delay=False \
-            env.domain_rand.action_delay_range=[0,0] \
-            env.domain_rand.obs_delay_range=[0,0] \
-            env.goal_sampling_random_ratio=1.0 \
-            env.goal_timeout_s=10.0 \
-            env.goal_height=[0.04,0.6]
+            env.domain_rand.enable_noise=False \
+            env.domain_rand.enable_delay=True \
+            env.domain_rand.action_delay_range=[1,2] \
+            env.domain_rand.obs_delay_range=[0,1]
     "
 
 # Cleanup Cache
