@@ -4,9 +4,9 @@
 
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4
-#SBATCH --gpus=rtx_4090:1
-#SBATCH --time=9:00:00
-#SBATCH --mem-per-cpu=6000
+#SBATCH --gpus=1
+#SBATCH --time=1:30:00
+#SBATCH --mem-per-cpu=1536
 #SBATCH --job-name="WWSim-Pose-Orientation-Sim2Real-Screwdriver-Direct-v1"
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
