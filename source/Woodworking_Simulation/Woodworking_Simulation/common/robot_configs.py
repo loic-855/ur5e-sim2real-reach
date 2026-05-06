@@ -304,17 +304,33 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                 rot=screwdriver_rot,  # To be tested and updated
             ),
             actuators={
-                "shoulder_action": ImplicitActuatorCfg(
-                    joint_names_expr=["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint"],
-                    damping=50, stiffness=700
+                "shoulder_pan_action": ImplicitActuatorCfg(
+                    joint_names_expr=["shoulder_pan_joint"],
+                    damping=24.5, stiffness=600,
+                    effort_limit=150,
+                    velocity_limit=MAX_JOINT_VEL
+                ),
+                "shoulder_lift_action": ImplicitActuatorCfg(
+                    joint_names_expr=["shoulder_lift_joint"],
+                    damping=69.3, stiffness=1200,
+                    effort_limit=150,
+                    velocity_limit=MAX_JOINT_VEL
+                ),
+                "elbow_action": ImplicitActuatorCfg(
+                    joint_names_expr=["elbow_joint"],
+                    damping=24.5, stiffness=600,
+                    effort_limit=150,
+                    velocity_limit=MAX_JOINT_VEL
                 ),
                 "wrist_action": ImplicitActuatorCfg(
                     joint_names_expr=["wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
-                    damping=30, stiffness=300
+                    damping=6.5, stiffness=200,
+                    effort_limit=28,
+                    velocity_limit=MAX_JOINT_VEL
                 ),
                 "screwdriver_action": ImplicitActuatorCfg(
                     joint_names_expr=["joint0"],
-                    damping=20, stiffness=100
+                    damping=5, stiffness=1200
                 ),
             },
         )
