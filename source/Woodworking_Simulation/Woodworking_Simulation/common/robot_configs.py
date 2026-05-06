@@ -273,7 +273,7 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
     elif robot_type == RobotType.SCREWDRIVER_TCP:
         
         screwdriver_pos = (-0.08, 0.08, TABLE_HEIGHT + MOUNT_HEIGHT)
-        screwdriver_rot = (0.0, 0.0, 0.0, 1.0)
+        screwdriver_rot = (0.7071078, 0.0, 0.0, 0.7071078)   
         
         return ArticulationCfg(
             prim_path=prim_path,
