@@ -3,10 +3,10 @@
 #   euler/launch_sweep.sh  (generates & submits SLURM array jobs)
 
 #SBATCH -n 1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=3
 #SBATCH --gpus=1
-#SBATCH --time=1:30:00
-#SBATCH --mem-per-cpu=1536
+#SBATCH --time=8:00:00
+#SBATCH --mem-per-cpu=4096
 #SBATCH --job-name="WWSim-Pose-Orientation-Sim2Real-Screwdriver-Direct-v1"
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
@@ -81,6 +81,7 @@ apptainer exec --nv \
             --task=$TASK_NAME \
             --headless \
             agent.max_iterations=1500 \
+            env.debug=False \
             env.domain_rand.enable_actuator_rand=True \
             env.domain_rand.enable_mass_com_rand=False \
             env.domain_rand.enable_noise=False \

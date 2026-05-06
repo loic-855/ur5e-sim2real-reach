@@ -19,6 +19,7 @@ base_overrides:
   - "agent.wandb_project=sim2real_v1_ablation"
   - "agent.experiment_name=sim2real_v1_ablation"
   - "env.goal_timeout_s=10.0"
+  - "env.debug=False"
 
 
 dimensions:
