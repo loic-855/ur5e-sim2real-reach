@@ -91,7 +91,7 @@ from isaaclab.envs import (
 from isaaclab.utils.dict import print_dict
 # from isaaclab.utils.io import dump_pickle, dump_yaml
 
-from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
+from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
@@ -195,7 +195,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
     # handle deprecated config fields (e.g. old `policy` → new `actor`/`critic` for rsl-rl >= 4.0.0)
-    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
+    #agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
     # strip fields added for rsl-rl >= 4.0.0 that older versions don't accept
     _alg = agent_cfg.algorithm
     for _field in ("optimizer", "share_cnn_encoders"):
