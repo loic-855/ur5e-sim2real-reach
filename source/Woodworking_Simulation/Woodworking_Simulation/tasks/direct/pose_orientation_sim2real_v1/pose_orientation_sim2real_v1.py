@@ -124,7 +124,8 @@ class PoseOrientationSim2RealV1Cfg(DirectRLEnvCfg):
     )
 
     # GRIPPER_TCP robot model (8 joints: 6 arm + 2 finger)
-    robot = get_robot_cfg(RobotType.GRIPPER_TCP, "/World/envs/env_.*/ur5e")
+    # robot = get_robot_cfg(RobotType.GRIPPER_TCP, "/World/envs/env_.*/ur5e")
+    robot = get_robot_cfg(RobotType.GRIPPER_TCP_TUNED, "/World/envs/env_.*/ur5e") # Test with impedance coefs from tuned robot
 
     # scene assets
     table = get_table_cfg()
