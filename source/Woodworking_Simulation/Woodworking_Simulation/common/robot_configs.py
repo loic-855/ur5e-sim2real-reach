@@ -58,6 +58,7 @@ class RobotType:
     """Robot configuration identifiers."""
     NO_GRIPPER = "no_gripper"
     GRIPPER_TCP = "gripper_tcp"
+    GRIPPER_TCP_TUNED = "gripper_tcp_tuned"
     GRIPPER_TCP_NO_ACTUATION = "gripper_tcp_no_actuation"
     GRIPPER_TCP_WIDE = "gripper_tcp_wide"
     SCREWDRIVER_TCP = "screwdriver_tcp"
@@ -224,6 +225,68 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
             },
         )
     
+    elif robot_type == RobotType.GRIPPER_TCP_TUNED:
+        return ArticulationCfg(
+            prim_path=prim_path,
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=str(USD_FILES_DIR / "ur5e_gripper_tcp_small.usd"),
+                activate_contact_sensors=True,
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    disable_gravity=False,
+                    max_depenetration_velocity=5.0,
+                ),
+                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                    enabled_self_collisions=True, 
+                    solver_position_iteration_count=12, 
+                    solver_velocity_iteration_count=1
+                ),
+            ),
+            init_state=ArticulationCfg.InitialStateCfg(
+                joint_pos={
+                    "shoulder_pan_joint": 0.0,
+                    "shoulder_lift_joint": -1.57,
+                    "elbow_joint": 0.0,
+                    "wrist_1_joint": -1.57,
+                    "wrist_2_joint": 0.0,
+                    "wrist_3_joint": 0.0,
+                    "left_finger_joint": 0.0,
+                    "right_finger_joint": 0.0,
+                },
+                pos=robot_local_pos,
+                rot=robot_local_rot,  # Same rotation as no_gripper
+            ),
+            actuators={
+                "shoulder_pan_action": ImplicitActuatorCfg(
+                    joint_names_expr=["shoulder_pan_joint"],
+                    damping=24.5, stiffness=600,
+                    effort_limit=150,
+                    velocity_limit=MAX_JOINT_VEL
+                ),
+                "shoulder_lift_action": ImplicitActuatorCfg(
+                    joint_names_expr=["shoulder_lift_joint"],
+                    damping=69.3, stiffness=1200,
+                    effort_limit=150,
+                    velocity_limit=MAX_JOINT_VEL
+                ),
+                "elbow_action": ImplicitActuatorCfg(
+                    joint_names_expr=["elbow_joint"],
+                    damping=24.5, stiffness=600,
+                    effort_limit=150,
+                    velocity_limit=MAX_JOINT_VEL
+                ),
+                "wrist_action": ImplicitActuatorCfg(
+                    joint_names_expr=["wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
+                    damping=6.5, stiffness=200,
+                    effort_limit=28,
+                    velocity_limit=MAX_JOINT_VEL
+                ),
+                "gripper_action": ImplicitActuatorCfg(
+                    joint_names_expr=["left_finger_joint", "right_finger_joint"],
+                    damping=5, stiffness=1200
+                ),
+            },
+        )
+
     elif robot_type == RobotType.GRIPPER_TCP_WIDE:
         return ArticulationCfg(
             prim_path=prim_path,
