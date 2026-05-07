@@ -61,6 +61,7 @@ from Woodworking_Simulation.common.robot_configs import (
     get_origin_marker_cfg,
     get_robot_cfg,
     get_robot_grasp_marker_cfg,
+    get_source_frame_marker_cfg,
     get_table_cfg,
     get_terrain_cfg,
     setup_dome_light,
@@ -131,7 +132,8 @@ class PoseOrientationSim2RealV1Cfg(DirectRLEnvCfg):
     table = get_table_cfg()
     terrain = get_terrain_cfg()
     goal_marker = get_goal_marker_cfg()
-    origin_marker = get_origin_marker_cfg()
+    origin_marker = get_origin_marker_cfg()  # shows env_origins (table centre)
+    source_frame_marker = get_source_frame_marker_cfg()  # shows FrameTransformer source frame
     ee_marker = get_robot_grasp_marker_cfg()
 
     # frame transformer – TCP pose relative to table centre
@@ -321,9 +323,9 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         # visualisation markers
         if self.cfg.debug:
             self.goal_marker = VisualizationMarkers(cfg.goal_marker)
-            self.origin_marker = VisualizationMarkers(cfg.origin_marker)
+            self.origin_marker = VisualizationMarkers(cfg.origin_marker)  # /Visuals/origin
             self.ee_marker = VisualizationMarkers(cfg.ee_marker)
-            self.source_marker = VisualizationMarkers(cfg.origin_marker)
+            self.source_marker = VisualizationMarkers(cfg.source_frame_marker)  # /Visuals/source_frame
 
         self._sample_goal()
 

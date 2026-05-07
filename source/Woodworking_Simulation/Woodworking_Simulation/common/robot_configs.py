@@ -97,6 +97,16 @@ def get_origin_marker_cfg(scale: tuple[float, float, float] = (0.02, 0.02, 0.02)
         )},
     )
 
+def get_source_frame_marker_cfg(scale: tuple[float, float, float] = (0.02, 0.02, 0.02)) -> VisualizationMarkersCfg:
+    """Get source-frame marker configuration for debugging (distinct prim path from origin)."""
+    return VisualizationMarkersCfg(
+        prim_path="/Visuals/source_frame",
+        markers={"frame": sim_utils.UsdFileCfg(
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/UIElements/frame_prim.usd",
+            scale=scale,
+        )},
+    )
+
 def get_robot_grasp_marker_cfg(scale: tuple[float, float, float] = (0.05, 0.05, 0.05)) -> VisualizationMarkersCfg:
     """Get robot grasp marker configuration for debugging."""
     return VisualizationMarkersCfg(
