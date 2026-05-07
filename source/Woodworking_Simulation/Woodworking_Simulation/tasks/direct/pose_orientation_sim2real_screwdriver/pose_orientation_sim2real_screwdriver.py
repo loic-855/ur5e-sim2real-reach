@@ -58,17 +58,29 @@ from Woodworking_Simulation.common.robot_configs import (
     get_origin_marker_cfg,
     get_robot_cfg,
     get_robot_grasp_marker_cfg,
+    get_source_frame_marker_cfg,
     get_table_cfg,
     get_terrain_cfg,
     setup_dome_light,
 )
 
-BASE_OFFSET_LOCAL = ((TABLE_WIDTH / 2 - 0.08), -(TABLE_DEPTH / 2 - 0.08), -MOUNT_HEIGHT)
-BASE_ROTATION_LOCAL = (0.0, 0.0, 0.0, 1.0)
+# Source-frame origin offset from base_link.
+# Chosen so that: screwdriver_pos + BASE_OFFSET_LOCAL = ENV_ORIGIN_OFFSET (table centre)
+# screwdriver_pos = (-0.08, 0.08, ...) → offset = (-0.60 - (-0.08), 0.40 - 0.08, -MOUNT_HEIGHT)
+BASE_OFFSET_LOCAL = ((TABLE_DEPTH / 2 - 0.08), (TABLE_WIDTH / 2 - 0.08), -MOUNT_HEIGHT)
+BASE_ROTATION_LOCAL = (0.707107, 0.0, 0.0, -0.707107)
+
+# The source frame is world-aligned (BASE_ROTATION_LOCAL compensates base_link's +90°Z world
+# rotation so the product is identity).  The UR5e DH FK gives positions in base_link's LOCAL
+# axes (+90°Z from world).  To convert to the world-aligned source frame we apply
+# quat_inv(BASE_ROTATION_LOCAL) = +90°Z.  Since _fk_to_source_frame calls quat_inv() on this
+# constant, setting FK_TO_SOURCE_ROT = BASE_ROTATION_LOCAL achieves that automatically.
+FK_TO_SOURCE_ROT = BASE_ROTATION_LOCAL  # gives +90°Z when inverted in _fk_to_source_frame
+
 
 # TCP offset from wrist_3_link
 TCP_OFFSET_LOCAL = (0.161, 0.0, 0.094)
-TCP_ROTATION_LOCAL = (0.5, 0.5, 0.5, 0.5)  
+TCP_ROTATION_LOCAL = (0.5, 0.5, 0.5, 0.5)
 from Woodworking_Simulation.common.domain_randomization import (
     ActionBuffer,
     ActuatorRandomizer,
@@ -127,7 +139,8 @@ class PoseOrientationSim2RealScrewdriverV1Cfg(DirectRLEnvCfg):
     table = get_table_cfg()
     terrain = get_terrain_cfg()
     goal_marker = get_goal_marker_cfg()
-    origin_marker = get_origin_marker_cfg()
+    origin_marker = get_origin_marker_cfg()  # shows env_origins (table centre)
+    source_frame_marker = get_source_frame_marker_cfg()  # shows FrameTransformer source frame
     ee_marker = get_robot_grasp_marker_cfg()
 
     # frame transformer – TCP pose relative to table centre
@@ -197,7 +210,7 @@ class PoseOrientationSim2RealScrewdriverV1Cfg(DirectRLEnvCfg):
     goal_height = [0.1, 0.6]
 
     # --- Debug ---
-    debug = True
+    debug = False
     contact_debug_interval: int = 0
 
     # --- Domain Randomization ---
@@ -243,6 +256,14 @@ class PoseOrientationSim2RealScrewdriverV1(DirectRLEnv):
 
         # look up wrist body index dynamically
         self._wrist_body_idx = self._robot.body_names.index("wrist_3_link")
+        self._base_link_idx  = self._robot.body_names.index("base_link")
+
+        base_world = self._robot.data.body_pos_w[0, self._base_link_idx]
+        base_quat_w = self._robot.data.body_quat_w[0, self._base_link_idx]  # (w,x,y,z)
+        source_world = base_world + quat_apply(base_quat_w.unsqueeze(0), torch.tensor(BASE_OFFSET_LOCAL, device=self.device).unsqueeze(0)).squeeze(0)
+        print(f"Source frame world (rotation-corrected): {source_world[:2]}")
+        print(f"env_origins world:                        {self.env_origins[0, :2]}")
+        print(f"base_link quat_w (w,x,y,z):               {base_quat_w.cpu().numpy()}  <- inherited by source frame")
 
         # Pre-compute UR5e DH parameters
         import math
@@ -276,6 +297,9 @@ class PoseOrientationSim2RealScrewdriverV1(DirectRLEnv):
         )
         self._source_rot_in_base = torch.tensor(
             BASE_ROTATION_LOCAL, device=self.device, dtype=torch.float32
+        )
+        self._fk_to_source_rot = torch.tensor(
+            FK_TO_SOURCE_ROT, device=self.device, dtype=torch.float32
         )
         self.goal_pos_source = torch.zeros(
             (self._num_envs, 3), device=self.device, dtype=torch.float32
@@ -319,9 +343,9 @@ class PoseOrientationSim2RealScrewdriverV1(DirectRLEnv):
         # visualisation markers
         if self.cfg.debug:
             self.goal_marker = VisualizationMarkers(cfg.goal_marker)
-            self.origin_marker = VisualizationMarkers(cfg.origin_marker)
+            self.origin_marker = VisualizationMarkers(cfg.origin_marker)  # /Visuals/origin
             self.ee_marker = VisualizationMarkers(cfg.ee_marker)
-            self.source_marker = VisualizationMarkers(cfg.origin_marker)
+            self.source_marker = VisualizationMarkers(cfg.source_frame_marker)  # /Visuals/source_frame
 
         self._sample_goal()
 
@@ -455,10 +479,25 @@ class PoseOrientationSim2RealScrewdriverV1(DirectRLEnv):
         )
         obs = self._obs_buffer.append_and_get(obs)
 
-        if self.cfg.debug and self.common_step_counter % 100 == 0:
+        if self.cfg.debug and self.common_step_counter % 50 == 0:
+            tcp_w   = frame_data.target_pos_w[0, self._ee_frame_idx]   # world pos of TCP
+            goal_w  = self.goal_pos_source[0] + self.env_origins[0]    # world pos of goal marker
+            pos_err = (self.goal_pos_source[0] - tcp_pos_source[0]).norm().item()
+
+            # cross-check: tcp_w should equal tcp_pos_source + env_origins
+            tcp_from_source = tcp_pos_source[0] + self.env_origins[0]
+            source_offset_err = (tcp_w - tcp_from_source).norm().item()
+
             print(
-                f"Observations: tcp_pos_source={tcp_pos_source[0].cpu().numpy()}, "
-                f"Observation vector sample: {obs[0].cpu().numpy()}"
+                f"\n[DEBUG step={self.common_step_counter}]\n"
+                f"  tcp_pos_source  (source frame): {tcp_pos_source[0].cpu().numpy()}\n"
+                f"  goal_pos_source (source frame): {self.goal_pos_source[0].cpu().numpy()}\n"
+                f"  pos_error (source frame, m):    {pos_err:.4f}\n"
+                f"  tcp world pos  (marker):        {tcp_w.cpu().numpy()}\n"
+                f"  goal world pos (marker):        {goal_w.cpu().numpy()}\n"
+                f"  goal-tcp world delta:           {(goal_w - tcp_w).cpu().numpy()}\n"
+                f"  source_frame→world consistency: {source_offset_err:.5f}  (should be ~0)\n"
+                f"  env_origins[0]:                 {self.env_origins[0].cpu().numpy()}"
             )
         return {"policy": obs}
 
@@ -662,9 +701,15 @@ class PoseOrientationSim2RealScrewdriverV1(DirectRLEnv):
     def _fk_to_source_frame(
         self, pos_base: torch.Tensor, quat_base: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Convert FK outputs from base_link frame to the FrameTransformer source frame."""
+        """Convert FK outputs from the DH base frame to the FrameTransformer source frame.
+
+        The source frame is world-aligned (BASE_ROTATION_LOCAL compensates base_link
+        orientation).  The UR5e DH base frame axes match the world/source axes, so only
+        the origin offset needs to be subtracted; FK_TO_SOURCE_ROT handles any residual
+        DH-to-source rotation (identity by default).
+        """
         N = pos_base.shape[0]
-        inv_rot = quat_inv(self._source_rot_in_base.unsqueeze(0).expand(N, -1))
+        inv_rot = quat_inv(self._fk_to_source_rot.unsqueeze(0).expand(N, -1))
         delta = pos_base - self._source_origin_in_base.unsqueeze(0)
         pos_source = quat_apply(inv_rot, delta)
         quat_source = quat_mul(inv_rot, quat_base)
@@ -691,6 +736,7 @@ class PoseOrientationSim2RealScrewdriverV1(DirectRLEnv):
             self.goal_steps_elapsed[env_ids] = 0
             if self.cfg.debug:
                 marker_idx = torch.zeros(n, dtype=torch.int64, device=self.device)
+                # Source frame is world-aligned: goal_world = env_origins + goal_pos_source
                 self.goal_marker.visualize(
                     self.goal_pos_source[env_ids] + self.env_origins[env_ids],
                     self.goal_quat_source[env_ids],
@@ -747,6 +793,7 @@ class PoseOrientationSim2RealScrewdriverV1(DirectRLEnv):
 
         if self.cfg.debug:
             marker_idx = torch.zeros(n, dtype=torch.int64, device=self.device)
+            # Source frame is world-aligned: goal_world = env_origins + goal_pos_source
             self.goal_marker.visualize(
                 self.goal_pos_source[env_ids] + self.env_origins[env_ids],
                 self.goal_quat_source[env_ids],
