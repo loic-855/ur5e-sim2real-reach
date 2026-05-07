@@ -267,8 +267,8 @@ class PoseOrientationSim2RealScrewdriverV1(DirectRLEnv):
 
         # Pre-compute UR5e DH parameters
         import math
-        self._dh_a = [0.0, -0.425, -0.3922, 0.0, 0.0, 0.0]
-        self._dh_d = [0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996]
+        self._dh_a = [0.0, -0.425, -0.3922, 0.0, 0.0, TCP_OFFSET_LOCAL[0]]
+        self._dh_d = [0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996 + TCP_OFFSET_LOCAL[2]]
         self._dh_alpha = [math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2, 0.0]
         self._dh_cos_alpha = [math.cos(a) for a in self._dh_alpha]
         self._dh_sin_alpha = [math.sin(a) for a in self._dh_alpha]
