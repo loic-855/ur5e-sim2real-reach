@@ -198,6 +198,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
+    # handle deprecated config fields (e.g. old `policy` → new `actor`/`critic` for rsl-rl >= 4.0.0)
+    #agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
+    # strip fields added for rsl-rl >= 4.0.0 that older versions don't accept
+    _alg = agent_cfg.algorithm
+    for _field in ("optimizer", "share_cnn_encoders"):
+        if hasattr(_alg, _field):
+            delattr(_alg, _field)
+
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
     if agent_cfg.class_name == "OnPolicyRunner":
