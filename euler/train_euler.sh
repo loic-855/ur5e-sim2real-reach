@@ -69,13 +69,19 @@ apptainer exec --nv \
     --env WANDB_DIR=$PROJECT_PATH \
     --env WANDB_CACHE_DIR=$HOME/.cache/wandb \
     --env WANDB_CONFIG_DIR=$HOME/.config/wandb \
+    --env WANDB_START_METHOD=thread \
+    --env WANDB__SERVICE_WAIT=300 \
     $SIF_PATH \
     bash -c "
-        # 1. Install Project in Editable Mode
+        # 1. Upgrade W&B to avoid known SDK 0.24.0 upload issues
+        echo 'Upgrading Weights & Biases (wandb)...'
+        /isaac-sim/python.sh -m pip install --user --upgrade 'wandb>=0.24.1'
+
+        # 2. Install Project in Editable Mode
         echo 'Installing Project...'
         /isaac-sim/python.sh -m pip install --user -e /workspace/isaaclab/$PROJECT_NAME/source/$PROJECT_NAME
 
-        # 2. Run Training
+        # 3. Run Training
         echo 'Starting Training'
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \

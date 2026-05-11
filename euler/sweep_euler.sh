@@ -125,9 +125,9 @@ echo "Runs:       $START_IDX to $END_IDX  (of $TOTAL_RUNS total)"
 echo "Started:    $(date)"
 echo "================================================================"
 
-# --- INSTALL PROJECT (once per job) ---
+# --- PREPARE PYTHON ENV + INSTALL PROJECT (once per job) ---
 echo ""
-echo "[Setup] Installing project in editable mode..."
+echo "[Setup] Upgrading wandb and installing project in editable mode..."
 apptainer exec --nv \
     -B $JOB_CACHE/kit_cache:/isaac-sim/kit/cache:rw \
     -B $JOB_CACHE/kit_data:/isaac-sim/kit/data:rw \
@@ -149,8 +149,13 @@ apptainer exec --nv \
     --env WANDB_DIR=$PROJECT_PATH \
     --env WANDB_CACHE_DIR=$HOME/.cache/wandb \
     --env WANDB_CONFIG_DIR=$HOME/.config/wandb \
+    --env WANDB_START_METHOD=thread \
+    --env WANDB__SERVICE_WAIT=300 \
     $SIF_PATH \
-    bash -c "/isaac-sim/python.sh -m pip install --user -e /workspace/isaaclab/$PROJECT_NAME/source/$PROJECT_NAME"
+    bash -c "
+        /isaac-sim/python.sh -m pip install --user --upgrade 'wandb>=0.24.1' &&
+        /isaac-sim/python.sh -m pip install --user -e /workspace/isaaclab/$PROJECT_NAME/source/$PROJECT_NAME
+    "
 
 INSTALL_EXIT=$?
 if [ $INSTALL_EXIT -ne 0 ]; then
@@ -208,6 +213,8 @@ for RUN_IDX in $(seq $START_IDX $END_IDX); do
         --env WANDB_DIR=$PROJECT_PATH \
         --env WANDB_CACHE_DIR=$HOME/.cache/wandb \
         --env WANDB_CONFIG_DIR=$HOME/.config/wandb \
+        --env WANDB_START_METHOD=thread \
+        --env WANDB__SERVICE_WAIT=300 \
         $SIF_PATH \
         bash -c "
             echo 'Starting Training: $RUN_NAME'
