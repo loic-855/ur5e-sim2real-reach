@@ -88,7 +88,7 @@ apptainer exec --nv \
             env.domain_rand.enable_noise=False \
             env.domain_rand.enable_delay=True \
             env.domain_rand.action_delay_range=[1,2] \
-            env.domain_rand.obs_delay_range=[0,1]o
+            env.domain_rand.obs_delay_range=[0,1]
     "
 
 # Cleanup Cache
