@@ -3,10 +3,10 @@
 #   euler/launch_sweep.sh  (generates & submits SLURM array jobs)
 
 #SBATCH -n 1
-#SBATCH --cpus-per-task=3
+#SBATCH --cpus-per-task=8
 #SBATCH --gpus=rtx_pro_6000:1
-#SBATCH --time=6:37:06
-#SBATCH --mem-per-cpu=4096
+#SBATCH --time=8:00:00
+#SBATCH --mem-per-cpu=3000
 #SBATCH --job-name="WWSim-Pose-Orientation-Sim2Real-Screwdriver-Direct-v1"
 #SBATCH --output=logs/train_%j.out
 #SBATCH --error=logs/train_%j.err
