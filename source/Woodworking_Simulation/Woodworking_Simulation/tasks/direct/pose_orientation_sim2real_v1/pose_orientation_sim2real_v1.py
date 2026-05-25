@@ -242,12 +242,21 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         # base_link permanently contacts the mount/table; mask it out of the contact metric
         self._base_contact_body_idx = self._contact_sensor.body_names.index("base_link")
 
-        # Pre-compute UR5e DH parameters
-        self._dh_a = [0.0, -0.425, -0.3922, 0.0, 0.0, 0.0]
-        self._dh_d = [0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996 + TCP_OFFSET_LOCAL[2]]
-        self._dh_alpha = [math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2, 0.0]
-        self._dh_cos_alpha = [math.cos(a) for a in self._dh_alpha]
-        self._dh_sin_alpha = [math.sin(a) for a in self._dh_alpha]
+        # Pre-compute UR5e DH parameters as GPU tensors (avoids Python-float→tensor
+        # casts inside the per-step FK loop)
+        _dh_a_vals     = [0.0, -0.425, -0.3922, 0.0, 0.0, 0.0]
+        _dh_d_vals     = [0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996 + TCP_OFFSET_LOCAL[2]]
+        _dh_alpha_vals = [math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2, 0.0]
+        self._dh_a         = torch.tensor(_dh_a_vals,     device=self.device, dtype=torch.float32)
+        self._dh_d         = torch.tensor(_dh_d_vals,     device=self.device, dtype=torch.float32)
+        self._dh_cos_alpha = torch.tensor([math.cos(a) for a in _dh_alpha_vals], device=self.device, dtype=torch.float32)
+        self._dh_sin_alpha = torch.tensor([math.sin(a) for a in _dh_alpha_vals], device=self.device, dtype=torch.float32)
+
+        # Mirror quaternion for below-table FK goals — pre-computed to avoid
+        # torch.tensor() allocation inside the reset hot path
+        self._q_mirror_below = torch.tensor(
+            [0.0, 2 ** -0.5, 2 ** -0.5, 0.0], device=self.device, dtype=torch.float32
+        )
 
         # Joint limits for the 6 ARM joints only
         arm_limits = list(JOINT_LIMITS.values())[:NUM_ARM_JOINTS]
@@ -564,36 +573,26 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         dev = joint_angles.device
         dt = joint_angles.dtype
 
-        a_list = self._dh_a
-        d_list = self._dh_d
-        cos_alpha = self._dh_cos_alpha
-        sin_alpha = self._dh_sin_alpha
+        a  = self._dh_a.to(dtype=dt)
+        d  = self._dh_d.to(dtype=dt)
+        ca = self._dh_cos_alpha.to(dtype=dt)
+        sa = self._dh_sin_alpha.to(dtype=dt)
 
-        T = torch.eye(4, device=dev, dtype=dt).unsqueeze(0).repeat(N, 1, 1)
+        # Compute all 6 cos/sin at once: 2 kernel launches instead of 12
+        ct = torch.cos(joint_angles)  # (N, 6)
+        st = torch.sin(joint_angles)  # (N, 6)
+
+        T = torch.eye(4, device=dev, dtype=dt).unsqueeze(0).expand(N, -1, -1).clone()
+        zeros = torch.zeros(N, device=dev, dtype=dt)
 
         for i in range(6):
-            theta = joint_angles[:, i]
-            ct = torch.cos(theta)
-            st = torch.sin(theta)
-            ca = cos_alpha[i]
-            sa = sin_alpha[i]
-            ai = a_list[i]
-            di = d_list[i]
-
-            Ti = torch.zeros(N, 4, 4, device=dev, dtype=dt)
-            Ti[:, 0, 0] = ct
-            Ti[:, 0, 1] = -st * ca
-            Ti[:, 0, 2] =  st * sa
-            Ti[:, 0, 3] =  ai * ct
-            Ti[:, 1, 0] =  st
-            Ti[:, 1, 1] =  ct * ca
-            Ti[:, 1, 2] = -ct * sa
-            Ti[:, 1, 3] =  ai * st
-            Ti[:, 2, 1] =  sa
-            Ti[:, 2, 2] =  ca
-            Ti[:, 2, 3] =  di
-            Ti[:, 3, 3] =  1.0
-
+            cti = ct[:, i]; sti = st[:, i]
+            # Build Ti via torch.stack — avoids ~8 per-element scatter kernel launches
+            row0 = torch.stack([cti,      -sti * ca[i],  sti * sa[i],  a[i] * cti], dim=1)
+            row1 = torch.stack([sti,       cti * ca[i], -cti * sa[i],  a[i] * sti], dim=1)
+            row2 = torch.stack([zeros, zeros + sa[i], zeros + ca[i], zeros + d[i]], dim=1)
+            row3 = torch.stack([zeros,         zeros,         zeros,  zeros + 1.0], dim=1)
+            Ti = torch.stack([row0, row1, row2, row3], dim=1)  # (N, 4, 4)
             T = torch.bmm(T, Ti)
 
         pos_base = T[:, :3, 3]
@@ -693,10 +692,7 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
             below = ps[:, 2] < 0.0
             if torch.any(below):
                 ps[below, 2] = -ps[below, 2]
-                s = 2 ** -0.5
-                q_mirror = torch.tensor(
-                    [0.0, s, s, 0.0], device=self.device, dtype=qs.dtype
-                ).unsqueeze(0).expand(int(below.sum()), -1)
+                q_mirror = self._q_mirror_below.unsqueeze(0).expand(int(below.sum()), -1)
                 qs[below] = quat_mul(q_mirror, qs[below])
 
             self.goal_pos_source[fk_ids]  = ps
