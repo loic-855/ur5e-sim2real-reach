@@ -239,6 +239,9 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         self._frame_transformer = self.scene.sensors["frame_transformer"]
         self._ee_frame_idx = self._frame_transformer.data.target_frame_names.index("ee_tcp")
 
+        # base_link permanently contacts the mount/table; mask it out of the contact metric
+        self._base_contact_body_idx = self._contact_sensor.body_names.index("base_link")
+
         # Pre-compute UR5e DH parameters
         self._dh_a = [0.0, -0.425, -0.3922, 0.0, 0.0, 0.0]
         self._dh_d = [0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996 + TCP_OFFSET_LOCAL[2]]
@@ -550,7 +553,7 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
 
         if self.cfg.debug:
             marker_idx = torch.zeros(len(env_ids), dtype=torch.int64, device=self.device)
-            self.origin_marker.visualize(self.env_origins, marker_indices=marker_idx)
+            self.origin_marker.visualize(self.env_origins[env_ids], marker_indices=marker_idx)
             self._visualize_source_frame(env_ids, marker_idx)
 
     # -- Goal sampling ------------------------------------------------------
@@ -728,8 +731,8 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
             body_quat_w = self._robot.data.body_quat_w[env_ids, base_idx]
             q_w = body_quat_w[:, 0:1]
             q_vec = body_quat_w[:, 1:4]
-            rotated = src_off + 2.0 * torch.cross(
-                q_vec, torch.cross(q_vec, src_off) + q_w * src_off, dim=1
+            rotated = src_off + 2.0 * torch.linalg.cross(
+                q_vec, torch.linalg.cross(q_vec, src_off, dim=1) + q_w * src_off, dim=1
             )
             src_world = body_pos_w + rotated
             self.source_marker.visualize(src_world, src_rot, marker_indices=marker_idx)
@@ -748,6 +751,7 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
 
         forces = data.net_forces_w
         magnitudes = torch.norm(forces, dim=2)
+        magnitudes[:, self._base_contact_body_idx] = 0.0  # permanent mount contact, not a collision
         max_per_env, max_body_idx = magnitudes.max(dim=1)
 
         if (
