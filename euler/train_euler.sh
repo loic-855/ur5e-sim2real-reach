@@ -12,7 +12,7 @@
 #SBATCH --error=logs/train_%j.err
 
 # --- CONFIGURATION ---
-TASK_NAME="WWSim-Pose-Orientation-Sim2Real-Screwdriver-Direct-v1"  # Must match a task_name in your config files (e.g. source/wwsim/configs/pose_orientation_sim2real_direct.yaml)
+TASK_NAME="WWSim-Pose-Orientation-Sim2Real-Direct-v1"  # Must match a task_name in your config files (e.g. source/wwsim/configs/pose_orientation_sim2real_direct.yaml)
 # UPDATE THIS PATH to where you uploaded your .sif file
 SIF_PATH="/cluster/scratch/$USER/isaac_euler_salziegl.sif"
 
@@ -70,7 +70,7 @@ apptainer exec --nv \
     --env WANDB_CACHE_DIR=$HOME/.cache/wandb \
     --env WANDB_CONFIG_DIR=$HOME/.config/wandb \
     --env WANDB_START_METHOD=thread \
-    --env WANDB__SERVICE_WAIT=300 \
+    --env WANDB__SERVICE_WAIT=10 \
     $SIF_PATH \
     bash -c "
         # 1. Upgrade W&B to avoid known SDK 0.24.0 upload issues
@@ -86,7 +86,7 @@ apptainer exec --nv \
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \
             --headless \
-            --run_name=rand-actuator-delay-1-2-tuned-coeffs-screw \
+            --run_name=reduced_obs\
             agent.max_iterations=1500 \
             env.debug=False \
             env.domain_rand.enable_actuator_rand=True \

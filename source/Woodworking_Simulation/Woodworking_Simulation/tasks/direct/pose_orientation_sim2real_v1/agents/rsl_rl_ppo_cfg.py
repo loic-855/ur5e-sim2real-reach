@@ -44,5 +44,5 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
     logger = "wandb"
-    wandb_project = "sim2real_v1_final"
+    wandb_project = "sim2real_v1_reduced_obs"
     monitor_gym = True
