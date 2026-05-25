@@ -14,9 +14,8 @@ are controlled.
 Same architecture as V2 but with **position-only control**: the policy outputs
 6 joint-position increments instead of 12 (no velocity feedforward head).
 
-Observations (24-dim):
-    pos_error (3), ori_error (3), joint_pos (6 arm), joint_vel (6 arm),
-    tcp_linear_vel (3), tcp_angular_vel (3).
+Observations (18-dim):
+    pos_error (3), ori_error (3), joint_pos (6 arm), joint_vel (6 arm).
 
 Actions (6-dim):
     position increments (6 arm joints only).
@@ -101,7 +100,7 @@ class PoseOrientationSim2RealV1Cfg(DirectRLEnvCfg):
 
     # spaces – 6 actions: position increments only (arm)
     action_space = 6
-    observation_space = 24
+    observation_space = 18
     state_space = 0
 
     # simulation
@@ -192,9 +191,6 @@ class PoseOrientationSim2RealV1Cfg(DirectRLEnvCfg):
     contact_penalty_scale = -0.01
     contact_force_threshold_penalty = 5.0
     joint_limit_penalty_scale = -0.02
-
-    # TCP velocity normalization (m/s)
-    tcp_max_speed = 2.0
 
     # Goal sampling: 0.0 = 100 % FK-based, 1.0 = 100 % random cylindrical
     goal_sampling_random_ratio: float = 0.3
@@ -442,9 +438,6 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
             - 1.0
         )
         joint_vel_norm = arm_joint_vel / MAX_JOINT_VEL
-        tcp_angular_vel, tcp_linear_vel = self.compute_tcp_states()
-        tcp_linear_vel_norm = tcp_linear_vel / self.cfg.tcp_max_speed
-        tcp_angular_vel_norm = tcp_angular_vel / torch.pi
 
         obs = torch.cat(
             [
@@ -452,8 +445,6 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
                 orientation_error_norm,  # 3
                 self.joint_pos_norm,     # 6 (arm only)
                 joint_vel_norm,          # 6 (arm only)
-                tcp_linear_vel_norm,     # 3
-                tcp_angular_vel_norm,    # 3
             ],
             dim=1,
         )
@@ -852,26 +843,4 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         self._robot.data.joint_pos[env_ids] = joint_pos
         self._robot.data.joint_vel[env_ids] = 0.0
 
-    # -- TCP velocity computation -------------------------------------------
 
-    def compute_tcp_states(self):
-        wrist_quat_w = self._robot.data.body_link_quat_w[:, self._wrist_body_idx]
-        wrist_vel_w = self._robot.data.body_link_vel_w[:, self._wrist_body_idx]
-        lin_vel_wrist_w = wrist_vel_w[:, :3]
-        ang_vel_wrist_w = wrist_vel_w[:, 3:]
-
-        tcp_offset = (
-            torch.tensor(TCP_OFFSET_LOCAL, device=self.device, dtype=torch.float32)
-            .unsqueeze(0).expand(wrist_quat_w.shape[0], -1)
-        )
-        r_offset_w = quat_apply(wrist_quat_w, tcp_offset)
-        v_tcp_w = lin_vel_wrist_w + torch.cross(ang_vel_wrist_w, r_offset_w, dim=-1)
-
-        base_rot = (
-            torch.tensor(BASE_ROTATION_LOCAL, device=self.device, dtype=torch.float32)
-            .unsqueeze(0).expand(wrist_quat_w.shape[0], -1)
-        )
-        inv_base = quat_inv(base_rot)
-        v_tcp_final = quat_apply(inv_base, v_tcp_w)
-        ang_vel_final = quat_apply(inv_base, ang_vel_wrist_w)
-        return v_tcp_final, ang_vel_final
