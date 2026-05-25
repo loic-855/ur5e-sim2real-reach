@@ -310,11 +310,10 @@ class ActionBuffer:
 class ObservationBuffer:
     """Per-environment observation delay buffer with structured Gaussian noise.
 
-    Expected observation layout (24-dim for 6 arm joints):
+    Expected observation layout (18-dim for 6 arm joints):
 
         pos_error_norm (3), ori_error_norm (3),
-        joint_pos_norm (6), joint_vel_norm (6),
-        tcp_linear_vel_norm (3), tcp_angular_vel_norm (3)
+        joint_pos_norm (6), joint_vel_norm (6)
 
     The buffer is lazily initialised on the first ``append_and_get`` call so that
     the actual runtime observation dimension is used.
@@ -420,7 +419,7 @@ class ObservationBuffer:
             self.delay[env_ids] = torch.randint(lo, hi + 1, (len(env_ids),), device=self.device)
 
     def _build_noise_vector(self) -> torch.Tensor:
-        """Construct a 1-D noise-std tensor aligned with the V4 observation layout (24-dim).
+        """Construct a 1-D noise-std tensor aligned with the observation layout (18-dim).
 
         Config values are in physical units; they are divided here by the same
         normalisation constants used in the observation vector to convert them
@@ -428,11 +427,11 @@ class ObservationBuffer:
         """
         nj = self.num_joints
         cfg = self.cfg
-        expected_dim = 3 + 3 + nj + nj + 3 + 3  # 24 for 6 joints
+        expected_dim = 3 + 3 + nj + nj  # 18 for 6 joints
         if self.obs_dim != expected_dim:
             raise ValueError(
-                f"ObservationBuffer: expected obs_dim={expected_dim} for the V4 layout "
-                f"(3+3+{nj}+{nj}+3+3), got obs_dim={self.obs_dim}. "
+                f"ObservationBuffer: expected obs_dim={expected_dim} for the layout "
+                f"(3+3+{nj}+{nj}), got obs_dim={self.obs_dim}. "
                 "Update the environment observation_space or this noise builder."
             )
         import math
@@ -446,12 +445,10 @@ class ObservationBuffer:
         )[:nj]
 
         parts: list[torch.Tensor] = [
-            torch.full((3,),  cfg.obs_noise_std_pos         / MAX_REACH,      device=self.device),  # pos_error: m  → /MAX_REACH
-            torch.full((3,),  cfg.obs_noise_std_ori         / math.pi,        device=self.device),  # ori_error: rad → /π
-            torch.full((1,), cfg.obs_noise_std_joint_pos, device=self.device).expand(nj) / joint_half_ranges,  # joint_pos: rad → /half_range
-            torch.full((nj,), cfg.obs_noise_std_joint_vel   / MAX_JOINT_VEL,  device=self.device),  # joint_vel: rad/s → /MAX_JOINT_VEL
-            torch.full((3,),  cfg.obs_noise_std_tcp_lin_vel / TCP_MAX_SPEED,  device=self.device),  # tcp_lin_vel: m/s → /TCP_MAX_SPEED
-            torch.full((3,),  cfg.obs_noise_std_tcp_ang_vel / math.pi,        device=self.device),  # tcp_ang_vel: rad/s → /π
+            torch.full((3,),  cfg.obs_noise_std_pos       / MAX_REACH,     device=self.device),  # pos_error: m  → /MAX_REACH
+            torch.full((3,),  cfg.obs_noise_std_ori       / math.pi,       device=self.device),  # ori_error: rad → /π
+            torch.full((1,),  cfg.obs_noise_std_joint_pos, device=self.device).expand(nj) / joint_half_ranges,  # joint_pos: rad → /half_range
+            torch.full((nj,), cfg.obs_noise_std_joint_vel / MAX_JOINT_VEL, device=self.device),  # joint_vel: rad/s → /MAX_JOINT_VEL
         ]
         return torch.cat(parts)
 
