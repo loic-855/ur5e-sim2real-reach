@@ -42,7 +42,7 @@ from isaaclab.sensors import (
 from isaaclab.sim import PhysxCfg, SimulationCfg
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 from isaaclab.utils import configclass
-from isaaclab.utils.math import sample_uniform, quat_error_magnitude, quat_box_minus, quat_apply_yaw, quat_inv, quat_apply, quat_mul
+from isaaclab.utils.math import sample_uniform, quat_error_magnitude, quat_box_minus, quat_inv, quat_apply, quat_mul
 
 # Shared project helpers
 from Woodworking_Simulation.common.robot_configs import (
@@ -169,7 +169,6 @@ class PoseOrientationSim2RealV1Cfg(DirectRLEnvCfg):
     # action and coef scaling
     action_scale = 2.0
     reset_range = 0.125
-    goal_timeout_s = 10.0
 
     # reward weights
     ee_position_penalty = -1.0
@@ -226,12 +225,9 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
 
         self.dt = self.cfg.sim.dt * self.cfg.decimation
         self._num_envs = self.scene.cfg.num_envs
-        self.reward_buf = torch.zeros(self._num_envs, device=self.device, dtype=torch.float32)
         self._debug_step_count = 0
-        self.c_idx = 0
 
         # arm vs total joints
-        self._num_arm_joints = NUM_ARM_JOINTS
         self._num_total_joints = self._robot.num_joints  # 8 for GRIPPER_TCP
 
         # env origins with global offset
@@ -243,11 +239,7 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         self._frame_transformer = self.scene.sensors["frame_transformer"]
         self._ee_frame_idx = self._frame_transformer.data.target_frame_names.index("ee_tcp")
 
-        # look up wrist body index dynamically
-        self._wrist_body_idx = self._robot.body_names.index("wrist_3_link")
-
         # Pre-compute UR5e DH parameters
-        import math
         self._dh_a = [0.0, -0.425, -0.3922, 0.0, 0.0, 0.0]
         self._dh_d = [0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996 + TCP_OFFSET_LOCAL[2]]
         self._dh_alpha = [math.pi / 2, 0.0, 0.0, math.pi / 2, -math.pi / 2, 0.0]
@@ -261,7 +253,6 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         self.robot_dof_lower_limits = lower  # (6,)
         self.robot_dof_upper_limits = upper  # (6,)
         self.joint_pos_norm = torch.zeros((self._num_envs, NUM_ARM_JOINTS), device=self.device)
-        self.robot_dof_speed_scales = torch.ones_like(self.robot_dof_lower_limits)  # (6,)
 
         # Full joint targets (8-dim) – arm + gripper
         self.robot_dof_targets = self._robot.data.joint_pos.clone()  # (N, 8)
@@ -307,14 +298,6 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         self.actions = torch.zeros(
             (self._num_envs, self.cfg.action_space), device=self.device, dtype=torch.float32
         )
-        self.prev_actions = torch.zeros_like(self.actions)
-        self.success_frames_count = torch.zeros(
-            self.num_envs, dtype=torch.float32, device=self.device
-        )
-        self.goal_steps_elapsed = torch.zeros(
-            self.num_envs, dtype=torch.long, device=self.device
-        )
-        self.goal_max_steps = int(self.cfg.goal_timeout_s / self.dt)
 
         # visualisation markers
         if self.cfg.debug:
@@ -384,18 +367,12 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor):
         actions = actions.to(self.device)
-        self.prev_actions[:] = self.actions
         self.actions = actions.clone().clamp(-1.0, 1.0)
 
         effective_actions = self._action_buffer.push(self.actions)
 
         # Position increments only (6-dim)
-        increments = (
-            self.robot_dof_speed_scales.unsqueeze(0)
-            * self.dt
-            * effective_actions
-            * self.cfg.action_scale
-        )
+        increments = self.dt * effective_actions * self.cfg.action_scale
         arm_targets = self.robot_dof_targets[:, :NUM_ARM_JOINTS] + increments
         self.robot_dof_targets[:, :NUM_ARM_JOINTS] = torch.clamp(
             arm_targets,
@@ -484,14 +461,6 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         action_cost = torch.sum(self.actions ** 2, dim=1)
         velocity_cost = torch.sum(self._robot.data.joint_vel[:, :NUM_ARM_JOINTS] ** 2, dim=1)
 
-        # Goal timeout resampling
-        self.goal_steps_elapsed += 1
-        timed_out = self.goal_steps_elapsed >= self.goal_max_steps
-        if torch.any(timed_out):
-            timeout_ids = timed_out.nonzero(as_tuple=False).flatten()
-            self._sample_goal(timeout_ids)
-            self.success_frames_count[timeout_ids] = 0
-
         contact_forces = torch.clamp_max(self._compute_contact_metric(), 1000.0)
         excess = torch.relu(contact_forces - self.cfg.contact_force_threshold_penalty)
         contact_penalty = self.cfg.contact_penalty_scale * excess
@@ -571,9 +540,6 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         )
 
         self.actions[env_ids] = 0.0
-        self.prev_actions[env_ids] = 0.0
-        self.success_frames_count[env_ids] = 0
-        self._benchmark_goal_idx = 0
 
         self._action_buffer.reset(env_ids)
         self._obs_buffer.reset(env_ids)
@@ -627,12 +593,7 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
 
             T = torch.bmm(T, Ti)
 
-        tcp_z = TCP_OFFSET_LOCAL[2]
-        pos_base = torch.stack([
-            T[:, 0, 3] + T[:, 0, 2] * tcp_z,
-            T[:, 1, 3] + T[:, 1, 2] * tcp_z,
-            T[:, 2, 3] + T[:, 2, 2] * tcp_z,
-        ], dim=1)
+        pos_base = T[:, :3, 3]
 
         R = T[:, :3, :3]
         trace = R[:, 0, 0] + R[:, 1, 1] + R[:, 2, 2]
@@ -682,8 +643,8 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
             selected_goals = self.benchmark_goal_pos_quat[goal_idx].unsqueeze(0).expand(n, -1)
             self.goal_pos_source[env_ids] = selected_goals[:, :3]
             self.goal_quat_source[env_ids] = selected_goals[:, 3:7]
-            self._benchmark_goal_idx += 1
-            self.goal_steps_elapsed[env_ids] = 0
+            if 0 in env_ids:
+                self._benchmark_goal_idx += 1
             if self.cfg.debug:
                 marker_idx = torch.zeros(n, dtype=torch.int64, device=self.device)
                 self.goal_marker.visualize(
@@ -737,8 +698,6 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
 
             self.goal_pos_source[fk_ids]  = ps
             self.goal_quat_source[fk_ids] = qs
-
-        self.goal_steps_elapsed[env_ids] = 0
 
         if self.cfg.debug:
             marker_idx = torch.zeros(n, dtype=torch.int64, device=self.device)
