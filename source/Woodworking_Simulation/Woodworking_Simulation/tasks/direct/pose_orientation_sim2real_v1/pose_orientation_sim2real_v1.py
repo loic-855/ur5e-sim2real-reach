@@ -190,7 +190,11 @@ class PoseOrientationSim2RealV1Cfg(DirectRLEnvCfg):
     contact_penalty_scale = -0.2
     contact_force_threshold_penalty = 1.0   # N — anything above sensor noise (~0.1–0.3 N) is real contact
     contact_force_max_clamp: float = 100.0  # N — physical ceiling for UR5e; prevents quadratic blow-up
-    contact_ema_alpha: float = 0.7          # EMA decay; signal persists ~3-4 policy steps after contact ends
+    contact_penalty_max: float = -10.0      # per-env penalty floor; quadratic shape preserved up to ~8 N above threshold
+    contact_ema_alpha: float = 0.5          # EMA decay; signal persists ~7 policy steps after contact ends
+    # Curriculum: ramp contact penalty scale from 0 → contact_penalty_scale over this many steps.
+    # Robot first learns to reach, then progressively learns contact avoidance.
+    contact_curriculum_steps: int = 80000
     joint_limit_penalty_scale = -0.02
 
     # Goal sampling: 0.0 = 100 % FK-based, 1.0 = 100 % random cylindrical
@@ -246,6 +250,9 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
 
         # EMA contact force per env — persists signal for ~3-4 steps after a brief contact ends
         self._contact_ema = torch.zeros(self._num_envs, device=self.device, dtype=torch.float32)
+        # Step counter per env: used to suppress PhysX depenetration spike on the first
+        # policy step after teleportation (write_joint_state_to_sim at reset).
+        self._episode_step_count = torch.zeros(self._num_envs, dtype=torch.long, device=self.device)
 
         # Pre-compute UR5e DH parameters as GPU tensors (avoids Python-float→tensor
         # casts inside the per-step FK loop)
@@ -480,8 +487,26 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
 
         # Clamp to physical ceiling before squaring to prevent numerical blow-up
         contact_forces = torch.clamp(self._compute_contact_metric(), max=self.cfg.contact_force_max_clamp)
+        # Suppress PhysX depenetration spike: write_joint_state_to_sim generates a large
+        # transient impulse on step 0 of each episode (artifact, not a real collision).
+        # Also zero the EMA for those envs to prevent the spike from bleeding into step 1.
+        first_step_mask = (self._episode_step_count == 0)
+        if first_step_mask.any():
+            contact_forces = contact_forces.clone()
+            contact_forces[first_step_mask] = 0.0
+            self._contact_ema[first_step_mask] = 0.0
+        self._episode_step_count.add_(1)
         excess = torch.relu(contact_forces - self.cfg.contact_force_threshold_penalty)
-        contact_penalty = self.cfg.contact_penalty_scale * excess ** 2
+        # Curriculum: ramp scale from 0 to full over contact_curriculum_steps
+        if self.cfg.contact_curriculum_steps > 0:
+            t_c = min(1.0, float(self.common_step_counter) / float(self.cfg.contact_curriculum_steps))
+            effective_contact_scale = t_c * self.cfg.contact_penalty_scale
+        else:
+            effective_contact_scale = self.cfg.contact_penalty_scale
+        contact_penalty = torch.clamp(
+            effective_contact_scale * excess ** 2,
+            min=self.cfg.contact_penalty_max,  # cap: quadratic shape up to ~8 N above threshold
+        )
 
         threshold = 0.9
         out_of_bounds = torch.abs(self.joint_pos_norm) - threshold
@@ -559,6 +584,7 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
 
         self.actions[env_ids] = 0.0
         self._contact_ema[env_ids] = 0.0
+        self._episode_step_count[env_ids] = 0
 
         self._action_buffer.reset(env_ids)
         self._obs_buffer.reset(env_ids)
