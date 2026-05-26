@@ -12,7 +12,7 @@ from isaaclab_rl.rsl_rl import (
 )
 
 
-# UR5e + gripper, 24-dim observation, 6-dim action (position increments only)
+# UR5e + gripper, 18-dim observation, 6-dim action (position increments only)
 @configclass
 class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 512

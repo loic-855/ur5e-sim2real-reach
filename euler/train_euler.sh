@@ -86,7 +86,7 @@ apptainer exec --nv \
         /isaac-sim/python.sh /workspace/isaaclab/$PROJECT_NAME/scripts/rsl_rl/train.py \
             --task=$TASK_NAME \
             --headless \
-            --run_name=reduced_obs_opti\
+            --run_name=reduced_obs_opti_contacts\
             agent.max_iterations=1500 \
             env.debug=False \
             env.domain_rand.enable_actuator_rand=True \

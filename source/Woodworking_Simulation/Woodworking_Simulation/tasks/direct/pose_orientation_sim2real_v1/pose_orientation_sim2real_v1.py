@@ -157,8 +157,8 @@ class PoseOrientationSim2RealV1Cfg(DirectRLEnvCfg):
     # contact sensor
     contact_sensor: ContactSensorCfg = ContactSensorCfg(
         prim_path="/World/envs/env_.*/ur5e/ur5e/.*",
-        update_period=0.0,
-        history_length=6,
+        update_period=1.0 / 60.0,  # once per policy step (decimation=2 × dt=1/120); was 0.0 (every substep)
+        history_length=1,           # only current forces used in _compute_contact_metric; was 6
         debug_vis=False,
         filter_prim_paths_expr=[],
     )
@@ -187,8 +187,10 @@ class PoseOrientationSim2RealV1Cfg(DirectRLEnvCfg):
     # penalty weights
     action_penalty_scale = -0.02
     velocity_penalty_scale = -0.02
-    contact_penalty_scale = -0.01
-    contact_force_threshold_penalty = 5.0
+    contact_penalty_scale = -0.2
+    contact_force_threshold_penalty = 1.0   # N — anything above sensor noise (~0.1–0.3 N) is real contact
+    contact_force_max_clamp: float = 100.0  # N — physical ceiling for UR5e; prevents quadratic blow-up
+    contact_ema_alpha: float = 0.7          # EMA decay; signal persists ~3-4 policy steps after contact ends
     joint_limit_penalty_scale = -0.02
 
     # Goal sampling: 0.0 = 100 % FK-based, 1.0 = 100 % random cylindrical
@@ -241,6 +243,9 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
 
         # base_link permanently contacts the mount/table; mask it out of the contact metric
         self._base_contact_body_idx = self._contact_sensor.body_names.index("base_link")
+
+        # EMA contact force per env — persists signal for ~3-4 steps after a brief contact ends
+        self._contact_ema = torch.zeros(self._num_envs, device=self.device, dtype=torch.float32)
 
         # Pre-compute UR5e DH parameters as GPU tensors (avoids Python-float→tensor
         # casts inside the per-step FK loop)
@@ -473,9 +478,10 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         action_cost = torch.sum(self.actions ** 2, dim=1)
         velocity_cost = torch.sum(self._robot.data.joint_vel[:, :NUM_ARM_JOINTS] ** 2, dim=1)
 
-        contact_forces = torch.clamp_max(self._compute_contact_metric(), 1000.0)
+        # Clamp to physical ceiling before squaring to prevent numerical blow-up
+        contact_forces = torch.clamp(self._compute_contact_metric(), max=self.cfg.contact_force_max_clamp)
         excess = torch.relu(contact_forces - self.cfg.contact_force_threshold_penalty)
-        contact_penalty = self.cfg.contact_penalty_scale * excess
+        contact_penalty = self.cfg.contact_penalty_scale * excess ** 2
 
         threshold = 0.9
         out_of_bounds = torch.abs(self.joint_pos_norm) - threshold
@@ -552,6 +558,7 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         )
 
         self.actions[env_ids] = 0.0
+        self._contact_ema[env_ids] = 0.0
 
         self._action_buffer.reset(env_ids)
         self._obs_buffer.reset(env_ids)
@@ -749,6 +756,12 @@ class PoseOrientationSim2RealV1(DirectRLEnv):
         magnitudes = torch.norm(forces, dim=2)
         magnitudes[:, self._base_contact_body_idx] = 0.0  # permanent mount contact, not a collision
         max_per_env, max_body_idx = magnitudes.max(dim=1)
+
+        # EMA: persist signal for several steps after a brief contact ends
+        alpha = self.cfg.contact_ema_alpha
+        self._contact_ema.mul_(alpha).add_(max_per_env, alpha=1.0 - alpha)
+        # Use the higher of instantaneous and EMA so a sudden spike is never diluted
+        max_per_env = torch.maximum(max_per_env, self._contact_ema)
 
         if (
             self.cfg.contact_debug_interval > 0
