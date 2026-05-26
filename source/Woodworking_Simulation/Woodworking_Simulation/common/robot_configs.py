@@ -10,6 +10,7 @@ across different robot tasks. Based on pose_orientation_no_gripper.py as referen
 from __future__ import annotations
 from pathlib import Path
 import torch
+import numpy as np
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg, DelayedPDActuatorCfg
@@ -39,6 +40,11 @@ ENV_ORIGIN_OFFSET = torch.tensor([-TABLE_WIDTH / 2.0, TABLE_DEPTH / 2.0, TABLE_H
 # === UR5e Robot Constants ===
 MAX_REACH = 0.85  # UR5e reach ~850mm
 MAX_JOINT_VEL = 3.14  # ~180°/s
+# Motor rotor and reducer inertias
+J_MOTOR = np.array([6.61e-5, 4.61e-5, 7.97e-5, 1.22e-5, 1.18e-5, 1.19e-5])  # kg*m^2, approximate rotor inertia
+J_REDUCER = np.array([10.7e-5, 10.7e-5, 10.7e-5, 0.91e-5, 0.91e-5, 0.91e-5])  # kg*m^2, approximate reducer inertia
+G = 100 # Gear reduction ratio
+armature = J_MOTOR + J_REDUCER / (G ** 2)  # Total effective inertia at the joint
 
 # Joint limits for real robot (elbow has cable constraint) - as floats
 JOINT_LIMITS = {
@@ -382,24 +388,28 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                     damping=24.5, stiffness=600,
                     effort_limit_sim=150,
                     velocity_limit_sim=MAX_JOINT_VEL
+                    armature=armature[0]
                 ),
                 "shoulder_lift_action": ImplicitActuatorCfg(
                     joint_names_expr=["shoulder_lift_joint"],
                     damping=69.3, stiffness=1200,
                     effort_limit_sim=150,
                     velocity_limit_sim=MAX_JOINT_VEL
+                    armature=armature[1]
                 ),
                 "elbow_action": ImplicitActuatorCfg(
                     joint_names_expr=["elbow_joint"],
                     damping=24.5, stiffness=600,
                     effort_limit_sim=150,
                     velocity_limit_sim=MAX_JOINT_VEL
+                    armature=armature[2]
                 ),
                 "wrist_action": ImplicitActuatorCfg(
                     joint_names_expr=["wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
                     damping=6.5, stiffness=200,
                     effort_limit_sim=28,
-                    velocity_limit_sim=MAX_JOINT_VEL
+                    velocity_limit_sim=MAX_JOINT_VEL,
+                    armature=armature[3:6]
                 ),
                 "screwdriver_action": ImplicitActuatorCfg(
                     joint_names_expr=["joint0"],
