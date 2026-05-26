@@ -387,21 +387,21 @@ def get_robot_cfg(robot_type: str, prim_path: str) -> ArticulationCfg:
                     joint_names_expr=["shoulder_pan_joint"],
                     damping=24.5, stiffness=600,
                     effort_limit_sim=150,
-                    velocity_limit_sim=MAX_JOINT_VEL
+                    velocity_limit_sim=MAX_JOINT_VEL,
                     armature=armature[0]
                 ),
                 "shoulder_lift_action": ImplicitActuatorCfg(
                     joint_names_expr=["shoulder_lift_joint"],
                     damping=69.3, stiffness=1200,
                     effort_limit_sim=150,
-                    velocity_limit_sim=MAX_JOINT_VEL
+                    velocity_limit_sim=MAX_JOINT_VEL,
                     armature=armature[1]
                 ),
                 "elbow_action": ImplicitActuatorCfg(
                     joint_names_expr=["elbow_joint"],
                     damping=24.5, stiffness=600,
                     effort_limit_sim=150,
-                    velocity_limit_sim=MAX_JOINT_VEL
+                    velocity_limit_sim=MAX_JOINT_VEL,
                     armature=armature[2]
                 ),
                 "wrist_action": ImplicitActuatorCfg(
