@@ -4,13 +4,6 @@
 
 The repository is the supporting code for my master thesis, **Reinforcement Learning for Robotic Assembly Tasks: Mitigating Simulation Error for Physical Deployment**. 
 
-The project is split into two independent workflows, each running in its own conda environment:
-
-| Workflow | Conda env | Purpose |
-|---|---|---|
-| **Simulation** | `env_isaaclab` | RL training, sim playback, sim benchmarking (Isaac Sim + Isaac Lab) |
-| **Sim-to-Real** | `sim2real` | Real-robot deployment, impedance tuning, analysis scripts |
-
 ## What This Repository Achieves
 
 1. Train reach policies in simulation with sim-to-real transfer in mind.
@@ -21,7 +14,7 @@ The project is split into two independent workflows, each running in its own con
 
 ## Visual Overview
 
-### Performance Improvement with Domain Randomization
+### Performance Improvement with Domain Randomization - sub 5m reach precision
 
 
 <img src="pictures/dr_comparison_small.gif" alt="Comparison of sim-to-real performance with and without domain randomization" width="800"/>
