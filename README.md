@@ -14,20 +14,11 @@ The repository is the supporting code for my master thesis, **Reinforcement Lear
 
 ## Visual Overview
 
-### Performance Improvement with Domain Randomization - sub 5m reach precision
+### Performance Improvement with Domain Randomization - Sub 5mm Reach precision
 
 
 <img src="pictures/dr_comparison_small.gif" alt="Comparison of sim-to-real performance with and without domain randomization" width="800"/>
 No DR (left) vs Randomization on actuator and delay 1-2 (right) 
-
-### Dual Reach policy in Simulation
-
-
-<img src="pictures/pose_orientation_tworobot.gif" alt="Visualization of the dual reach policy in simulation" width="800"/>
-
-### Reach Policy in Simulation
-
-<img src="pictures/collage_grasp.png" alt="Gallery of additional trained policies" width="800"/>
 
 ---
 
